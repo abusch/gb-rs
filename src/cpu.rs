@@ -1,3 +1,7 @@
+use log::debug;
+
+use crate::bus::Bus;
+
 #[derive(Default)]
 pub struct Cpu {
     regs: Registers,
@@ -7,6 +11,34 @@ pub struct Cpu {
 }
 
 impl Cpu {
+    pub fn step(&mut self, bus: &mut Bus) {
+        let orig_pc = self.pc;
+        let op = self.fetch(bus);
+
+        match op {
+            0x31 => self.sp = self.fetch_word(bus),
+            _ => unimplemented!("op=0x{:02x}, PC=0x{:04x}", op, orig_pc),
+        }
+    }
+
+    // TODO probably should implement Debug instead...
+    pub fn dump_cpu(&self) {
+        debug!("PC=0x{:04x}, SP=0x{:04x}, regs=TODO", self.pc, self.sp);
+    }
+
+    fn fetch(&mut self, bus: &mut Bus) -> u8 {
+        let byte = bus.read_byte(self.pc);
+        self.pc += 1;
+        byte
+    }
+
+    fn fetch_word(&mut self, bus: &mut Bus) -> u16 {
+        let byte1 = self.fetch(bus);
+        let byte2 = self.fetch(bus);
+
+        (byte1 as u16) << 8 | (byte2 as u16)
+    }
+
 }
 
 #[derive(Default)]

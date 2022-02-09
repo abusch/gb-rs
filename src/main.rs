@@ -23,7 +23,12 @@ fn main() -> Result<()> {
     info!("ROM size is ${:02x}", cartridge.get_rom_size());
     info!("RAM size is ${:02x}", cartridge.get_ram_size());
     
-    let gb = GameBoy::new(cartridge);
+    let mut gb = GameBoy::new(cartridge);
+
+    gb.dump_cpu();
+    gb.step();
+    gb.dump_cpu();
+    gb.step();
 
     Ok(())
 }

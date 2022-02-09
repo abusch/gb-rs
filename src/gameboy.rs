@@ -14,4 +14,12 @@ impl GameBoy {
             bus: Bus::new(8 * 1024, cartridge),
         }
     }
+
+    pub fn step(&mut self) {
+        self.cpu.step(&mut self.bus);
+    }
+
+    pub fn dump_cpu(&self) {
+        self.cpu.dump_cpu();
+    }
 }
