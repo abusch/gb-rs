@@ -8,3 +8,5 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.53"
 byteorder = "1.4.3"
+log = "0.4"
+env_logger = "0.9"
