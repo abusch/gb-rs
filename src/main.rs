@@ -1,6 +1,6 @@
 mod cpu;
 mod gameboy;
-mod interconnect;
+mod bus;
 mod cartridge;
 
 use anyhow::Result;

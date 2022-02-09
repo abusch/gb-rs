@@ -2,12 +2,12 @@ use crate::cartridge::Cartridge;
 
 const BOOT_ROM: &[u8] = include_bytes!("../assets/dmg_boot.bin");
 
-pub struct Interconnect {
+pub struct Bus {
     ram: Box<[u8]>,
     cartridge: Cartridge,
 }
 
-impl Interconnect {
+impl Bus {
     pub fn new(ram_size: usize, cartridge: Cartridge) -> Self {
         let ram = vec![0; ram_size];
 
