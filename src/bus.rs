@@ -7,6 +7,7 @@ const BOOT_ROM: &[u8] = include_bytes!("../assets/dmg_boot.bin");
 pub struct Bus {
     ram: Box<[u8]>,
     vram: Box<[u8]>,
+    hram: Box<[u8]>,
     cartridge: Cartridge,
 }
 
@@ -17,6 +18,7 @@ impl Bus {
         Self {
             ram: ram.into_boxed_slice(),
             vram: vec![0; 8 * 1024].into_boxed_slice(),
+            hram: vec![0; 0x80].into_boxed_slice(),
             cartridge,
         }
     }
@@ -47,7 +49,7 @@ impl Bus {
             debug!("Accessed I/O Register 0x{:04x} (NOT IMPLEMENTED)", addr);
             0
         } else if addr <= 0xFFFE {
-            unimplemented!("High RAM: 0x{:04x}", addr);
+            self.hram[(addr - 0xFF80) as usize]
         } else if addr == 0xFFFF {
             unimplemented!("Interrupt Enable Register: 0x{:04x}", addr);
         } else {
@@ -56,7 +58,7 @@ impl Bus {
     }
 
     pub fn read_word(&self, addr: u16) -> u16 {
-        // FIXME is this little- or big-endian?
+        // memory access is big-endian
         let lsb = self.read_byte(addr);
         let msb = self.read_byte(addr + 1);
 
@@ -83,11 +85,18 @@ impl Bus {
             // unimplemented!("I/O Registers: 0x{:04x}", addr);
             debug!("Accessed I/O Register 0x{:04x} (NOT IMPLEMENTED)", addr);
         } else if addr <= 0xFFFE {
-            unimplemented!("High RAM: 0x{:04x}", addr);
+            self.hram[(addr - 0xFF80) as usize] = b;
         } else if addr == 0xFFFF {
             unimplemented!("Interrupt Enable Register: 0x{:04x}", addr);
         } else {
             unreachable!("How did we get here?");
         }
+    }
+
+    pub(crate) fn write_word(&mut self, addr: u16, word: u16) {
+        // memory access is big-endian, so write the lsb first...
+        self.write_byte(addr, (word & 0x00FF) as u8);
+        // then the msb
+        self.write_byte(addr + 1, (word >> 8) as u8);
     }
 }

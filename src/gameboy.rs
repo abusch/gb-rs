@@ -22,4 +22,9 @@ impl GameBoy {
     pub fn dump_cpu(&self) {
         self.cpu.dump_cpu();
     }
+
+    pub fn is_halted(&self) -> bool {
+        // TODO implement
+        false
+    }
 }
