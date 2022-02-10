@@ -25,10 +25,10 @@ fn main() -> Result<()> {
     
     let mut gb = GameBoy::new(cartridge);
 
-    gb.dump_cpu();
-    gb.step();
-    gb.dump_cpu();
-    gb.step();
+    for _ in 0..30 {
+        gb.dump_cpu();
+        gb.step();
+    }
 
     Ok(())
 }

@@ -1,9 +1,12 @@
+use log::debug;
+
 use crate::cartridge::Cartridge;
 
 const BOOT_ROM: &[u8] = include_bytes!("../assets/dmg_boot.bin");
 
 pub struct Bus {
     ram: Box<[u8]>,
+    vram: Box<[u8]>,
     cartridge: Cartridge,
 }
 
@@ -13,6 +16,7 @@ impl Bus {
 
         Self {
             ram: ram.into_boxed_slice(),
+            vram: vec![0; 8 * 1024].into_boxed_slice(),
             cartridge,
         }
     }
@@ -28,7 +32,7 @@ impl Bus {
         } else if addr <= 0x7FFF {
             unimplemented!("switchable banks 0x{:04x}", addr);
         } else if addr <= 0x9FFF {
-            unimplemented!("VRAM 0x{:04x}", addr);
+            self.vram[(addr - 0x8000) as usize]
         } else if addr <= 0xDFFF {
             self.ram[(addr - 0xC000) as usize]
         } else if addr <= 0xFDFF {
@@ -39,7 +43,9 @@ impl Bus {
         } else if addr <= 0xFEFF {
             panic!("Invalid access to address 0x{:04x}", addr);
         } else if addr <= 0xFF7F {
-            unimplemented!("I/O Registers: 0x{:04x}", addr);
+            // unimplemented!("I/O Registers: 0x{:04x}", addr);
+            debug!("Accessed I/O Register 0x{:04x} (NOT IMPLEMENTED)", addr);
+            0
         } else if addr <= 0xFFFE {
             unimplemented!("High RAM: 0x{:04x}", addr);
         } else if addr == 0xFFFF {
@@ -58,6 +64,30 @@ impl Bus {
     }
 
     pub fn write_byte(&mut self, addr: u16, b: u8) {
-        self.ram[addr as usize] = b;
+        if addr <= 0x3FFF {
+            self.cartridge.data[addr as usize] = b;
+        } else if addr <= 0x7FFF {
+            unimplemented!("switchable banks 0x{:04x}", addr);
+        } else if addr <= 0x9FFF {
+            self.vram[(addr - 0x8000) as usize] = b;
+        } else if addr <= 0xDFFF {
+            self.ram[(addr - 0xC000) as usize] = b;
+        } else if addr <= 0xFDFF {
+            // ECHO RAM: mirror of C000-DDFF
+            self.ram[(addr - 0xE000) as usize] = b;
+        } else if addr <= 0xFE9F {
+            unimplemented!("Sprite attribute table (OAM): 0x{:04x}", addr);
+        } else if addr <= 0xFEFF {
+            panic!("Invalid access to address 0x{:04x}", addr);
+        } else if addr <= 0xFF7F {
+            // unimplemented!("I/O Registers: 0x{:04x}", addr);
+            debug!("Accessed I/O Register 0x{:04x} (NOT IMPLEMENTED)", addr);
+        } else if addr <= 0xFFFE {
+            unimplemented!("High RAM: 0x{:04x}", addr);
+        } else if addr == 0xFFFF {
+            unimplemented!("Interrupt Enable Register: 0x{:04x}", addr);
+        } else {
+            unreachable!("How did we get here?");
+        }
     }
 }
