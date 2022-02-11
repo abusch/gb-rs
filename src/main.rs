@@ -4,8 +4,7 @@ mod cpu;
 mod gameboy;
 mod gfx;
 
-use std::io::{stdin, BufRead, Read};
-use std::sync::mpsc::channel;
+use std::{io::stdin, sync::mpsc::channel};
 
 use anyhow::Result;
 use log::info;
@@ -33,19 +32,19 @@ fn main() -> Result<()> {
     let mut gb = GameBoy::new(cartridge);
 
     gb.dump_cpu();
+    let mut buf = String::new();
     while !gb.is_halted() {
         if rx.try_recv().is_ok() {
             info!("Got ctrl-c. Exiting...");
             break;
         }
-        // if gb.is_paused() {
-        //     stdin().read_line(&mut buf).unwrap();
-        //     gb.step();
-        //     gb.dump_cpu();
-        // } else {
-        //     gb.step();
-        // }
-        gb.step();
+        if gb.is_paused() {
+            stdin().read_line(&mut buf).unwrap();
+            gb.step();
+            gb.dump_cpu();
+        } else {
+            gb.step();
+        }
     }
     gb.dump_cpu();
 

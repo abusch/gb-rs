@@ -1,9 +1,43 @@
+use std::ops::RangeInclusive;
+
 use bitvec::prelude as bv;
 use log::debug;
 
 use crate::{cartridge::Cartridge, gfx::Gfx};
 
-const BOOT_ROM: &[u8] = include_bytes!("../assets/dmg_boot.bin");
+const BOOT_ROM_DATA: &[u8] = include_bytes!("../assets/dmg_boot.bin");
+
+// Memory Map
+const BOOT_ROM: RangeInclusive<u16> = 0x0000..=0x00FF;
+const CART_BANK_00: RangeInclusive<u16> = 0x0000..=0x3FFF;
+const CART_BANK_MAPPED: RangeInclusive<u16> = 0x4000..=0x7FFF;
+const VRAM: RangeInclusive<u16> = 0x8000..=0x9FFF;
+const EXT_RAM: RangeInclusive<u16> = 0xA000..=0xBFFF;
+const WRAM: RangeInclusive<u16> = 0xC000..=0xDFFF;
+const ECHO_RAM: RangeInclusive<u16> = 0xE000..=0xFDFF;
+const OAM: RangeInclusive<u16> = 0xFE00..=0xFE9F;
+const INVALID_AREA: RangeInclusive<u16> = 0xFEA0..=0xFEFF;
+const IO_REGISTERS: RangeInclusive<u16> = 0xFF00..=0xFF7F;
+const HRAM: RangeInclusive<u16> = 0xFF80..=0xFFFE;
+
+//
+// IO registers ranges (TODO CGB registers)
+//
+// Joypad controller
+const IO_RANGE_JPD: RangeInclusive<u16> = 0xFF00..=0xFF00;
+// Communication
+const IO_RANGE_COM: RangeInclusive<u16> = 0xFF01..=0xFF02;
+// Divider and Timer
+const IO_RANGE_TIM: RangeInclusive<u16> = 0xFF04..=0xFF07;
+// Sound (APU)
+const IO_RANGE_APU: RangeInclusive<u16> = 0xFF10..=0xFF26;
+// Waveform RAM
+const IO_RANGE_WAV: RangeInclusive<u16> = 0xFF30..=0xFF3F;
+// LCD
+const IO_RANGE_LCD: RangeInclusive<u16> = 0xFF40..=0xFF4B;
+// Disable Boot ROM
+const IO_RANGE_DBR: RangeInclusive<u16> = 0xFF50..=0xFF50;
+
 
 pub struct Bus {
     ram: Box<[u8]>,
@@ -13,6 +47,7 @@ pub struct Bus {
     cartridge: Cartridge,
     // P1/JOYP Joypad contoller
     joypad: u8,
+    has_booted: bool,
 }
 
 impl Bus {
@@ -26,58 +61,34 @@ impl Bus {
             gfx: Gfx::new(),
             cartridge,
             joypad: 0,
+            has_booted: false,
         }
     }
 
     pub fn read_byte(&self, addr: u16) -> u8 {
-        if addr <= 0x0100 {
+        if BOOT_ROM.contains(&addr) && !self.has_booted {
             // read from boot rom
-            // TODO only during boot sequence... once control is handed over to the cartridge, we
-            // should read from the cartridge memory instead
-            BOOT_ROM[addr as usize]
-        } else if addr <= 0x3FFF {
+            BOOT_ROM_DATA[addr as usize]
+        } else if CART_BANK_00.contains(&addr) {
             self.cartridge.data[addr as usize]
-        } else if addr <= 0x7FFF {
+        } else if CART_BANK_MAPPED.contains(&addr) {
             unimplemented!("switchable banks 0x{:04x}", addr);
-        } else if addr <= 0x9FFF {
-            self.vram[(addr - 0x8000) as usize]
-        } else if addr <= 0xDFFF {
-            self.ram[(addr - 0xC000) as usize]
-        } else if addr <= 0xFDFF {
+        } else if VRAM.contains(&addr) {
+            self.vram[(addr - VRAM.start()) as usize]
+        } else if EXT_RAM.contains(&addr) {
+            unimplemented!("External RAM 0x{:04x}", addr);
+        } else if WRAM.contains(&addr) {
+            self.ram[(addr - WRAM.start()) as usize]
+        } else if ECHO_RAM.contains(&addr) {
             // ECHO RAM: mirror of C000-DDFF
-            self.ram[(addr - 0xE000) as usize]
-        } else if addr <= 0xFE9F {
+            self.ram[(addr - 0x2000) as usize]
+        } else if OAM.contains(&addr) {
             unimplemented!("Sprite attribute table (OAM): 0x{:04x}", addr);
-        } else if addr <= 0xFEFF {
+        } else if INVALID_AREA.contains(&addr) {
             panic!("Invalid access to address 0x{:04x}", addr);
-        } else if addr <= 0xFF7F {
-            if addr == 0xFF00 {
-                // Joypad controller register
-                debug!("Read Joypad controller register 0x{:04x} (NOT IMPLEMENTED)", addr);
-                return self.joypad;
-            } else if addr == 0xFF01 || addr == 0xFF02 {
-                // Communication controller
-                debug!("Read communication controller register 0x{:04x} (NOT IMPLEMENTED)", addr);
-            } else if (0xFF04..=0xFF07).contains(&addr) {
-                // Divider and timer
-                debug!("Read divider and timer register 0x{:04x} (NOT IMPLEMENTED)", addr);
-            } else if (0xFF10..=0xFF26).contains(&addr) {
-                // Sound
-                debug!("Read sound register 0x{:04x} (NOT IMPLEMENTED)", addr);
-            } else if (0xFF30..=0xFF3F).contains(&addr) {
-                // Waveform ram
-                debug!("Read waveform RAM 0x{:04x} (NOT IMPLEMENTED)", addr);
-            } else if (0xFF40..=0xFF4B).contains(&addr) {
-                // LCD
-                debug!("Read LCD controller 0x{:04x} (NOT IMPLEMENTED)", addr);
-            } else if addr == 0xFF50 {
-                // Disable boot rom
-                debug!("Read disable boot rom 0x{:04x} (NOT IMPLEMENTED)", addr);
-            } else {
-                debug!("Read unknown I/O Register 0x{:04x} (NOT IMPLEMENTED)", addr);
-            }
-            0
-        } else if addr <= 0xFFFE {
+        } else if IO_REGISTERS.contains(&addr) {
+            self.read_io(addr)
+        } else if HRAM.contains(&addr) {
             self.hram[(addr - 0xFF80) as usize]
         } else if addr == 0xFFFF {
             unimplemented!("Interrupt Enable Register: 0x{:04x}", addr);
@@ -95,51 +106,28 @@ impl Bus {
     }
 
     pub fn write_byte(&mut self, addr: u16, b: u8) {
-        if addr <= 0x3FFF {
+        if BOOT_ROM.contains(&addr) && !self.has_booted {
+            panic!("Tried to write into boot ROM during the boot sequence!");
+        } else if CART_BANK_00.contains(&addr) {
             self.cartridge.data[addr as usize] = b;
-        } else if addr <= 0x7FFF {
+        } else if CART_BANK_MAPPED.contains(&addr) {
             unimplemented!("switchable banks 0x{:04x}", addr);
-        } else if addr <= 0x9FFF {
-            self.vram[(addr - 0x8000) as usize] = b;
-        } else if addr <= 0xDFFF {
-            self.ram[(addr - 0xC000) as usize] = b;
-        } else if addr <= 0xFDFF {
+        } else if VRAM.contains(&addr) {
+            self.vram[(addr - VRAM.start()) as usize] = b;
+        } else if WRAM.contains(&addr) {
+            self.ram[(addr - WRAM.start()) as usize] = b;
+        } else if ECHO_RAM.contains(&addr) {
             // ECHO RAM: mirror of C000-DDFF
-            self.ram[(addr - 0xE000) as usize] = b;
-        } else if addr <= 0xFE9F {
+            // FIXME should we panic here instead?
+            self.ram[(addr - 0x2000) as usize] = b;
+        } else if OAM.contains(&addr) {
             unimplemented!("Sprite attribute table (OAM): 0x{:04x}", addr);
-        } else if addr <= 0xFEFF {
+        } else if INVALID_AREA.contains(&addr) {
             panic!("Invalid access to address 0x{:04x}", addr);
-        } else if addr <= 0xFF7F {
-            if addr == 0xFF00 {
-                // Joypad controller register
-                debug!("Write Joypad controller register 0x{:04x}<-0x{:02X}", addr, b);
-                // only bits 4 and 5 can be written to
-                self.joypad |= b & 0b00110000;
-            } else if addr == 0xFF01 || addr == 0xFF02 {
-                // Communication controller
-                debug!("Write communication controller register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)", addr, b);
-            } else if (0xFF04..=0xFF07).contains(&addr) {
-                // Divider and timer
-                debug!("Write divider and timer register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)", addr, b);
-            } else if (0xFF10..=0xFF26).contains(&addr) {
-                // Sound
-                debug!("Write sound register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)", addr, b);
-            } else if (0xFF30..=0xFF3F).contains(&addr) {
-                // Waveform ram
-                debug!("Write waveform RAM 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)", addr, b);
-            } else if (0xFF40..=0xFF4B).contains(&addr) {
-                // LCD
-                debug!("Write LCD controller 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)", addr, b);
-            } else if addr == 0xFF50 {
-                // Disable boot rom
-                debug!("Write disable boot rom 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)", addr, b);
-            } else {
-                // unimplemented!("I/O Registers: 0x{:04x}", addr);
-                debug!("Write I/O Register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)", addr, b);
-            }
-        } else if addr <= 0xFFFE {
-            self.hram[(addr - 0xFF80) as usize] = b;
+        } else if IO_REGISTERS.contains(&addr) {
+            self.write_io(addr, b);
+        } else if HRAM.contains(&addr) {
+            self.hram[(addr - HRAM.start()) as usize] = b;
         } else if addr == 0xFFFF {
             unimplemented!("Interrupt Enable Register: 0x{:04x}", addr);
         } else {
@@ -152,5 +140,99 @@ impl Bus {
         self.write_byte(addr, (word & 0x00FF) as u8);
         // then the msb
         self.write_byte(addr + 1, (word >> 8) as u8);
+    }
+
+    /// Read access to IO registers
+    fn read_io(&self, addr: u16) -> u8 {
+        if IO_RANGE_JPD.contains(&addr) {
+            // Joypad controller register
+            debug!(
+                "Read Joypad controller register 0x{:04x} (NOT IMPLEMENTED)",
+                addr
+            );
+            return self.joypad;
+        } else if IO_RANGE_COM.contains(&addr) {
+            // Communication controller
+            debug!(
+                "Read communication controller register 0x{:04x} (NOT IMPLEMENTED)",
+                addr
+            );
+        } else if IO_RANGE_TIM.contains(&addr) {
+            // Divider and timer
+            debug!(
+                "Read divider and timer register 0x{:04x} (NOT IMPLEMENTED)",
+                addr
+            );
+        } else if IO_RANGE_APU.contains(&addr) {
+            // Sound
+            debug!("Read sound register 0x{:04x} (NOT IMPLEMENTED)", addr);
+        } else if IO_RANGE_WAV.contains(&addr) {
+            // Waveform ram
+            debug!("Read waveform RAM 0x{:04x} (NOT IMPLEMENTED)", addr);
+        } else if IO_RANGE_LCD.contains(&addr) {
+            // LCD
+            debug!("Read LCD controller 0x{:04x} (NOT IMPLEMENTED)", addr);
+        } else if IO_RANGE_DBR.contains(&addr) {
+            // Disable boot rom
+            debug!("Read disable boot rom 0x{:04x} (NOT IMPLEMENTED)", addr);
+        } else {
+            debug!("Read unknown I/O Register 0x{:04x} (NOT IMPLEMENTED)", addr);
+        }
+        0
+    }
+
+    /// Write access to IO registers.
+    fn write_io(&mut self, addr: u16, b: u8) {
+        if IO_RANGE_JPD.contains(&addr) {
+            // Joypad controller register
+            debug!(
+                "Write Joypad controller register 0x{:04x}<-0x{:02X}",
+                addr, b
+            );
+            // only bits 4 and 5 can be written to
+            self.joypad |= b & 0b00110000;
+        } else if IO_RANGE_COM.contains(&addr) {
+            // Communication controller
+            debug!(
+                "Write communication controller register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
+                addr, b
+            );
+        } else if IO_RANGE_TIM.contains(&addr) {
+            // Divider and timer
+            debug!(
+                "Write divider and timer register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
+                addr, b
+            );
+        } else if IO_RANGE_APU.contains(&addr) {
+            // Sound
+            debug!(
+                "Write sound register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
+                addr, b
+            );
+        } else if IO_RANGE_WAV.contains(&addr) {
+            // Waveform ram
+            debug!(
+                "Write waveform RAM 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
+                addr, b
+            );
+        } else if IO_RANGE_LCD.contains(&addr) {
+            // LCD
+            debug!(
+                "Write LCD controller 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
+                addr, b
+            );
+        } else if IO_RANGE_DBR.contains(&addr) {
+            if b == 0x01 {
+                self.has_booted = true;
+                // Disable boot rom
+                debug!("Boot sequence complete. Disabling boot ROM.");
+            }
+        } else {
+            // unimplemented!("I/O Registers: 0x{:04x}", addr);
+            debug!(
+                "Write I/O Register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
+                addr, b
+            );
+        }
     }
 }
