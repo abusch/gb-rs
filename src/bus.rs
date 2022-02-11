@@ -1,7 +1,7 @@
 use std::ops::RangeInclusive;
 
-use bitvec::prelude as bv;
-use log::debug;
+// use bitvec::prelude as bv;
+use log::{debug, warn};
 
 use crate::{cartridge::Cartridge, gfx::Gfx};
 
@@ -41,7 +41,6 @@ const IO_RANGE_DBR: RangeInclusive<u16> = 0xFF50..=0xFF50;
 
 pub struct Bus {
     ram: Box<[u8]>,
-    vram: Box<[u8]>,
     hram: Box<[u8]>,
     gfx: Gfx,
     cartridge: Cartridge,
@@ -56,7 +55,6 @@ impl Bus {
 
         Self {
             ram: ram.into_boxed_slice(),
-            vram: vec![0; 8 * 1024].into_boxed_slice(),
             hram: vec![0; 0x80].into_boxed_slice(),
             gfx: Gfx::new(),
             cartridge,
@@ -74,13 +72,14 @@ impl Bus {
         } else if CART_BANK_MAPPED.contains(&addr) {
             unimplemented!("switchable banks 0x{:04x}", addr);
         } else if VRAM.contains(&addr) {
-            self.vram[(addr - VRAM.start()) as usize]
+            self.gfx.vram[(addr - VRAM.start()) as usize]
         } else if EXT_RAM.contains(&addr) {
             unimplemented!("External RAM 0x{:04x}", addr);
         } else if WRAM.contains(&addr) {
             self.ram[(addr - WRAM.start()) as usize]
         } else if ECHO_RAM.contains(&addr) {
             // ECHO RAM: mirror of C000-DDFF
+            warn!("Accessing ECHO RAM!");
             self.ram[(addr - 0x2000) as usize]
         } else if OAM.contains(&addr) {
             unimplemented!("Sprite attribute table (OAM): 0x{:04x}", addr);
@@ -89,7 +88,7 @@ impl Bus {
         } else if IO_REGISTERS.contains(&addr) {
             self.read_io(addr)
         } else if HRAM.contains(&addr) {
-            self.hram[(addr - 0xFF80) as usize]
+            self.hram[(addr - HRAM.start()) as usize]
         } else if addr == 0xFFFF {
             unimplemented!("Interrupt Enable Register: 0x{:04x}", addr);
         } else {
@@ -98,11 +97,11 @@ impl Bus {
     }
 
     pub fn read_word(&self, addr: u16) -> u16 {
-        // memory access is big-endian
+        // memory access is little-endian (i.e lsb comes first)
         let lsb = self.read_byte(addr);
         let msb = self.read_byte(addr + 1);
 
-        ((msb as u16) << 8) | (lsb as u16)
+        u16::from_le_bytes([lsb, msb])
     }
 
     pub fn write_byte(&mut self, addr: u16, b: u8) {
@@ -113,7 +112,7 @@ impl Bus {
         } else if CART_BANK_MAPPED.contains(&addr) {
             unimplemented!("switchable banks 0x{:04x}", addr);
         } else if VRAM.contains(&addr) {
-            self.vram[(addr - VRAM.start()) as usize] = b;
+            self.gfx.vram[(addr - VRAM.start()) as usize] = b;
         } else if WRAM.contains(&addr) {
             self.ram[(addr - WRAM.start()) as usize] = b;
         } else if ECHO_RAM.contains(&addr) {
@@ -136,10 +135,11 @@ impl Bus {
     }
 
     pub(crate) fn write_word(&mut self, addr: u16, word: u16) {
-        // memory access is big-endian, so write the lsb first...
-        self.write_byte(addr, (word & 0x00FF) as u8);
+        // memory access is little-endian, so write the lsb first...
+        let [lsb, msb] = word.to_le_bytes();
+        self.write_byte(addr, lsb);
         // then the msb
-        self.write_byte(addr + 1, (word >> 8) as u8);
+        self.write_byte(addr + 1, msb);
     }
 
     /// Read access to IO registers
@@ -221,6 +221,7 @@ impl Bus {
                 "Write LCD controller 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
                 addr, b
             );
+            self.gfx.write(addr, b);
         } else if IO_RANGE_DBR.contains(&addr) {
             if b == 0x01 {
                 self.has_booted = true;

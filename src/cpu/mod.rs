@@ -201,9 +201,8 @@ impl Cpu {
             0xc5 => self.push_rr(bus, RegPair::BC),
             // RET
             0xc9 => {
-                self.pc = bus.read_word(self.sp);
-                self.sp = self.sp.wrapping_add(2);
-                debug!("Returning from subroutine");
+                self.pc = self.pop_word(bus);
+                debug!("Returning from subroutine to 0x{:04x}", self.pc);
             }
             // CB prefix
             0xcb => self.step_cb(bus),
@@ -240,7 +239,10 @@ impl Cpu {
             // CP d8
             0xfe => self.cp_d8(bus),
 
-            _ => unimplemented!("op=0x{:02x}, PC=0x{:04x}", op, orig_pc),
+            _ => {
+                self.dump_cpu();
+                unimplemented!("op=0x{:02x}, orig_pc=0x{:02x}", op, orig_pc);
+            }
         }
     }
 
@@ -385,6 +387,7 @@ impl Cpu {
 
     /// PUSH a16
     fn push_word(&mut self, bus: &mut Bus, word: u16) {
+        debug!("Pushing 0x{:04x}", word);
         self.sp = self.sp.wrapping_sub(2);
         bus.write_word(self.sp, word);
     }
@@ -392,6 +395,7 @@ impl Cpu {
     /// POP a16
     fn pop_word(&mut self, bus: &mut Bus) -> u16 {
         let word = bus.read_word(self.sp);
+        debug!("Popped 0x{:04x}", word);
         self.sp = self.sp.wrapping_add(2);
         word
     }
