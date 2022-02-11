@@ -1,17 +1,40 @@
+mod register;
+
 use log::debug;
 
 use crate::bus::Bus;
+use self::register::{Registers, Reg, RegPair};
 
-#[derive(Default)]
 pub struct Cpu {
     regs: Registers,
 
     sp: u16,
     pc: u16,
+
+    // for debugging
+    breakpoint: u16,
+    paused: bool,
+}
+
+impl Default for Cpu {
+    fn default() -> Self {
+        Self {
+            regs: Default::default(),
+            sp: Default::default(),
+            pc: Default::default(),
+            breakpoint: 0x000c,
+            paused: Default::default(),
+        }
+    }
 }
 
 impl Cpu {
     pub fn step(&mut self, bus: &mut Bus) {
+        // for debugging
+        if self.pc == self.breakpoint {
+            self.paused = true;
+        }
+
         let orig_pc = self.pc;
         let op = self.fetch(bus);
 
@@ -42,10 +65,12 @@ impl Cpu {
             0x15 => self.dec_r(Reg::D),
             // RLA
             0x17 => self.rla(),
+            // JR r8
+            0x18 => self.jr_if_r8(bus, true),
             // LD A,(DE)
             0x1a => {
-                let de = bus.read_byte(self.regs.de());
-                self.regs.set_a(de);
+                let de = bus.read_byte(*self.regs.de);
+                self.regs.set(Reg::A, de);
             }
             // DEC DE
             0x1b => self.dec_rr(RegPair::DE),
@@ -57,17 +82,16 @@ impl Cpu {
             0x1e => self.ld_r_d8(bus, Reg::C),
             // JR NZ,r8
             0x20 => {
-                let dd = self.fetch(bus) as i8;
                 // NZ
                 let flag = !self.regs.flag_z().is_set();
-                self.jr_if(flag, dd);
+                self.jr_if_r8(bus, flag);
             }
             // LD HL,d16
             0x21 => self.ld_rr_d16(bus, RegPair::HL),
             // LD (HL-),A
             0x22 => {
-                bus.write_byte(self.regs.hl(), self.regs.a());
-                self.regs.set_hl(self.regs.hl().wrapping_add(1));
+                bus.write_byte(*self.regs.hl, self.regs.get(Reg::A));
+                *self.regs.hl = self.regs.hl.wrapping_add(1);
             }
             // INC HL
             0x23 => self.inc_rr(RegPair::HL),
@@ -77,10 +101,9 @@ impl Cpu {
             0x25 => self.dec_r(Reg::H),
             // JR Z,r8
             0x28 => {
-                let dd = self.fetch(bus) as i8;
                 // NZ
                 let flag = self.regs.flag_z().is_set();
-                self.jr_if(flag, dd);
+                self.jr_if_r8(bus, flag);
             }
             // DEC HL
             0x2b => self.dec_rr(RegPair::HL),
@@ -88,12 +111,14 @@ impl Cpu {
             0x2c => self.inc_r(Reg::L),
             // DEC L
             0x2d => self.dec_r(Reg::L),
+            // LD L,d8
+            0x2e => self.ld_r_d8(bus, Reg::L),
             // LD SP,d16
             0x31 => self.sp = self.fetch_word(bus),
             // LD (HL-),A
             0x32 => {
-                bus.write_byte(self.regs.hl(), self.regs.a());
-                self.regs.set_hl(self.regs.hl().wrapping_sub(1));
+                bus.write_byte(self.regs.get_pair(RegPair::HL), self.regs.get(Reg::A));
+                *self.regs.hl = self.regs.hl.wrapping_sub(1);
             }
             // // INC SP
             // 0x33 => self.inc_rr(RegPair::SP),
@@ -153,8 +178,8 @@ impl Cpu {
             0x6f => self.ld_r_r(Reg::L, Reg::A),
             // LD (HL),A
             0x77 => {
-                let addr = self.regs.hl();
-                bus.write_byte(addr, self.regs.a());
+                let addr = *self.regs.hl;
+                bus.write_byte(addr, self.regs.get(Reg::A));
             }
             // LD A,A..L
             0x78 => self.ld_r_r(Reg::A, Reg::B),
@@ -194,17 +219,17 @@ impl Cpu {
             0xe0 => {
                 let a8 = self.fetch(bus);
                 let addr = 0xFF00 + a8 as u16;
-                bus.write_byte(addr, self.regs.a());
+                bus.write_byte(addr, self.regs.get(Reg::A));
             }
             // LD (C),A
             0xe2 => {
-                let addr = 0xFF00 + self.regs.c() as u16;
-                bus.write_byte(addr, self.regs.a());
+                let addr = 0xFF00 + self.regs.get(Reg::C) as u16;
+                bus.write_byte(addr, self.regs.get(Reg::A));
             }
             // LD (a16),A
             0xea => {
                 let addr = self.fetch_word(bus);
-                bus.write_byte(addr, self.regs.a());
+                bus.write_byte(addr, self.regs.get(Reg::A));
             }
             // LDH A,(a8)
             0xf0 => {
@@ -234,7 +259,7 @@ impl Cpu {
     // TODO probably should implement Debug instead...
     pub fn dump_cpu(&self) {
         debug!(
-            "PC=0x{:04x}, SP=0x{:04x}, regs={:?}",
+            "PC=0x{:04x}, SP=0x{:04x},\n\tregs={:?}",
             self.pc, self.sp, self.regs
         );
     }
@@ -317,12 +342,14 @@ impl Cpu {
 
     /// DEC rr
     fn dec_rr(&mut self, reg: RegPair) {
-        self.regs.set_pair(reg, self.regs.get_pair(reg).wrapping_sub(1));
+        self.regs
+            .set_pair(reg, self.regs.get_pair(reg).wrapping_sub(1));
     }
 
     /// INC rr
     fn inc_rr(&mut self, reg: RegPair) {
-        self.regs.set_pair(reg, self.regs.get_pair(reg).wrapping_add(1));
+        self.regs
+            .set_pair(reg, self.regs.get_pair(reg).wrapping_add(1));
     }
 
     /// Test bit n of register r
@@ -338,9 +365,10 @@ impl Cpu {
     }
 
     /// Conditional relative jump
-    fn jr_if(&mut self, flag: bool, dd: i8) {
+    fn jr_if_r8(&mut self, bus: &mut Bus, flag: bool) {
+        let r8 = self.fetch(bus) as i8;
         if flag {
-            self.pc = self.pc.wrapping_add(dd as i16 as u16);
+            self.pc = self.pc.wrapping_add(r8 as i16 as u16);
         }
     }
 
@@ -433,235 +461,9 @@ impl Cpu {
         self.regs.flag_c().set_value(carry);
         // TODO how to set H?
     }
-}
 
-// TODO don't think this is a great design... maybe we need a `Register` struct for a single
-// register.
-#[derive(Default, Debug)]
-struct Registers {
-    af: u16,
-    bc: u16,
-    de: u16,
-    hl: u16,
-}
-
-impl Registers {
-    /// Zero flag
-    const FLAG_Z: u16 = 0x80;
-    /// Subtract flag
-    const FLAG_N: u16 = 0x80;
-    /// Half Carry flag
-    const FLAG_H: u16 = 0x80;
-    /// Carry flag
-    const FLAG_C: u16 = 0x80;
-
-    fn get(&self, name: Reg) -> u8 {
-        match name {
-            Reg::A => self.a(),
-            Reg::B => self.b(),
-            Reg::C => self.c(),
-            Reg::D => self.d(),
-            Reg::E => self.e(),
-            Reg::H => self.h(),
-            Reg::L => self.l(),
-        }
+    /// Get the cpu's paused.
+    pub fn paused(&self) -> bool {
+        self.paused
     }
-
-    fn set(&mut self, name: Reg, value: u8) {
-        match name {
-            Reg::A => self.set_a(value),
-            Reg::B => self.set_b(value),
-            Reg::C => self.set_c(value),
-            Reg::D => self.set_d(value),
-            Reg::E => self.set_e(value),
-            Reg::H => self.set_h(value),
-            Reg::L => self.set_l(value),
-        }
-    }
-
-    fn get_pair(&self, pair: RegPair) -> u16 {
-        match pair {
-            RegPair::AF => self.af,
-            RegPair::BC => self.bc,
-            RegPair::DE => self.de,
-            RegPair::HL => self.hl,
-        }
-    }
-
-    fn set_pair(&mut self, pair: RegPair, value: u16) {
-        match pair {
-            RegPair::AF => self.af = value,
-            RegPair::BC => self.bc = value,
-            RegPair::DE => self.de = value,
-            RegPair::HL => self.hl = value,
-        }
-    }
-
-    //
-    // AF
-    //
-    fn a(&self) -> u8 {
-        (self.af >> 8) as u8
-    }
-
-    fn f(&self) -> u8 {
-        (self.af & 0x00ff) as u8
-    }
-
-    fn af(&self) -> u16 {
-        self.af
-    }
-
-    fn set_a(&mut self, a: u8) {
-        self.af = (self.af & 0x00ff) | ((a as u16) << 8);
-    }
-
-    fn set_f(&mut self, f: u8) {
-        self.af = (self.af & 0x00ff) | ((f as u16) << 8);
-    }
-    //
-    // BC
-    //
-    fn b(&self) -> u8 {
-        (self.bc >> 8) as u8
-    }
-
-    fn c(&self) -> u8 {
-        (self.bc & 0x00ff) as u8
-    }
-
-    fn bc(&self) -> u16 {
-        self.bc
-    }
-
-    fn set_b(&mut self, b: u8) {
-        self.bc = (self.bc & 0x00ff) | ((b as u16) << 8);
-    }
-
-    fn set_c(&mut self, c: u8) {
-        self.bc = (self.bc & 0x00ff) | ((c as u16) << 8);
-    }
-    //
-    // DE
-    //
-    fn d(&self) -> u8 {
-        (self.de >> 8) as u8
-    }
-
-    fn e(&self) -> u8 {
-        (self.de & 0x00ff) as u8
-    }
-
-    fn de(&self) -> u16 {
-        self.de
-    }
-
-    fn set_d(&mut self, d: u8) {
-        self.de = (self.de & 0x00ff) | ((d as u16) << 8);
-    }
-
-    fn set_e(&mut self, e: u8) {
-        self.de = (self.de & 0x00ff) | ((e as u16) << 8);
-    }
-
-    fn set_de(&mut self, de: u16) {
-        self.de = de;
-    }
-
-    //
-    // HL
-    //
-    fn h(&self) -> u8 {
-        (self.hl >> 8) as u8
-    }
-
-    fn l(&self) -> u8 {
-        (self.hl & 0x00ff) as u8
-    }
-
-    fn hl(&self) -> u16 {
-        self.hl
-    }
-
-    fn set_h(&mut self, h: u8) {
-        self.hl = (self.hl & 0x00ff) | ((h as u16) << 8);
-    }
-
-    fn set_l(&mut self, l: u8) {
-        self.hl = (self.hl & 0x00ff) | ((l as u16) << 8);
-    }
-
-    fn set_hl(&mut self, hl: u16) {
-        self.hl = hl;
-    }
-
-    // Flags
-    fn flag_z(&mut self) -> Flags<'_> {
-        Flags::new(self, Self::FLAG_Z)
-    }
-
-    // N Flag
-    fn flag_n(&mut self) -> Flags<'_> {
-        Flags::new(self, Self::FLAG_N)
-    }
-
-    // H Flag
-    fn flag_h(&mut self) -> Flags<'_> {
-        Flags::new(self, Self::FLAG_H)
-    }
-
-    // C Flag
-    fn flag_c(&mut self) -> Flags<'_> {
-        Flags::new(self, Self::FLAG_C)
-    }
-}
-
-struct Flags<'regs> {
-    regs: &'regs mut Registers,
-    flag: u16,
-}
-
-impl<'regs> Flags<'regs> {
-    fn new(regs: &mut Registers, flag: u16) -> Flags {
-        Flags { regs, flag }
-    }
-
-    fn is_set(&self) -> bool {
-        self.regs.af & self.flag != 0
-    }
-
-    fn set(&mut self) {
-        self.regs.af |= self.flag;
-    }
-
-    fn clear(&mut self) {
-        self.regs.af &= !self.flag;
-    }
-
-    fn set_value(&mut self, value: bool) {
-        if value {
-            self.set();
-        } else {
-            self.clear();
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Reg {
-    A,
-    B,
-    C,
-    D,
-    E,
-    H,
-    L,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RegPair {
-    AF,
-    BC,
-    DE,
-    HL,
 }

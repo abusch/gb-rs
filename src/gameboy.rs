@@ -27,4 +27,8 @@ impl GameBoy {
         // TODO implement
         false
     }
+
+    pub fn is_paused(&self) -> bool {
+        self.cpu.paused()
+    }
 }

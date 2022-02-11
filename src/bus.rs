@@ -1,6 +1,7 @@
+use bitvec::prelude as bv;
 use log::debug;
 
-use crate::cartridge::Cartridge;
+use crate::{cartridge::Cartridge, gfx::Gfx};
 
 const BOOT_ROM: &[u8] = include_bytes!("../assets/dmg_boot.bin");
 
@@ -8,7 +9,10 @@ pub struct Bus {
     ram: Box<[u8]>,
     vram: Box<[u8]>,
     hram: Box<[u8]>,
+    gfx: Gfx,
     cartridge: Cartridge,
+    // P1/JOYP Joypad contoller
+    joypad: u8,
 }
 
 impl Bus {
@@ -19,7 +23,9 @@ impl Bus {
             ram: ram.into_boxed_slice(),
             vram: vec![0; 8 * 1024].into_boxed_slice(),
             hram: vec![0; 0x80].into_boxed_slice(),
+            gfx: Gfx::new(),
             cartridge,
+            joypad: 0,
         }
     }
 
@@ -45,8 +51,31 @@ impl Bus {
         } else if addr <= 0xFEFF {
             panic!("Invalid access to address 0x{:04x}", addr);
         } else if addr <= 0xFF7F {
-            // unimplemented!("I/O Registers: 0x{:04x}", addr);
-            debug!("Accessed I/O Register 0x{:04x} (NOT IMPLEMENTED)", addr);
+            if addr == 0xFF00 {
+                // Joypad controller register
+                debug!("Read Joypad controller register 0x{:04x} (NOT IMPLEMENTED)", addr);
+                return self.joypad;
+            } else if addr == 0xFF01 || addr == 0xFF02 {
+                // Communication controller
+                debug!("Read communication controller register 0x{:04x} (NOT IMPLEMENTED)", addr);
+            } else if (0xFF04..=0xFF07).contains(&addr) {
+                // Divider and timer
+                debug!("Read divider and timer register 0x{:04x} (NOT IMPLEMENTED)", addr);
+            } else if (0xFF10..=0xFF26).contains(&addr) {
+                // Sound
+                debug!("Read sound register 0x{:04x} (NOT IMPLEMENTED)", addr);
+            } else if (0xFF30..=0xFF3F).contains(&addr) {
+                // Waveform ram
+                debug!("Read waveform RAM 0x{:04x} (NOT IMPLEMENTED)", addr);
+            } else if (0xFF40..=0xFF4B).contains(&addr) {
+                // LCD
+                debug!("Read LCD controller 0x{:04x} (NOT IMPLEMENTED)", addr);
+            } else if addr == 0xFF50 {
+                // Disable boot rom
+                debug!("Read disable boot rom 0x{:04x} (NOT IMPLEMENTED)", addr);
+            } else {
+                debug!("Read unknown I/O Register 0x{:04x} (NOT IMPLEMENTED)", addr);
+            }
             0
         } else if addr <= 0xFFFE {
             self.hram[(addr - 0xFF80) as usize]
@@ -82,8 +111,33 @@ impl Bus {
         } else if addr <= 0xFEFF {
             panic!("Invalid access to address 0x{:04x}", addr);
         } else if addr <= 0xFF7F {
-            // unimplemented!("I/O Registers: 0x{:04x}", addr);
-            debug!("Accessed I/O Register 0x{:04x} (NOT IMPLEMENTED)", addr);
+            if addr == 0xFF00 {
+                // Joypad controller register
+                debug!("Write Joypad controller register 0x{:04x}<-0x{:02X}", addr, b);
+                // only bits 4 and 5 can be written to
+                self.joypad |= b & 0b00110000;
+            } else if addr == 0xFF01 || addr == 0xFF02 {
+                // Communication controller
+                debug!("Write communication controller register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)", addr, b);
+            } else if (0xFF04..=0xFF07).contains(&addr) {
+                // Divider and timer
+                debug!("Write divider and timer register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)", addr, b);
+            } else if (0xFF10..=0xFF26).contains(&addr) {
+                // Sound
+                debug!("Write sound register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)", addr, b);
+            } else if (0xFF30..=0xFF3F).contains(&addr) {
+                // Waveform ram
+                debug!("Write waveform RAM 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)", addr, b);
+            } else if (0xFF40..=0xFF4B).contains(&addr) {
+                // LCD
+                debug!("Write LCD controller 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)", addr, b);
+            } else if addr == 0xFF50 {
+                // Disable boot rom
+                debug!("Write disable boot rom 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)", addr, b);
+            } else {
+                // unimplemented!("I/O Registers: 0x{:04x}", addr);
+                debug!("Write I/O Register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)", addr, b);
+            }
         } else if addr <= 0xFFFE {
             self.hram[(addr - 0xFF80) as usize] = b;
         } else if addr == 0xFFFF {
