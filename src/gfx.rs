@@ -1,6 +1,9 @@
 use bitvec::prelude::*;
 use log::debug;
 
+const VRAM_START: u16 = 0x8000;
+const OAM_START: u16 = 0xFE00;
+
 const LCDC_REG: u16 = 0xFF40;
 const SCY_REG: u16 = 0xFF42;
 const SCX_REG: u16 = 0xFF43;
@@ -14,7 +17,11 @@ const WX_REG: u16 = 0xFF4B;
 
 #[derive(Debug)]
 pub struct Gfx {
-    pub vram: Box<[u8]>,
+    vram: Box<[u8]>,
+    oam_ram: Box<[u8]>,
+
+    running_mode: Mode,
+
     /// LCDC (LCD Control)
     lcdc: u8,
 
@@ -44,8 +51,10 @@ pub struct Gfx {
 impl Gfx {
     pub fn new() -> Self {
         Self {
-            lcdc: 0,
             vram: vec![0; 8 * 1024].into_boxed_slice(),
+            oam_ram: vec![0; 0xA0].into_boxed_slice(),
+            running_mode: Mode::Mode0,
+            lcdc: 0,
             scy: 0,
             scx: 0,
             bgp: [Color::White; 4],
@@ -58,7 +67,35 @@ impl Gfx {
         }
     }
 
-    pub fn read(&self, addr: u16) -> u8 {
+    pub fn read_vram(&self, addr: u16) -> u8 {
+        if self.running_mode != Mode::Mode3 {
+            self.vram[(addr - VRAM_START) as usize]
+        } else {
+            0xff
+        }
+    }
+
+    pub fn write_vram(&mut self, addr: u16, b: u8) {
+        if self.running_mode != Mode::Mode3 {
+            self.vram[(addr - VRAM_START) as usize] = b;
+        }
+    }
+
+    pub fn read_oam(&self, addr: u16) -> u8 {
+        if self.running_mode != Mode::Mode2 && self.running_mode != Mode::Mode3 {
+            self.oam_ram[(addr - OAM_START) as usize]
+        } else {
+            0xff
+        }
+    }
+
+    pub fn write_oam(&mut self, addr: u16, b: u8) {
+        if self.running_mode != Mode::Mode2 && self.running_mode != Mode::Mode3 {
+            self.oam_ram[(addr - OAM_START) as usize] = b;
+        }
+    }
+
+    pub fn read_reg(&self, addr: u16) -> u8 {
         if addr == LCDC_REG {
             self.lcdc
         } else if addr == SCY_REG {
@@ -90,7 +127,8 @@ impl Gfx {
             unimplemented!();
         }
     }
-    pub fn write(&mut self, addr: u16, b: u8) {
+
+    pub fn write_reg(&mut self, addr: u16, b: u8) {
         if addr == LCDC_REG {
             self.lcdc = b;
         } else if addr == SCY_REG {
@@ -182,6 +220,18 @@ impl From<u8> for Color {
             _ => unreachable!(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// HSync
+    Mode0,
+    /// VSync
+    Mode1,
+    /// OAM scan
+    Mode2,
+    /// Drawing pixels
+    Mode3,
 }
 
 #[cfg(test)]

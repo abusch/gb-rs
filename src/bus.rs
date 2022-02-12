@@ -72,7 +72,7 @@ impl Bus {
         } else if CART_BANK_MAPPED.contains(&addr) {
             unimplemented!("switchable banks 0x{:04x}", addr);
         } else if VRAM.contains(&addr) {
-            self.gfx.vram[(addr - VRAM.start()) as usize]
+            self.gfx.read_vram(addr)
         } else if EXT_RAM.contains(&addr) {
             unimplemented!("External RAM 0x{:04x}", addr);
         } else if WRAM.contains(&addr) {
@@ -82,7 +82,8 @@ impl Bus {
             warn!("Accessing ECHO RAM!");
             self.ram[(addr - 0x2000) as usize]
         } else if OAM.contains(&addr) {
-            unimplemented!("Sprite attribute table (OAM): 0x{:04x}", addr);
+            debug!("Reading Sprite attribute table (OAM): 0x{:04x}", addr);
+            self.gfx.read_oam(addr)
         } else if INVALID_AREA.contains(&addr) {
             panic!("Invalid access to address 0x{:04x}", addr);
         } else if IO_REGISTERS.contains(&addr) {
@@ -112,7 +113,7 @@ impl Bus {
         } else if CART_BANK_MAPPED.contains(&addr) {
             unimplemented!("switchable banks 0x{:04x}", addr);
         } else if VRAM.contains(&addr) {
-            self.gfx.vram[(addr - VRAM.start()) as usize] = b;
+            self.gfx.write_vram(addr, b);
         } else if WRAM.contains(&addr) {
             self.ram[(addr - WRAM.start()) as usize] = b;
         } else if ECHO_RAM.contains(&addr) {
@@ -120,7 +121,8 @@ impl Bus {
             // FIXME should we panic here instead?
             self.ram[(addr - 0x2000) as usize] = b;
         } else if OAM.contains(&addr) {
-            unimplemented!("Sprite attribute table (OAM): 0x{:04x}", addr);
+            debug!("Writing Sprite attribute table (OAM): 0x{:04x}", addr);
+            self.gfx.write_oam(addr, b);
         } else if INVALID_AREA.contains(&addr) {
             panic!("Invalid access to address 0x{:04x}", addr);
         } else if IO_REGISTERS.contains(&addr) {
@@ -176,7 +178,7 @@ impl Bus {
         } else if IO_RANGE_LCD.contains(&addr) {
             // LCD
             debug!("Read LCD controller 0x{:04x}", addr);
-            self.gfx.read(addr)
+            self.gfx.read_reg(addr)
         } else if IO_RANGE_DBR.contains(&addr) {
             // Disable boot rom
             debug!("Read disable boot rom 0x{:04x} (NOT IMPLEMENTED)", addr);
@@ -227,7 +229,7 @@ impl Bus {
                 "Write LCD controller 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
                 addr, b
             );
-            self.gfx.write(addr, b);
+            self.gfx.write_reg(addr, b);
         } else if IO_RANGE_DBR.contains(&addr) {
             if b == 0x01 {
                 self.has_booted = true;
