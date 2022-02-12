@@ -180,3 +180,24 @@ pub(super) enum RegPair {
     DE,
     HL,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_flags() {
+        let mut regs = Registers::default();
+        
+        assert!(!regs.flag_z().is_set());
+        regs.flag_z().set();
+        assert!(regs.flag_z().is_set());
+        regs.flag_z().clear();
+        assert!(!regs.flag_z().is_set());
+
+        regs.flag_z().set_value(true);
+        assert!(regs.flag_z().is_set());
+        regs.flag_z().set_value(false);
+        assert!(!regs.flag_z().is_set());
+    }
+}

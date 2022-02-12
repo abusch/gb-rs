@@ -183,8 +183,8 @@ impl Bus {
             0
         } else if IO_RANGE_LCD.contains(&addr) {
             // LCD
-            debug!("Read LCD controller 0x{:04x}", addr);
-            dbg!(self.gfx.read_reg(addr))
+            // debug!("Read LCD controller 0x{:04x}", addr);
+            self.gfx.read_reg(addr)
         } else if IO_RANGE_DBR.contains(&addr) {
             // Disable boot rom
             debug!("Read disable boot rom 0x{:04x} (NOT IMPLEMENTED)", addr);

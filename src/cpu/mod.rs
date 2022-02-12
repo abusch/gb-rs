@@ -22,7 +22,7 @@ impl Default for Cpu {
             regs: Default::default(),
             sp: Default::default(),
             pc: Default::default(),
-            breakpoint: 0x0064,
+            breakpoint: 0x0070,
             paused: Default::default(),
         }
     }
@@ -67,6 +67,8 @@ impl Cpu {
             0x14 => self.inc_r(Reg::D),
             // DEC D
             0x15 => self.dec_r(Reg::D),
+            // LD D,d8
+            0x16 => self.ld_r_d8(bus, Reg::D),
             // RLA
             0x17 => self.rla(),
             // JR r8
@@ -200,6 +202,8 @@ impl Cpu {
             0x7c => self.ld_r_r(Reg::A, Reg::H),
             0x7d => self.ld_r_r(Reg::A, Reg::L),
             0x7f => self.ld_r_r(Reg::A, Reg::A),
+            // ADD A,(HL)
+            0x86 => self.add_hl(bus),
             // SUB B
             0x90 => self.sub_r(Reg::B),
             // XOR A
@@ -258,7 +262,7 @@ impl Cpu {
 
             _ => {
                 self.dump_cpu();
-                unimplemented!("op=0x{:02x}, orig_pc=0x{:02x}", op, orig_pc);
+                unimplemented!("op=0x{:02x}, orig_pc=0x{:04x}", op, orig_pc);
             }
         }
     }
@@ -468,6 +472,17 @@ impl Cpu {
         self.rl_r(Reg::A);
         self.regs.flag_z().clear();
         4
+    }
+
+    fn add_hl(&mut self, bus: &mut Bus) -> u8 {
+        let hl = bus.read_byte(*self.regs.hl);
+        let (sum, carry) = self.regs.get(Reg::A).overflowing_add(hl);
+        self.regs.set(Reg::A, sum);
+        self.regs.flag_z().set_value(sum == 0);
+        self.regs.flag_n().clear();
+        self.regs.flag_c().set_value(carry);
+        // TODO how to set H?
+        8
     }
 
     fn sub_r(&mut self, reg: Reg) -> u8 {
