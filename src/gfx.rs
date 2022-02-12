@@ -5,6 +5,7 @@ const VRAM_START: u16 = 0x8000;
 const OAM_START: u16 = 0xFE00;
 
 const LCDC_REG: u16 = 0xFF40;
+const STAT_REG: u16 = 0xFF41;
 const SCY_REG: u16 = 0xFF42;
 const SCX_REG: u16 = 0xFF43;
 const LY_REG: u16 = 0xFF44;
@@ -20,6 +21,8 @@ pub struct Gfx {
     vram: Box<[u8]>,
     oam_ram: Box<[u8]>,
 
+    /// Number of clock cycles since we began rendering the current frame
+    dots: usize,
     running_mode: Mode,
 
     /// LCDC (LCD Control)
@@ -30,7 +33,7 @@ pub struct Gfx {
     /// SCX (Scroll X)
     scx: u8,
 
-    /// LY (LCD Y Coordinate)
+    /// LY (LCD Y Coordinate) == line currently being drawn
     ly: u8,
     /// LYC (LY Compare)
     lyc: u8,
@@ -53,7 +56,9 @@ impl Gfx {
         Self {
             vram: vec![0; 8 * 1024].into_boxed_slice(),
             oam_ram: vec![0; 0xA0].into_boxed_slice(),
-            running_mode: Mode::Mode0,
+            dots: 0,
+            running_mode: Mode::Mode2,
+            // TODO should it be exploded into individual flags?
             lcdc: 0,
             scy: 0,
             scx: 0,
@@ -98,6 +103,9 @@ impl Gfx {
     pub fn read_reg(&self, addr: u16) -> u8 {
         if addr == LCDC_REG {
             self.lcdc
+        } else if addr == STAT_REG {
+            // FF41 STAT
+            self.stat()
         } else if addr == SCY_REG {
             // FF42 SCY
             self.scy
@@ -160,18 +168,66 @@ impl Gfx {
             unimplemented!();
         }
     }
+
+    /// Return the value of the STAT register (FF41)
+    fn stat(&self) -> u8 {
+        // TODO interrupt sources
+        let mut byte = 0u8;
+        let bits = byte.view_bits_mut::<Lsb0>();
+        bits.set(2, self.ly == self.lyc);
+
+        let mode = self.running_mode as u8;
+        let mode_bits = mode.view_bits::<Lsb0>();
+        bits.set(1, mode_bits[1]);
+        bits.set(0, mode_bits[0]);
+
+        bits.load()
+    }
+
+    pub(crate) fn dots(&mut self, cycles: u8) {
+        for _ in 0..cycles {
+            self.dot();
+        }
+    }
+
+    /// Run the graphics subsystem for one clock cycle (or _dot_)
+    fn dot(&mut self) {
+        self.dots += 1;
+        let mut scanline = (self.dots / 456) as u8;
+        let line_dot = (self.dots % 456) as u16;
+
+        if scanline > 153 {
+            self.dots = line_dot as usize;
+            scanline = 0;
+        }
+        self.ly = scanline;
+
+        if scanline > 143 {
+            self.running_mode = Mode::Mode1;
+        } else {
+            self.running_mode = match line_dot {
+                0..=79 => Mode::Mode2,
+                80..=251 => Mode::Mode3,
+                252..=455 => Mode::Mode0,
+                // unreachable as we pattern match on the result of a modulo 456 operation
+                _ => unreachable!("This shouldn't happen!"),
+            }
+        }
+    }
 }
 
 fn get_palette_as_byte(palette: &[Color; 4]) -> u8 {
     let mut byte = 0u8;
     let bits = byte.view_bits_mut::<Lsb0>();
 
-    bits.chunks_mut(2).zip(palette.iter()).for_each(|(chunk, color)| {
-        let color_byte = color.as_u8();
-        let color_bits = color_byte.view_bits::<Lsb0>();
-        chunk.set(0, color_bits[0]);
-        chunk.set(1, color_bits[1]);
-    });
+    bits.chunks_mut(2)
+        .zip(palette.iter())
+        .for_each(|(chunk, color)| {
+            let color_byte = color.as_u8();
+            let color_bits = color_byte.view_bits::<Lsb0>();
+            chunk.set(0, color_bits[0]);
+            chunk.set(1, color_bits[1]);
+        });
 
     bits.load::<u8>()
 }
@@ -223,15 +279,16 @@ impl From<u8> for Color {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 enum Mode {
     /// HSync
-    Mode0,
+    Mode0 = 0,
     /// VSync
-    Mode1,
+    Mode1 = 1,
     /// OAM scan
-    Mode2,
+    Mode2 = 2,
     /// Drawing pixels
-    Mode3,
+    Mode3 = 3,
 }
 
 #[cfg(test)]
@@ -255,7 +312,12 @@ mod tests {
 
     #[test]
     fn test_get_palette_data() {
-        let palette = [Color::White, Color::LightGray, Color::DarkGray, Color::Black];
+        let palette = [
+            Color::White,
+            Color::LightGray,
+            Color::DarkGray,
+            Color::Black,
+        ];
 
         assert_eq!(0b11100100, get_palette_as_byte(&palette));
     }

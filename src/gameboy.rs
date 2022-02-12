@@ -16,7 +16,8 @@ impl GameBoy {
     }
 
     pub fn step(&mut self) {
-        self.cpu.step(&mut self.bus);
+        let cycles = self.cpu.step(&mut self.bus);
+        self.bus.cycle(cycles);
     }
 
     pub fn dump_cpu(&self) {

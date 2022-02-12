@@ -38,6 +38,7 @@ const IO_RANGE_LCD: RangeInclusive<u16> = 0xFF40..=0xFF4B;
 // Disable Boot ROM
 const IO_RANGE_DBR: RangeInclusive<u16> = 0xFF50..=0xFF50;
 
+const CYCLES_PER_SECOND: u64 = 4194304; // 4.194304 MHz
 
 pub struct Bus {
     ram: Box<[u8]>,
@@ -61,6 +62,11 @@ impl Bus {
             joypad: 0,
             has_booted: false,
         }
+    }
+
+    /// Run the different peripherals for the given number of clock cycles
+    pub fn cycle(&mut self, cycles: u8) {
+        self.gfx.dots(cycles);
     }
 
     pub fn read_byte(&self, addr: u16) -> u8 {
@@ -178,7 +184,7 @@ impl Bus {
         } else if IO_RANGE_LCD.contains(&addr) {
             // LCD
             debug!("Read LCD controller 0x{:04x}", addr);
-            self.gfx.read_reg(addr)
+            dbg!(self.gfx.read_reg(addr))
         } else if IO_RANGE_DBR.contains(&addr) {
             // Disable boot rom
             debug!("Read disable boot rom 0x{:04x} (NOT IMPLEMENTED)", addr);

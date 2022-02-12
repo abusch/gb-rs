@@ -29,7 +29,10 @@ impl Default for Cpu {
 }
 
 impl Cpu {
-    pub fn step(&mut self, bus: &mut Bus) {
+    /// Fetch and execute the next instructions.
+    ///
+    /// Return the number of clock cycles used.
+    pub fn step(&mut self, bus: &mut Bus) -> u8 {
         // for debugging
         if self.pc == self.breakpoint {
             self.paused = true;
@@ -37,16 +40,17 @@ impl Cpu {
 
         let orig_pc = self.pc;
         let op = self.fetch(bus);
+        // Number of clock cycles used by the instruction (T-states)
 
         match op {
             // INC BC
             0x03 => self.inc_rr(RegPair::BC),
-            // LD B,d8
-            0x06 => self.ld_r_d8(bus, Reg::B),
             // INC B
             0x04 => self.inc_r(Reg::B),
             // DEC B
             0x05 => self.dec_r(Reg::B),
+            // LD B,d8
+            0x06 => self.ld_r_d8(bus, Reg::B),
             // DEC BC
             0x0b => self.dec_rr(RegPair::BC),
             // INC C
@@ -71,6 +75,7 @@ impl Cpu {
             0x1a => {
                 let de = bus.read_byte(*self.regs.de);
                 self.regs.set(Reg::A, de);
+                8
             }
             // DEC DE
             0x1b => self.dec_rr(RegPair::DE),
@@ -84,7 +89,7 @@ impl Cpu {
             0x20 => {
                 // NZ
                 let flag = !self.regs.flag_z().is_set();
-                self.jr_if_r8(bus, flag);
+                self.jr_if_r8(bus, flag)
             }
             // LD HL,d16
             0x21 => self.ld_rr_d16(bus, RegPair::HL),
@@ -92,6 +97,7 @@ impl Cpu {
             0x22 => {
                 bus.write_byte(*self.regs.hl, self.regs.get(Reg::A));
                 *self.regs.hl = self.regs.hl.wrapping_add(1);
+                8
             }
             // INC HL
             0x23 => self.inc_rr(RegPair::HL),
@@ -103,7 +109,7 @@ impl Cpu {
             0x28 => {
                 // NZ
                 let flag = self.regs.flag_z().is_set();
-                self.jr_if_r8(bus, flag);
+                self.jr_if_r8(bus, flag)
             }
             // DEC HL
             0x2b => self.dec_rr(RegPair::HL),
@@ -114,11 +120,15 @@ impl Cpu {
             // LD L,d8
             0x2e => self.ld_r_d8(bus, Reg::L),
             // LD SP,d16
-            0x31 => self.sp = self.fetch_word(bus),
+            0x31 => {
+                self.sp = self.fetch_word(bus);
+                12
+            }
             // LD (HL-),A
             0x32 => {
                 bus.write_byte(self.regs.get_pair(RegPair::HL), self.regs.get(Reg::A));
                 *self.regs.hl = self.regs.hl.wrapping_sub(1);
+                8
             }
             // // INC SP
             // 0x33 => self.inc_rr(RegPair::SP),
@@ -180,6 +190,7 @@ impl Cpu {
             0x77 => {
                 let addr = *self.regs.hl;
                 bus.write_byte(addr, self.regs.get(Reg::A));
+                8
             }
             // LD A,A..L
             0x78 => self.ld_r_r(Reg::A, Reg::B),
@@ -203,6 +214,7 @@ impl Cpu {
             0xc9 => {
                 self.pc = self.pop_word(bus);
                 debug!("Returning from subroutine to 0x{:04x}", self.pc);
+                16
             }
             // CB prefix
             0xcb => self.step_cb(bus),
@@ -213,28 +225,33 @@ impl Cpu {
                 self.pc = addr;
 
                 debug!("Calling subroutine at 0x{:04x}", addr);
+                24
             }
             // LDH (a8),A
             0xe0 => {
                 let a8 = self.fetch(bus);
                 let addr = 0xFF00 + a8 as u16;
                 bus.write_byte(addr, self.regs.get(Reg::A));
+                12
             }
             // LD (C),A
             0xe2 => {
                 let addr = 0xFF00 + self.regs.get(Reg::C) as u16;
                 bus.write_byte(addr, self.regs.get(Reg::A));
+                8
             }
             // LD (a16),A
             0xea => {
                 let addr = self.fetch_word(bus);
                 bus.write_byte(addr, self.regs.get(Reg::A));
+                16
             }
             // LDH A,(a8)
             0xf0 => {
                 let a8 = self.fetch(bus);
                 let addr = 0xFF00 + a8 as u16;
                 self.regs.set(Reg::A, bus.read_byte(addr));
+                12
             }
             // CP d8
             0xfe => self.cp_d8(bus),
@@ -247,7 +264,7 @@ impl Cpu {
     }
 
     /// CB-prefixed instruction
-    fn step_cb(&mut self, bus: &mut Bus) {
+    fn step_cb(&mut self, bus: &mut Bus) -> u8 {
         let orig_pc = self.pc;
         let cb_op = self.fetch(bus);
         match cb_op {
@@ -280,34 +297,38 @@ impl Cpu {
     }
 
     /// LD r,d8
-    fn ld_r_d8(&mut self, bus: &mut Bus, reg: Reg) {
+    fn ld_r_d8(&mut self, bus: &mut Bus, reg: Reg) -> u8 {
         let d8 = self.fetch(bus);
         self.regs.set(reg, d8);
+        8
     }
 
     /// LD r,r
-    fn ld_r_r(&mut self, rt: Reg, rs: Reg) {
+    fn ld_r_r(&mut self, rt: Reg, rs: Reg) -> u8 {
         self.regs.set(rt, self.regs.get(rs));
+        4
     }
 
     /// LD rr,d16
-    fn ld_rr_d16(&mut self, bus: &mut Bus, reg: RegPair) {
+    fn ld_rr_d16(&mut self, bus: &mut Bus, reg: RegPair) -> u8 {
         let d16 = self.fetch_word(bus);
         self.regs.set_pair(reg, d16);
+        12
     }
 
     /// A <- A ^ r
-    fn xor_r(&mut self, reg: Reg) {
+    fn xor_r(&mut self, reg: Reg) -> u8 {
         let r = self.regs.get(reg);
         let new_a = self.regs.get(Reg::A) ^ r;
         self.regs.set(Reg::A, new_a);
         if new_a == 0 {
             self.regs.flag_z().set();
         }
+        4
     }
 
     /// DEC r
-    fn dec_r(&mut self, reg: Reg) {
+    fn dec_r(&mut self, reg: Reg) -> u8 {
         let mut r = self.regs.get(reg);
         r = r.wrapping_sub(1);
         self.regs.set(reg, r);
@@ -322,10 +343,11 @@ impl Cpu {
         } else {
             self.regs.flag_h().clear();
         }
+        4
     }
 
     /// INC r
-    fn inc_r(&mut self, reg: Reg) {
+    fn inc_r(&mut self, reg: Reg) -> u8 {
         let mut r = self.regs.get(reg);
         r = r.wrapping_add(1);
         self.regs.set(reg, r);
@@ -340,22 +362,25 @@ impl Cpu {
         } else {
             self.regs.flag_h().clear();
         }
+        4
     }
 
     /// DEC rr
-    fn dec_rr(&mut self, reg: RegPair) {
+    fn dec_rr(&mut self, reg: RegPair) -> u8 {
         self.regs
             .set_pair(reg, self.regs.get_pair(reg).wrapping_sub(1));
+        8
     }
 
     /// INC rr
-    fn inc_rr(&mut self, reg: RegPair) {
+    fn inc_rr(&mut self, reg: RegPair) -> u8 {
         self.regs
             .set_pair(reg, self.regs.get_pair(reg).wrapping_add(1));
+        8
     }
 
     /// Test bit n of register r
-    fn bit_n_r(&mut self, n: u8, reg: Reg) {
+    fn bit_n_r(&mut self, n: u8, reg: Reg) -> u8 {
         let r = self.regs.get(reg);
         if r & (1 << n) == 0 {
             self.regs.flag_z().set();
@@ -364,25 +389,31 @@ impl Cpu {
         }
         self.regs.flag_n().clear();
         self.regs.flag_h().set();
+        8
     }
 
     /// Conditional relative jump
-    fn jr_if_r8(&mut self, bus: &mut Bus, flag: bool) {
+    fn jr_if_r8(&mut self, bus: &mut Bus, flag: bool) -> u8 {
         let r8 = self.fetch(bus) as i8;
         if flag {
             self.pc = self.pc.wrapping_add(r8 as i16 as u16);
+            12
+        } else {
+            8
         }
     }
 
     /// PUSH rr
-    fn push_rr(&mut self, bus: &mut Bus, rr: RegPair) {
+    fn push_rr(&mut self, bus: &mut Bus, rr: RegPair) -> u8 {
         self.push_word(bus, self.regs.get_pair(rr));
+        16
     }
 
     /// POP rr
-    fn pop_rr(&mut self, bus: &mut Bus, rr: RegPair) {
+    fn pop_rr(&mut self, bus: &mut Bus, rr: RegPair) -> u8 {
         let word = self.pop_word(bus);
         self.regs.set_pair(rr, word);
+        12
     }
 
     /// PUSH a16
@@ -399,7 +430,7 @@ impl Cpu {
     }
 
     /// RL r ;rotate left through carry
-    fn rl_r(&mut self, reg: Reg) {
+    fn rl_r(&mut self, reg: Reg) -> u8 {
         // C <- [7 <- 0] <- C
         let mut r = self.regs.get(reg);
         let c = self.regs.flag_c().is_set();
@@ -427,16 +458,19 @@ impl Cpu {
         } else {
             self.regs.flag_c().set();
         }
+
+        8
     }
 
     /// RLA
-    fn rla(&mut self) {
+    fn rla(&mut self) -> u8 {
         // Same as RL A but Z is always cleared
         self.rl_r(Reg::A);
         self.regs.flag_z().clear();
+        4
     }
 
-    fn sub_r(&mut self, reg: Reg) {
+    fn sub_r(&mut self, reg: Reg) -> u8 {
         let d8 = self.regs.get(reg);
         let (sub, carry) = self.regs.get(Reg::A).overflowing_sub(d8);
         self.regs.set(Reg::A, sub);
@@ -444,16 +478,19 @@ impl Cpu {
         self.regs.flag_n().set();
         self.regs.flag_c().set_value(carry);
         // TODO how to set H?
+        4
     }
 
-    fn cp_hl(&mut self, bus: &mut Bus) {
+    fn cp_hl(&mut self, bus: &mut Bus) -> u8 {
         let d8 = bus.read_byte(self.regs.get_pair(RegPair::HL));
         self.cp(d8);
+        8
     }
 
-    fn cp_d8(&mut self, bus: &mut Bus) {
+    fn cp_d8(&mut self, bus: &mut Bus) -> u8 {
         let d8 = self.fetch(bus);
         self.cp(d8);
+        8
     }
 
     fn cp(&mut self, value: u8) {
