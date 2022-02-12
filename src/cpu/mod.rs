@@ -387,7 +387,6 @@ impl Cpu {
 
     /// PUSH a16
     fn push_word(&mut self, bus: &mut Bus, word: u16) {
-        debug!("Pushing 0x{:04x}", word);
         self.sp = self.sp.wrapping_sub(2);
         bus.write_word(self.sp, word);
     }
@@ -395,7 +394,6 @@ impl Cpu {
     /// POP a16
     fn pop_word(&mut self, bus: &mut Bus) -> u16 {
         let word = bus.read_word(self.sp);
-        debug!("Popped 0x{:04x}", word);
         self.sp = self.sp.wrapping_add(2);
         word
     }

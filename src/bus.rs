@@ -150,35 +150,41 @@ impl Bus {
                 "Read Joypad controller register 0x{:04x} (NOT IMPLEMENTED)",
                 addr
             );
-            return self.joypad;
+            self.joypad
         } else if IO_RANGE_COM.contains(&addr) {
             // Communication controller
             debug!(
                 "Read communication controller register 0x{:04x} (NOT IMPLEMENTED)",
                 addr
             );
+            0
         } else if IO_RANGE_TIM.contains(&addr) {
             // Divider and timer
             debug!(
                 "Read divider and timer register 0x{:04x} (NOT IMPLEMENTED)",
                 addr
             );
+            0
         } else if IO_RANGE_APU.contains(&addr) {
             // Sound
             debug!("Read sound register 0x{:04x} (NOT IMPLEMENTED)", addr);
+            0
         } else if IO_RANGE_WAV.contains(&addr) {
             // Waveform ram
             debug!("Read waveform RAM 0x{:04x} (NOT IMPLEMENTED)", addr);
+            0
         } else if IO_RANGE_LCD.contains(&addr) {
             // LCD
-            debug!("Read LCD controller 0x{:04x} (NOT IMPLEMENTED)", addr);
+            debug!("Read LCD controller 0x{:04x}", addr);
+            self.gfx.read(addr)
         } else if IO_RANGE_DBR.contains(&addr) {
             // Disable boot rom
             debug!("Read disable boot rom 0x{:04x} (NOT IMPLEMENTED)", addr);
+            0
         } else {
             debug!("Read unknown I/O Register 0x{:04x} (NOT IMPLEMENTED)", addr);
+            0
         }
-        0
     }
 
     /// Write access to IO registers.
