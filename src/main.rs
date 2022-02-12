@@ -1,15 +1,12 @@
-mod bus;
-mod cartridge;
-mod cpu;
-mod gameboy;
-mod gfx;
-
 use std::{io::stdin, sync::mpsc::channel};
 
 use anyhow::Result;
 use log::info;
 
-use crate::gameboy::GameBoy;
+use gb_rs::{
+    gameboy::GameBoy,
+    cartridge::Cartridge,
+};
 
 fn main() -> Result<()> {
     // initialise logger
@@ -19,7 +16,7 @@ fn main() -> Result<()> {
     ctrlc::set_handler(move || tx.send(()).expect("Could not send signal on channel."))
         .expect("Error setting Ctrl-C handler");
 
-    let cartridge = cartridge::Cartridge::load("assets/Tetris (World).gb")?;
+    let cartridge = Cartridge::load("assets/Tetris (World).gb")?;
     if cartridge.is_cgb() {
         info!("CGB flag is set");
     }
