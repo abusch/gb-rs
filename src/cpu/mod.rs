@@ -223,8 +223,36 @@ impl Cpu {
             0x86 => self.add_hl(bus),
             // SUB B
             0x90 => self.sub_r(Reg::B),
+            // AND B
+            0xa0 => self.and_r(Reg::B),
+            // AND C
+            0xa1 => self.and_r(Reg::C),
+            // AND D
+            0xa2 => self.and_r(Reg::D),
+            // AND E
+            0xa3 => self.and_r(Reg::E),
+            // AND H
+            0xa4 => self.and_r(Reg::H),
+            // AND L
+            0xa5 => self.and_r(Reg::L),
+            // AND A
+            0xa7 => self.and_r(Reg::A),
             // XOR A
             0xaf => self.xor_r(Reg::A),
+            // OR B
+            0xb0 => self.or_r(Reg::B),
+            // OR C
+            0xb1 => self.or_r(Reg::C),
+            // OR D
+            0xb2 => self.or_r(Reg::D),
+            // OR E
+            0xb3 => self.or_r(Reg::E),
+            // OR H
+            0xb4 => self.or_r(Reg::H),
+            // OR L
+            0xb5 => self.or_r(Reg::L),
+            // OR A
+            0xb7 => self.or_r(Reg::A),
             // CP (HL)
             0xbe => self.cp_hl(bus),
             // POP BC
@@ -403,6 +431,22 @@ impl Cpu {
         if new_a == 0 {
             self.regs.flag_z().set();
         }
+        4
+    }
+
+    /// AND r
+    fn and_r(&mut self, r: Reg) -> u8 {
+        let res = self.regs.get(Reg::A) & self.regs.get(r);
+        self.regs.flag_z().set_value(res == 0);
+        self.regs.set(Reg::A, res);
+        4
+    }
+
+    /// OR r
+    fn or_r(&mut self, r: Reg) -> u8 {
+        let res = self.regs.get(Reg::A) | self.regs.get(r);
+        self.regs.flag_z().set_value(res == 0);
+        self.regs.set(Reg::A, res);
         4
     }
 
