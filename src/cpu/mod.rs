@@ -259,6 +259,11 @@ impl Cpu {
             0xc1 => self.pop_rr(bus, RegPair::BC),
             // JP a16
             0xc3 => self.jp_if_a16(bus, true),
+            // CALL NZ a16
+            0xc4 => {
+                let nz = !self.regs.flag_z().is_set();
+                self.call_if_a16(bus, nz)
+            }
             // PUSH BC
             0xc5 => self.push_rr(bus, RegPair::BC),
             // RST 0x00
@@ -266,28 +271,36 @@ impl Cpu {
             // RET
             0xc9 => {
                 self.pc = self.pop_word(bus);
-                debug!("Returning from subroutine to 0x{:04x}", self.pc);
+                // debug!("Returning from subroutine to 0x{:04x}", self.pc);
                 16
             }
             // CB prefix
             0xcb => self.step_cb(bus),
-            // CALL a16
-            0xcd => {
-                let addr = self.fetch_word(bus);
-                self.push_word(bus, self.pc);
-                self.pc = addr;
-
-                debug!("Calling subroutine at 0x{:04x}", addr);
-                24
+            // CALL Z a16
+            0xcc => {
+                let z = self.regs.flag_z().is_set();
+                self.call_if_a16(bus, z)
             }
+            // CALL a16
+            0xcd => self.call_if_a16(bus, true),
             // RST 0x08
             0xcf => self.rst(0x08),
             // POP DE
             0xd1 => self.pop_rr(bus, RegPair::DE),
+            // CALL NC a16
+            0xd4 => {
+                let nc = !self.regs.flag_c().is_set();
+                self.call_if_a16(bus, nc)
+            }
             // PUSH DE
             0xd5 => self.push_rr(bus, RegPair::DE),
             // RST 0x10
             0xd7 => self.rst(0x10),
+            // CALL C a16
+            0xdc => {
+                let c = self.regs.flag_c().is_set();
+                self.call_if_a16(bus, c)
+            }
             // RST 0x18
             0xdf => self.rst(0x18),
             // LDH (a8),A
@@ -307,6 +320,8 @@ impl Cpu {
             }
             // PUSH HL
             0xe5 => self.push_rr(bus, RegPair::HL),
+            // AND d8
+            0xe6 => self.and_d8(bus),
             // RST 0x20
             0xe7 => self.rst(0x20),
             // LD (a16),A
@@ -359,7 +374,7 @@ impl Cpu {
 
     // TODO probably should implement Debug instead...
     pub fn dump_cpu(&self) {
-        debug!(
+        println!(
             "PC=0x{:04x}, SP=0x{:04x},\n\tregs={:?}",
             self.pc, self.sp, self.regs
         );
@@ -436,7 +451,19 @@ impl Cpu {
 
     /// AND r
     fn and_r(&mut self, r: Reg) -> u8 {
-        let res = self.regs.get(Reg::A) & self.regs.get(r);
+        self.and(self.regs.get(r))
+    }
+
+    /// AND d8 
+    fn and_d8(&mut self, bus: &mut Bus) -> u8 {
+        let d8 = self.fetch(bus);
+        self.and(d8);
+        8
+    }
+
+    /// AND <value> 
+    fn and(&mut self, v: u8) -> u8 {
+        let res = self.regs.get(Reg::A) & v;
         self.regs.flag_z().set_value(res == 0);
         self.regs.flag_n().clear();
         self.regs.flag_h().set();
@@ -541,6 +568,20 @@ impl Cpu {
        } else {
            12
        }
+    }
+
+    /// conditional CALL
+    fn call_if_a16(&mut self, bus: &mut Bus, flag: bool) -> u8 {
+        if flag {
+            let addr = self.fetch_word(bus);
+            self.push_word(bus, self.pc);
+            self.pc = addr;
+
+            // debug!("Calling subroutine at 0x{:04x}", addr);
+            24
+        } else {
+            12
+        }
     }
 
     /// PUSH rr

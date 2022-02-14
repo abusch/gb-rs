@@ -205,7 +205,7 @@ impl Gfx {
             self.obj_size = bits[2];
             self.obj_enabled = bits[1];
             self.bg_and_window_enable_priority = bits[0];
-            debug!("LCDC reg = 0b{:b}", b);
+            // debug!("LCDC reg = 0b{:b}", b);
         } else if addr == SCY_REG {
             // FF42 SCY
             self.scy = b;
