@@ -3,7 +3,7 @@ use std::ops::RangeInclusive;
 // use bitvec::prelude as bv;
 use log::{debug, warn};
 
-use crate::{cartridge::Cartridge, gfx::Gfx};
+use crate::{cartridge::Cartridge, gfx::Gfx, FrameSink};
 
 const BOOT_ROM_DATA: &[u8] = include_bytes!("../assets/dmg_boot.bin");
 
@@ -65,8 +65,8 @@ impl Bus {
     }
 
     /// Run the different peripherals for the given number of clock cycles
-    pub fn cycle(&mut self, cycles: u8) {
-        self.gfx.dots(cycles);
+    pub fn cycle(&mut self, cycles: u8, frame_sync: &mut dyn FrameSink) {
+        self.gfx.dots(cycles, frame_sync);
     }
 
     pub fn read_byte(&self, addr: u16) -> u8 {
@@ -232,7 +232,7 @@ impl Bus {
         } else if IO_RANGE_LCD.contains(&addr) {
             // LCD
             debug!(
-                "Write LCD controller 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
+                "Write LCD controller 0x{:04x}<-0x{:02X}",
                 addr, b
             );
             self.gfx.write_reg(addr, b);

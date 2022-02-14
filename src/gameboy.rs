@@ -1,3 +1,4 @@
+use crate::FrameSink;
 use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
 use crate::bus::Bus;
@@ -15,9 +16,9 @@ impl GameBoy {
         }
     }
 
-    pub fn step(&mut self) {
+    pub fn step(&mut self, frame_sink: &mut dyn FrameSink) {
         let cycles = self.cpu.step(&mut self.bus);
-        self.bus.cycle(cycles);
+        self.bus.cycle(cycles, frame_sink);
     }
 
     pub fn dump_cpu(&self) {

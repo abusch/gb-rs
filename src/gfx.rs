@@ -1,11 +1,14 @@
 use bitvec::prelude::*;
 use log::debug;
 
-const SCREEN_WIDTH: usize = 160;
-const SCREEN_HEIGHT: usize = 144;
+use crate::{FrameSink, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 const VRAM_START: u16 = 0x8000;
 const OAM_START: u16 = 0xFE00;
+
+const VRAM_TILE_DATA_BLOCK_0_ADDR: u16 = 0x8000;
+const VRAM_TILE_DATA_BLOCK_1_ADDR: u16 = 0x8800;
+const VRAM_TILE_DATA_BLOCK_2_ADDR: u16 = 0x9000;
 
 const LCDC_REG: u16 = 0xFF40;
 const STAT_REG: u16 = 0xFF41;
@@ -27,7 +30,7 @@ pub struct Gfx {
     /// Represents the LCD itself, i.e. where pixels are actually written.
     ///
     /// Each pixel is in RGBA format.
-    lcd: Box<[u8]>,
+    lcd: Box<[(u8, u8, u8)]>,
 
     /// Number of clock cycles since we began rendering the current frame
     dots: usize,
@@ -35,8 +38,6 @@ pub struct Gfx {
     pixel_bg_fetcher_step: PixelFetcherStep,
     line_drawing_state: LineDrawingState,
 
-    /// LCDC (LCD Control)
-    lcdc: u8,
     // LCDC individual flags:
     /// LCDC.7
     lcd_and_ppu_enabled: bool,
@@ -83,13 +84,12 @@ impl Gfx {
         Self {
             vram: vec![0; 8 * 1024].into_boxed_slice(),
             oam_ram: vec![0; 0xA0].into_boxed_slice(),
-            lcd: vec![0; SCREEN_WIDTH * SCREEN_HEIGHT * 4].into_boxed_slice(),
+            lcd: vec![(0, 0, 0); SCREEN_WIDTH * SCREEN_HEIGHT].into_boxed_slice(),
             dots: 0,
             running_mode: Mode::Mode2,
             pixel_bg_fetcher_step: PixelFetcherStep::GetTile,
             line_drawing_state: LineDrawingState::Idle,
             // TODO should it be exploded into individual flags?
-            lcdc: 0,
             lcd_and_ppu_enabled: false,
             window_tile_map_area: false,
             window_enable: false,
@@ -196,8 +196,7 @@ impl Gfx {
 
     pub fn write_reg(&mut self, addr: u16, b: u8) {
         if addr == LCDC_REG {
-            self.lcdc = b;
-            let bits = self.lcdc.view_bits::<Lsb0>();
+            let bits = b.view_bits::<Lsb0>();
             self.lcd_and_ppu_enabled = bits[7];
             self.window_tile_map_area = bits[6];
             self.window_enable = bits[5];
@@ -206,6 +205,7 @@ impl Gfx {
             self.obj_size = bits[2];
             self.obj_enabled = bits[1];
             self.bg_and_window_enable_priority = bits[0];
+            debug!("LCDC reg = 0b{:b}", b);
         } else if addr == SCY_REG {
             // FF42 SCY
             self.scy = b;
@@ -251,18 +251,20 @@ impl Gfx {
         bits.load()
     }
 
-    pub(crate) fn dots(&mut self, cycles: u8) {
+    pub(crate) fn dots(&mut self, cycles: u8, frame_sink: &mut dyn FrameSink) {
         for _ in 0..cycles {
-            self.dot();
+            self.dot(frame_sink);
         }
     }
 
     /// Run the graphics subsystem for one clock cycle (or _dot_)
-    fn dot(&mut self) {
+    fn dot(&mut self, frame_sink: &mut dyn FrameSink) {
         self.dots += 1;
+        // Each scanline takes 456 dots
         let mut scanline = (self.dots / 456) as u8;
         let line_dot = (self.dots % 456) as u16;
 
+        // A whole frame (drawing + VSync) is 153 scanlines
         if scanline > 153 {
             self.dots = line_dot as usize;
             scanline = 0;
@@ -287,9 +289,16 @@ impl Gfx {
                     self.line_drawing_state = LineDrawingState::Idle;
                 }
             }
-            Mode::Mode1 => (),
-            Mode::Mode2 => {
+            Mode::Mode1 => {
                 if self.line_drawing_state == LineDrawingState::Idle {
+                    frame_sink.push_frame(&self.lcd);
+                    self.line_drawing_state = LineDrawingState::FramePushed;
+                }
+            }
+            Mode::Mode2 => {
+                if self.line_drawing_state == LineDrawingState::Idle
+                    || self.line_drawing_state == LineDrawingState::FramePushed
+                {
                     // OAM scan
                     self.line_drawing_state = LineDrawingState::OamScan;
                     // TODO do the actual scan
@@ -311,48 +320,51 @@ impl Gfx {
         } else {
             0x9800
         };
-        // (tile_x, tile_y) are the "tile coordinates", i.e which column/row in the 32x32 tile map.
-        let tile_y = (self.scy + self.ly) / 8;
+        // let tile_y = (self.scy + self.ly) / 8;
         // Render a line of pixels
         for x in 0..SCREEN_WIDTH as u8 {
-            let tile_x = ((self.scx + x) / 8) & 0x1F;
-            let tile_id = self.read_vram_internal(tilemap_area + (tile_y as u16 * 32 + tile_x as u16));
-            // if tile_id != 0 {
-            //     debug!(
-            //         "pixel ({}, {}): tileid = {}",
-            //         self.scy + self.ly,
-            //         x,
-            //         tile_id
-            //         );
-            // }
+            // Coordinates in "LCD space" (i.e 160x144)
+            let (lcd_x, lcd_y) = (x, self.ly);
+            // Coordinates in "Background area" space (i.e 256x256)
+            let (bg_x, bg_y) = (lcd_x + self.scx, lcd_y + self.scy);
+            // Coordinates in "tilemap space" (i.e. 32x32)
+            let (tilemap_x, tilemap_y) = (bg_x / 8, bg_y / 8);
+
+            let tile_id =
+                self.read_vram_internal(tilemap_area + (tilemap_y as u16 * 32 + tilemap_x as u16));
 
             // Now that we've got the tileid, look up the tile data in the appropriate location.
 
-            let tile_offset: u16 = if self.bg_and_window_tile_data_area {
-                let base = 0x8000;
-                base + tile_id as u16
+            // Coordinates in "tile space" (i.e. which pixel of an 8x8 tile to draw)
+            let (tile_col, tile_row) = (bg_x % 8, bg_y % 8);
+
+            let mut tile_offset: u16 = if self.bg_and_window_tile_data_area {
+                let base = VRAM_TILE_DATA_BLOCK_0_ADDR;
+                // treat tile id as unsigned
+                base + 16 * tile_id as u16
             } else {
-                let base = 0x8800u16 as i16;
+                let base = VRAM_TILE_DATA_BLOCK_2_ADDR as i16;
+                // treat tile id as *signed*
                 let signed_id = tile_id as i8;
-                (base + signed_id as i16) as u16
+                (base + 16 * signed_id as i16) as u16
             };
+            tile_offset += 2 * tile_row as u16;
+
             let hi_byte = self.read_vram_internal(tile_offset);
             let lo_byte = self.read_vram_internal(tile_offset + 1);
 
-            // which line of the tile are we drawing?
-            let tile_line = (self.scy + self.ly) % 8;
             let mut color_byte = 0u8;
             let color_bits = color_byte.view_bits_mut::<Lsb0>();
-            color_bits.set(1, hi_byte.view_bits::<Lsb0>()[tile_line as usize]);
-            color_bits.set(0, lo_byte.view_bits::<Lsb0>()[tile_line as usize]);
+            // Use Msb0 order here as pixel 0 is the leftmost bit (bit 7).
+            color_bits.set(1, hi_byte.view_bits::<Msb0>()[tile_col as usize]);
+            color_bits.set(0, lo_byte.view_bits::<Msb0>()[tile_col as usize]);
             let color = self.bgp[color_byte as usize];
             self.write_pixel(x, self.ly, color);
         }
     }
 
     fn write_pixel(&mut self, x: u8, y: u8, color: Color) {
-        let offset = (y as usize * SCREEN_WIDTH + x as usize) * 4;
-        self.lcd[offset..=offset+4].copy_from_slice(&color.as_rgba());
+        self.lcd[y as usize * SCREEN_WIDTH + x as usize] = color.as_rgba();
     }
 }
 
@@ -405,12 +417,12 @@ impl Color {
         }
     }
 
-    fn as_rgba(&self) -> [u8; 4] {
+    fn as_rgba(&self) -> (u8, u8, u8) {
         match self {
-            Color::White => [0xe0, 0xf8, 0xd0, 0xff],
-            Color::LightGray => [0x88, 0xc0, 0x70, 0xff],
-            Color::DarkGray => [0x30, 0x68, 0x50, 0xff],
-            Color::Black => [0x08, 0x18, 0x20, 0xff],
+            Color::White => (0xe0, 0xf8, 0xd0),
+            Color::LightGray => (0x88, 0xc0, 0x70),
+            Color::DarkGray => (0x30, 0x68, 0x50),
+            Color::Black => (0x08, 0x18, 0x20),
         }
     }
 }
@@ -454,6 +466,7 @@ enum LineDrawingState {
     Idle,
     OamScan,
     Drawing,
+    FramePushed,
 }
 
 #[cfg(test)]

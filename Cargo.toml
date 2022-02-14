@@ -11,3 +11,5 @@ bitvec = "1.0.0"
 ctrlc = "3.2.1"
 log = "0.4.14"
 env_logger = "0.9.0"
+# minifb = "0.20.0"
+minifb = { git = "https://github.com/emoon/rust_minifb", branch="master" }
