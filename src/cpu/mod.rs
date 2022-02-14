@@ -22,7 +22,7 @@ impl Default for Cpu {
             regs: Default::default(),
             sp: Default::default(),
             pc: Default::default(),
-            breakpoint: 0x0100,
+            breakpoint: 0xffff,
             paused: Default::default(),
         }
     }
@@ -44,6 +44,10 @@ impl Cpu {
         match op {
             // NOP
             0x00 => 4,
+            // LD BC,d16
+            0x01 => self.ld_rr_d16(bus, RegPair::BC),
+            // LD (BC),A
+            0x02 => self.ld_addr_r(bus, RegPair::BC, Reg::A),
             // INC BC
             0x03 => self.inc_rr(RegPair::BC),
             // INC B
@@ -52,6 +56,8 @@ impl Cpu {
             0x05 => self.dec_r(Reg::B),
             // LD B,d8
             0x06 => self.ld_r_d8(bus, Reg::B),
+            // LD A,(BC)
+            0x0a => self.ld_r_addr(bus, Reg::A, RegPair::BC),
             // DEC BC
             0x0b => self.dec_rr(RegPair::BC),
             // INC C
@@ -62,6 +68,8 @@ impl Cpu {
             0x0e => self.ld_r_d8(bus, Reg::C),
             // LD DE,d16
             0x11 => self.ld_rr_d16(bus, RegPair::DE),
+            // LD (DE),A
+            0x12 => self.ld_addr_r(bus, RegPair::DE, Reg::A),
             // INC DE
             0x13 => self.inc_rr(RegPair::DE),
             // INC D
@@ -75,11 +83,7 @@ impl Cpu {
             // JR r8
             0x18 => self.jr_if_r8(bus, true),
             // LD A,(DE)
-            0x1a => {
-                let de = bus.read_byte(*self.regs.de);
-                self.regs.set(Reg::A, de);
-                8
-            }
+            0x1a => self.ld_r_addr(bus, Reg::A, RegPair::DE),
             // DEC DE
             0x1b => self.dec_rr(RegPair::DE),
             // INC E
@@ -114,6 +118,12 @@ impl Cpu {
                 let flag = self.regs.flag_z().is_set();
                 self.jr_if_r8(bus, flag)
             }
+            // LD A,(HL+)
+            0x2a => {
+                self.ld_r_addr(bus, Reg::A, RegPair::HL);
+                *self.regs.hl = self.regs.hl.wrapping_add(1);
+                8
+            }
             // DEC HL
             0x2b => self.dec_rr(RegPair::HL),
             // INC L
@@ -135,6 +145,12 @@ impl Cpu {
             }
             // // INC SP
             // 0x33 => self.inc_rr(RegPair::SP),
+            // LD A,(HL-)
+            0x3a => {
+                self.ld_r_addr(bus, Reg::A, RegPair::HL);
+                *self.regs.hl = self.regs.hl.wrapping_sub(1);
+                8
+            }
             // INC A
             0x3c => self.inc_r(Reg::A),
             // DEC A
@@ -217,6 +233,8 @@ impl Cpu {
             0xc3 => self.jp_if_a16(bus, true),
             // PUSH BC
             0xc5 => self.push_rr(bus, RegPair::BC),
+            // RST 0x00
+            0xc7 => self.rst(0x00),
             // RET
             0xc9 => {
                 self.pc = self.pop_word(bus);
@@ -234,6 +252,12 @@ impl Cpu {
                 debug!("Calling subroutine at 0x{:04x}", addr);
                 24
             }
+            // RST 0x08
+            0xcf => self.rst(0x08),
+            // RST 0x10
+            0xd7 => self.rst(0x10),
+            // RST 0x18
+            0xdf => self.rst(0x18),
             // LDH (a8),A
             0xe0 => {
                 let a8 = self.fetch(bus);
@@ -247,12 +271,16 @@ impl Cpu {
                 bus.write_byte(addr, self.regs.get(Reg::A));
                 8
             }
+            // RST 0x20
+            0xe7 => self.rst(0x20),
             // LD (a16),A
             0xea => {
                 let addr = self.fetch_word(bus);
                 bus.write_byte(addr, self.regs.get(Reg::A));
                 16
             }
+            // RST 0x28
+            0xef => self.rst(0x28),
             // LDH A,(a8)
             0xf0 => {
                 let a8 = self.fetch(bus);
@@ -260,8 +288,12 @@ impl Cpu {
                 self.regs.set(Reg::A, bus.read_byte(addr));
                 12
             }
+            // RST 0x30
+            0xf7 => self.rst(0x30),
             // CP d8
             0xfe => self.cp_d8(bus),
+            // RST 0x38
+            0xff => self.rst(0x38),
 
             _ => {
                 // self.dump_cpu();
@@ -326,6 +358,18 @@ impl Cpu {
         let d16 = self.fetch_word(bus);
         self.regs.set_pair(reg, d16);
         12
+    }
+
+    fn ld_r_addr(&mut self, bus: &mut Bus, r: Reg, rr: RegPair) -> u8 {
+        let addr = self.regs.get_pair(rr);
+        self.regs.set(r, bus.read_byte(addr));
+        8
+    }
+
+    fn ld_addr_r(&mut self, bus: &mut Bus, rr: RegPair, r: Reg) -> u8 {
+        let addr = self.regs.get_pair(rr);
+        bus.write_byte(addr, self.regs.get(r));
+        8
     }
 
     /// A <- A ^ r
@@ -533,6 +577,11 @@ impl Cpu {
         self.regs.flag_n().set();
         self.regs.flag_c().set_value(carry);
         // TODO how to set H?
+    }
+
+    fn rst(&mut self, vec: u8) -> u8 {
+        self.pc = vec as u16;
+        16
     }
 
     pub fn is_paused(&self) -> bool {
