@@ -40,9 +40,10 @@ impl Cpu {
 
         let orig_pc = self.pc;
         let op = self.fetch(bus);
-        // Number of clock cycles used by the instruction (T-states)
 
         match op {
+            // NOP
+            0x00 => 4,
             // INC BC
             0x03 => self.inc_rr(RegPair::BC),
             // INC B
@@ -212,6 +213,8 @@ impl Cpu {
             0xbe => self.cp_hl(bus),
             // POP BC
             0xc1 => self.pop_rr(bus, RegPair::BC),
+            // JP a16
+            0xc3 => self.jp_if_a16(bus, true),
             // PUSH BC
             0xc5 => self.push_rr(bus, RegPair::BC),
             // RET
@@ -405,6 +408,17 @@ impl Cpu {
         } else {
             8
         }
+    }
+
+    /// conditional absolute jump
+    fn jp_if_a16(&mut self, bus: &mut Bus, flag: bool) -> u8 {
+       let a16 = self.fetch_word(bus); 
+       if flag {
+           self.pc = a16;
+           16
+       } else {
+           12
+       }
     }
 
     /// PUSH rr
