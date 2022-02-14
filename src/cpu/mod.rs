@@ -438,6 +438,9 @@ impl Cpu {
     fn and_r(&mut self, r: Reg) -> u8 {
         let res = self.regs.get(Reg::A) & self.regs.get(r);
         self.regs.flag_z().set_value(res == 0);
+        self.regs.flag_n().clear();
+        self.regs.flag_h().set();
+        self.regs.flag_c().clear();
         self.regs.set(Reg::A, res);
         4
     }
@@ -446,6 +449,9 @@ impl Cpu {
     fn or_r(&mut self, r: Reg) -> u8 {
         let res = self.regs.get(Reg::A) | self.regs.get(r);
         self.regs.flag_z().set_value(res == 0);
+        self.regs.flag_n().clear();
+        self.regs.flag_h().clear();
+        self.regs.flag_c().clear();
         self.regs.set(Reg::A, res);
         4
     }
