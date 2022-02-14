@@ -87,7 +87,7 @@ impl Cpu {
             // DEC E
             0x1d => self.dec_r(Reg::E),
             // LD E,d8
-            0x1e => self.ld_r_d8(bus, Reg::C),
+            0x1e => self.ld_r_d8(bus, Reg::E),
             // JR NZ,r8
             0x20 => {
                 // NZ
@@ -96,7 +96,7 @@ impl Cpu {
             }
             // LD HL,d16
             0x21 => self.ld_rr_d16(bus, RegPair::HL),
-            // LD (HL-),A
+            // LD (HL+),A
             0x22 => {
                 bus.write_byte(*self.regs.hl, self.regs.get(Reg::A));
                 *self.regs.hl = self.regs.hl.wrapping_add(1);
