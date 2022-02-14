@@ -35,13 +35,13 @@ fn main() -> Result<()> {
             info!("Got ctrl-c. Exiting...");
             break;
         }
-        // if gb.is_paused() {
-        //     stdin().read_line(&mut buf).unwrap();
-        //     gb.step();
-        //     gb.dump_cpu();
-        // } else {
+        if gb.is_paused() {
+            stdin().read_line(&mut buf).unwrap();
             gb.step();
-        // }
+            gb.dump_cpu();
+        } else {
+            gb.step();
+        }
     }
     gb.dump_cpu();
 

@@ -22,7 +22,7 @@ impl Default for Cpu {
             regs: Default::default(),
             sp: Default::default(),
             pc: Default::default(),
-            breakpoint: 0x0070,
+            breakpoint: 0x00fe,
             paused: Default::default(),
         }
     }

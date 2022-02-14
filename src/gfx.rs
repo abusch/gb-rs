@@ -1,6 +1,9 @@
 use bitvec::prelude::*;
 use log::debug;
 
+const SCREEN_WIDTH: usize = 160;
+const SCREEN_HEIGHT: usize = 144;
+
 const VRAM_START: u16 = 0x8000;
 const OAM_START: u16 = 0xFE00;
 
@@ -21,12 +24,36 @@ pub struct Gfx {
     vram: Box<[u8]>,
     oam_ram: Box<[u8]>,
 
+    /// Represents the LCD itself, i.e. where pixels are actually written.
+    ///
+    /// Each pixel is in RGBA format.
+    lcd: Box<[u8]>,
+
     /// Number of clock cycles since we began rendering the current frame
     dots: usize,
     running_mode: Mode,
+    pixel_bg_fetcher_step: PixelFetcherStep,
+    line_drawing_state: LineDrawingState,
 
     /// LCDC (LCD Control)
     lcdc: u8,
+    // LCDC individual flags:
+    /// LCDC.7
+    lcd_and_ppu_enabled: bool,
+    /// LCDC.6
+    window_tile_map_area: bool,
+    /// LCDC.5
+    window_enable: bool,
+    /// LCDC.4
+    bg_and_window_tile_data_area: bool,
+    /// LCDC.3
+    bg_tile_map_area: bool,
+    /// LCDC.2
+    obj_size: bool,
+    /// LCDC.1
+    obj_enabled: bool,
+    /// LCDC.0
+    bg_and_window_enable_priority: bool,
 
     /// SCY (Scroll Y)
     scy: u8,
@@ -56,10 +83,21 @@ impl Gfx {
         Self {
             vram: vec![0; 8 * 1024].into_boxed_slice(),
             oam_ram: vec![0; 0xA0].into_boxed_slice(),
+            lcd: vec![0; SCREEN_WIDTH * SCREEN_HEIGHT * 4].into_boxed_slice(),
             dots: 0,
             running_mode: Mode::Mode2,
+            pixel_bg_fetcher_step: PixelFetcherStep::GetTile,
+            line_drawing_state: LineDrawingState::Idle,
             // TODO should it be exploded into individual flags?
             lcdc: 0,
+            lcd_and_ppu_enabled: false,
+            window_tile_map_area: false,
+            window_enable: false,
+            bg_and_window_tile_data_area: false,
+            bg_tile_map_area: false,
+            obj_size: false,
+            obj_enabled: false,
+            bg_and_window_enable_priority: false,
             scy: 0,
             scx: 0,
             bgp: [Color::White; 4],
@@ -72,12 +110,21 @@ impl Gfx {
         }
     }
 
+    /// Read access to the VRAM.
+    ///
+    /// Note: when the PPU is active (mode 3), this area is locked to the CPU so reads will return
+    /// 0xFF in that case.
     pub fn read_vram(&self, addr: u16) -> u8 {
         if self.running_mode != Mode::Mode3 {
-            self.vram[(addr - VRAM_START) as usize]
+            self.read_vram_internal(addr)
         } else {
             0xff
         }
+    }
+
+    /// Read access to the VRAM from within the PPU
+    fn read_vram_internal(&self, addr: u16) -> u8 {
+        self.vram[(addr - VRAM_START) as usize]
     }
 
     pub fn write_vram(&mut self, addr: u16, b: u8) {
@@ -102,7 +149,18 @@ impl Gfx {
 
     pub fn read_reg(&self, addr: u16) -> u8 {
         if addr == LCDC_REG {
-            self.lcdc
+            let mut lcdc = 0u8;
+            let bits = lcdc.view_bits_mut::<Lsb0>();
+            bits.set(7, self.lcd_and_ppu_enabled);
+            bits.set(6, self.window_tile_map_area);
+            bits.set(5, self.window_enable);
+            bits.set(4, self.bg_and_window_tile_data_area);
+            bits.set(3, self.bg_tile_map_area);
+            bits.set(2, self.obj_size);
+            bits.set(1, self.obj_enabled);
+            bits.set(0, self.bg_and_window_enable_priority);
+
+            lcdc
         } else if addr == STAT_REG {
             // FF41 STAT
             self.stat()
@@ -139,6 +197,15 @@ impl Gfx {
     pub fn write_reg(&mut self, addr: u16, b: u8) {
         if addr == LCDC_REG {
             self.lcdc = b;
+            let bits = self.lcdc.view_bits::<Lsb0>();
+            self.lcd_and_ppu_enabled = bits[7];
+            self.window_tile_map_area = bits[6];
+            self.window_enable = bits[5];
+            self.bg_and_window_tile_data_area = bits[4];
+            self.bg_tile_map_area = bits[3];
+            self.obj_size = bits[2];
+            self.obj_enabled = bits[1];
+            self.bg_and_window_enable_priority = bits[0];
         } else if addr == SCY_REG {
             // FF42 SCY
             self.scy = b;
@@ -213,6 +280,79 @@ impl Gfx {
                 _ => unreachable!("This shouldn't happen!"),
             }
         }
+
+        match self.running_mode {
+            Mode::Mode0 => {
+                if self.line_drawing_state == LineDrawingState::Drawing {
+                    self.line_drawing_state = LineDrawingState::Idle;
+                }
+            }
+            Mode::Mode1 => (),
+            Mode::Mode2 => {
+                if self.line_drawing_state == LineDrawingState::Idle {
+                    // OAM scan
+                    self.line_drawing_state = LineDrawingState::OamScan;
+                    // TODO do the actual scan
+                }
+            }
+            Mode::Mode3 => {
+                if self.line_drawing_state == LineDrawingState::OamScan {
+                    self.line_drawing_state = LineDrawingState::Drawing;
+                    self.draw_scan_line();
+                }
+            }
+        }
+    }
+
+    fn draw_scan_line(&mut self) {
+        // TODO handle window
+        let tilemap_area = if self.bg_tile_map_area {
+            0x9C00
+        } else {
+            0x9800
+        };
+        // (tile_x, tile_y) are the "tile coordinates", i.e which column/row in the 32x32 tile map.
+        let tile_y = (self.scy + self.ly) / 8;
+        // Render a line of pixels
+        for x in 0..SCREEN_WIDTH as u8 {
+            let tile_x = ((self.scx + x) / 8) & 0x1F;
+            let tile_id = self.read_vram_internal(tilemap_area + (tile_y as u16 * 32 + tile_x as u16));
+            // if tile_id != 0 {
+            //     debug!(
+            //         "pixel ({}, {}): tileid = {}",
+            //         self.scy + self.ly,
+            //         x,
+            //         tile_id
+            //         );
+            // }
+
+            // Now that we've got the tileid, look up the tile data in the appropriate location.
+
+            let tile_offset: u16 = if self.bg_and_window_tile_data_area {
+                let base = 0x8000;
+                base + tile_id as u16
+            } else {
+                let base = 0x8800u16 as i16;
+                let signed_id = tile_id as i8;
+                (base + signed_id as i16) as u16
+            };
+            let hi_byte = self.read_vram_internal(tile_offset);
+            let lo_byte = self.read_vram_internal(tile_offset + 1);
+
+            // which line of the tile are we drawing?
+            let tile_line = (self.scy + self.ly) % 8;
+            let mut color_byte = 0u8;
+            let color_bits = color_byte.view_bits_mut::<Lsb0>();
+            color_bits.set(1, hi_byte.view_bits::<Lsb0>()[tile_line as usize]);
+            color_bits.set(0, lo_byte.view_bits::<Lsb0>()[tile_line as usize]);
+            let color = self.bgp[color_byte as usize];
+            self.write_pixel(x, self.ly, color);
+        }
+    }
+
+    fn write_pixel(&mut self, x: u8, y: u8, color: Color) {
+        let offset = (y as usize * SCREEN_WIDTH + x as usize) * 4;
+        self.lcd[offset..=offset+4].copy_from_slice(&color.as_rgba());
     }
 }
 
@@ -264,6 +404,15 @@ impl Color {
             Color::Black => 3,
         }
     }
+
+    fn as_rgba(&self) -> [u8; 4] {
+        match self {
+            Color::White => [0xe0, 0xf8, 0xd0, 0xff],
+            Color::LightGray => [0x88, 0xc0, 0x70, 0xff],
+            Color::DarkGray => [0x30, 0x68, 0x50, 0xff],
+            Color::Black => [0x08, 0x18, 0x20, 0xff],
+        }
+    }
 }
 
 impl From<u8> for Color {
@@ -289,6 +438,22 @@ enum Mode {
     Mode2 = 2,
     /// Drawing pixels
     Mode3 = 3,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PixelFetcherStep {
+    GetTile,
+    GetTileDataLow,
+    GetTileDataHigh,
+    Sleep,
+    Push,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LineDrawingState {
+    Idle,
+    OamScan,
+    Drawing,
 }
 
 #[cfg(test)]
