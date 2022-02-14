@@ -1,6 +1,6 @@
 mod register;
 
-use log::debug;
+use log::{debug, warn};
 
 use crate::bus::Bus;
 use self::register::{Registers, Reg, RegPair};
@@ -22,7 +22,7 @@ impl Default for Cpu {
             regs: Default::default(),
             sp: Default::default(),
             pc: Default::default(),
-            breakpoint: 0x00fe,
+            breakpoint: 0x0100,
             paused: Default::default(),
         }
     }
@@ -264,8 +264,10 @@ impl Cpu {
             0xfe => self.cp_d8(bus),
 
             _ => {
-                self.dump_cpu();
-                unimplemented!("op=0x{:02x}, orig_pc=0x{:04x}", op, orig_pc);
+                // self.dump_cpu();
+                // unimplemented!("op=0x{:02x}, orig_pc=0x{:04x}", op, orig_pc);
+                warn!("Unimplemented op=0x{:02x}, orig_pc=0x{:04x}", op, orig_pc);
+                0
             }
         }
     }
@@ -278,7 +280,10 @@ impl Cpu {
             // RL C
             0x11 => self.rl_r(Reg::C),
             0x7c => self.bit_n_r(7, Reg::H),
-            _ => unimplemented!("CB prefix op=0x{:02x}, PC=0x{:04x}", cb_op, orig_pc),
+            _ => {
+                warn!("Unimplemented CB prefix op=0x{:02x}, PC=0x{:04x}", cb_op, orig_pc);
+                0
+            }
         }
     }
 
@@ -530,8 +535,11 @@ impl Cpu {
         // TODO how to set H?
     }
 
-    /// Get the cpu's paused.
-    pub fn paused(&self) -> bool {
+    pub fn is_paused(&self) -> bool {
         self.paused
+    }
+
+    pub fn set_pause(&mut self, pause: bool) {
+        self.paused = pause;
     }
 }

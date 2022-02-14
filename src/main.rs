@@ -1,10 +1,13 @@
-use std::{io::stdin, sync::mpsc::channel};
+use std::sync::mpsc::channel;
 
 use anyhow::Result;
-use log::{info, debug};
+use log::info;
+use minifb::Window;
+use rustyline::{error::ReadlineError, Editor};
 
 use gb_rs::{cartridge::Cartridge, gameboy::GameBoy, FrameSink, SCREEN_HEIGHT, SCREEN_WIDTH};
-use minifb::Window;
+
+mod debugger;
 
 fn main() -> Result<()> {
     // initialise logger
@@ -14,7 +17,11 @@ fn main() -> Result<()> {
     ctrlc::set_handler(move || tx.send(()).expect("Could not send signal on channel."))
         .expect("Error setting Ctrl-C handler");
 
-    let cartridge = Cartridge::load("assets/Tetris (World).gb")?;
+    // let cartridge = Cartridge::load("assets/Tetris (World).gb")?;
+    let file = std::env::args()
+        .nth(1)
+        .unwrap_or("assets/Tetris (World).gb".into());
+    let cartridge = Cartridge::load(file)?;
     if cartridge.is_cgb() {
         info!("CGB flag is set");
     }
@@ -28,25 +35,61 @@ fn main() -> Result<()> {
 
     let mut sink = MinifbFrameSink::new()?;
 
-    gb.dump_cpu();
-    let mut buf = String::new();
+    let mut rl = Editor::<()>::new();
+
     while !gb.is_halted() {
         if rx.try_recv().is_ok() {
-            info!("Got ctrl-c. Exiting...");
-            break;
+            info!("Got ctrl-c");
+            gb.pause();
         }
-        // debug!("Updating minifb events...");
-        // sink.window.update();
-        // debug!("done");
         if gb.is_paused() {
-            stdin().read_line(&mut buf).unwrap();
-            gb.step(&mut sink);
-            gb.dump_cpu();
+            let readline = rl.readline("gb-rs> ");
+            match readline {
+                Ok(line) => {
+                    rl.add_history_entry(line.as_str());
+                    match line.as_str() {
+                        "next" => {
+                            gb.step(&mut sink);
+                        }
+                        "continue" => {
+                            gb.resume();
+                        }
+                        "dump_cpu" => {
+                            gb.dump_cpu();
+                        }
+                        s if s.starts_with("dump_mem") => {
+                            if let Some(addr_str) = s.split_whitespace().nth(1) {
+                                if let Ok(addr) = u16::from_str_radix(addr_str, 16) {
+                                    println!("Dumping memory at {:x}", addr);
+                                    gb.dump_mem(addr);
+                                }
+                            }
+                        }
+                        "quit" => {
+                            break;
+                        }
+                        _ => {
+                            eprintln!("Unknown command {}", line);
+                        }
+                    }
+                }
+                Err(ReadlineError::Interrupted) => {
+                    println!("CTRL-C");
+                    break;
+                }
+                Err(ReadlineError::Eof) => {
+                    println!("CTRL-D");
+                    break;
+                }
+                Err(err) => {
+                    println!("Error: {:?}", err);
+                    break;
+                }
+            }
         } else {
             gb.step(&mut sink);
         }
     }
-    gb.dump_cpu();
 
     Ok(())
 }
@@ -78,16 +121,15 @@ impl MinifbFrameSink {
 impl FrameSink for MinifbFrameSink {
     fn push_frame(&mut self, frame: &[(u8, u8, u8)]) {
         // debug!("Framed pushed");
-        self.buf
-            .iter_mut()
-            .zip(frame)
-            .for_each(|(buf_p, lcd_p)| {
-                let (r, g, b) = *lcd_p;
-                *buf_p = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
-            });
+        self.buf.iter_mut().zip(frame).for_each(|(buf_p, lcd_p)| {
+            let (r, g, b) = *lcd_p;
+            *buf_p = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
+        });
 
         // debug!("Updating minifb buffer");
-        self.window.update_with_buffer(&self.buf, SCREEN_WIDTH, SCREEN_HEIGHT).expect("Failed to update window buffer");
+        self.window
+            .update_with_buffer(&self.buf, SCREEN_WIDTH, SCREEN_HEIGHT)
+            .expect("Failed to update window buffer");
         // debug!("done minifb buffer");
     }
 }

@@ -13,3 +13,4 @@ log = "0.4.14"
 env_logger = "0.9.0"
 # minifb = "0.20.0"
 minifb = { git = "https://github.com/emoon/rust_minifb", branch="master" }
+rustyline = "9.1.2"

@@ -76,11 +76,15 @@ impl Bus {
         } else if CART_BANK_00.contains(&addr) {
             self.cartridge.data[addr as usize]
         } else if CART_BANK_MAPPED.contains(&addr) {
-            unimplemented!("switchable banks 0x{:04x}", addr);
+            // unimplemented!("switchable banks 0x{:04x}", addr);
+            warn!("unimplemented switchable banks 0x{:04x}", addr);
+            0xFF
         } else if VRAM.contains(&addr) {
             self.gfx.read_vram(addr)
         } else if EXT_RAM.contains(&addr) {
-            unimplemented!("External RAM 0x{:04x}", addr);
+            // unimplemented!("External RAM 0x{:04x}", addr);
+            warn!("External RAM 0x{:04x}", addr);
+            0xFF
         } else if WRAM.contains(&addr) {
             self.ram[(addr - WRAM.start()) as usize]
         } else if ECHO_RAM.contains(&addr) {
@@ -97,7 +101,9 @@ impl Bus {
         } else if HRAM.contains(&addr) {
             self.hram[(addr - HRAM.start()) as usize]
         } else if addr == 0xFFFF {
-            unimplemented!("Interrupt Enable Register: 0x{:04x}", addr);
+            // unimplemented!("Interrupt Enable Register: 0x{:04x}", addr);
+            warn!("Interrupt Enable Register: 0x{:04x}", addr);
+            0xFF
         } else {
             unreachable!("How did we get here?");
         }
@@ -117,7 +123,8 @@ impl Bus {
         } else if CART_BANK_00.contains(&addr) {
             self.cartridge.data[addr as usize] = b;
         } else if CART_BANK_MAPPED.contains(&addr) {
-            unimplemented!("switchable banks 0x{:04x}", addr);
+            // unimplemented!("switchable banks 0x{:04x}", addr);
+            warn!("unimplemented switchable banks 0x{:04x}", addr);
         } else if VRAM.contains(&addr) {
             self.gfx.write_vram(addr, b);
         } else if WRAM.contains(&addr) {
@@ -136,7 +143,8 @@ impl Bus {
         } else if HRAM.contains(&addr) {
             self.hram[(addr - HRAM.start()) as usize] = b;
         } else if addr == 0xFFFF {
-            unimplemented!("Interrupt Enable Register: 0x{:04x}", addr);
+            // unimplemented!("Interrupt Enable Register: 0x{:04x}", addr);
+            warn!("Unimplemented Interrupt Enable Register: 0x{:04x}", addr);
         } else {
             unreachable!("How did we get here?");
         }
