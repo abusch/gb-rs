@@ -73,12 +73,12 @@ impl Bus {
         if BOOT_ROM.contains(&addr) && !self.has_booted {
             // read from boot rom
             BOOT_ROM_DATA[addr as usize]
-        } else if CART_BANK_00.contains(&addr) {
-            self.cartridge.data[addr as usize]
-        } else if CART_BANK_MAPPED.contains(&addr) {
+        } else if CART_BANK_00.contains(&addr) || CART_BANK_MAPPED.contains(&addr) {
+            // TODO implement MBC + bank switching
+            // TODO if no MBC, check ROM size too
             // unimplemented!("switchable banks 0x{:04x}", addr);
-            warn!("unimplemented switchable banks 0x{:04x}", addr);
-            0xFF
+            // warn!("unimplemented switchable banks 0x{:04x}", addr);
+            self.cartridge.data[addr as usize]
         } else if VRAM.contains(&addr) {
             self.gfx.read_vram(addr)
         } else if EXT_RAM.contains(&addr) {
