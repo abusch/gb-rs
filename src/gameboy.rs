@@ -6,6 +6,7 @@ use crate::FrameSink;
 pub struct GameBoy {
     cpu: Cpu,
     bus: Bus,
+    halted: bool,
 }
 
 impl GameBoy {
@@ -13,11 +14,13 @@ impl GameBoy {
         Self {
             cpu: Cpu::default(),
             bus: Bus::new(8 * 1024, cartridge),
+            halted: false,
         }
     }
 
     pub fn step(&mut self, frame_sink: &mut dyn FrameSink) {
-        let cycles = self.cpu.step(&mut self.bus);
+        let (cycles, halted) = self.cpu.step(&mut self.bus);
+        self.halted = halted;
         self.bus.cycle(cycles, frame_sink);
     }
 
@@ -37,8 +40,7 @@ impl GameBoy {
     }
 
     pub fn is_halted(&self) -> bool {
-        // TODO implement
-        false
+        self.halted
     }
 
     pub fn is_paused(&self) -> bool {
