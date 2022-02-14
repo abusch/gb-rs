@@ -254,6 +254,10 @@ impl Cpu {
             }
             // RST 0x08
             0xcf => self.rst(0x08),
+            // POP DE
+            0xd1 => self.pop_rr(bus, RegPair::DE),
+            // PUSH DE
+            0xd5 => self.push_rr(bus, RegPair::DE),
             // RST 0x10
             0xd7 => self.rst(0x10),
             // RST 0x18
@@ -265,20 +269,20 @@ impl Cpu {
                 bus.write_byte(addr, self.regs.get(Reg::A));
                 12
             }
+            // POP HL
+            0xe1 => self.pop_rr(bus, RegPair::HL),
             // LD (C),A
             0xe2 => {
                 let addr = 0xFF00 + self.regs.get(Reg::C) as u16;
                 bus.write_byte(addr, self.regs.get(Reg::A));
                 8
             }
+            // PUSH HL
+            0xe5 => self.push_rr(bus, RegPair::HL),
             // RST 0x20
             0xe7 => self.rst(0x20),
             // LD (a16),A
-            0xea => {
-                let addr = self.fetch_word(bus);
-                bus.write_byte(addr, self.regs.get(Reg::A));
-                16
-            }
+            0xea => self.ld_a16_r(bus, Reg::A),
             // RST 0x28
             0xef => self.rst(0x28),
             // LDH A,(a8)
@@ -288,8 +292,14 @@ impl Cpu {
                 self.regs.set(Reg::A, bus.read_byte(addr));
                 12
             }
+            // POP AF
+            0xf1 => self.pop_rr(bus, RegPair::AF),
+            // PUSH AF
+            0xf5 => self.push_rr(bus, RegPair::AF),
             // RST 0x30
             0xf7 => self.rst(0x30),
+            // LD A,(a16)
+            0xfa => self.ld_r_a16(bus, Reg::A),
             // CP d8
             0xfe => self.cp_d8(bus),
             // RST 0x38
@@ -370,6 +380,19 @@ impl Cpu {
         let addr = self.regs.get_pair(rr);
         bus.write_byte(addr, self.regs.get(r));
         8
+    }
+
+    fn ld_a16_r(&mut self, bus: &mut Bus, r: Reg) -> u8 {
+       let addr = self.fetch_word(bus);
+       bus.write_byte(addr, self.regs.get(r));
+       16
+    }
+
+    fn ld_r_a16(&mut self, bus: &mut Bus, r: Reg) -> u8 {
+       let addr = self.fetch_word(bus);
+       let byte = bus.read_byte(addr);
+       self.regs.set(r, byte);
+       16
     }
 
     /// A <- A ^ r
