@@ -305,6 +305,8 @@ impl Cpu {
             0x8c => self.adc_r(Reg::H),
             // ADC A,L
             0x8d => self.adc_r(Reg::L),
+            // ADC (HL)
+            0x8e => self.adc_hl(bus),
             // ADC A,A
             0x8f => self.adc_r(Reg::A),
             // SUB B

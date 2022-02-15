@@ -3,6 +3,7 @@ pub mod cartridge;
 mod cpu;
 pub mod gameboy;
 mod gfx;
+mod timer;
 
 pub const SCREEN_WIDTH: usize = 160;
 pub const SCREEN_HEIGHT: usize = 144;

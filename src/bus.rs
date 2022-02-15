@@ -1,9 +1,8 @@
 use std::ops::RangeInclusive;
 
-// use bitvec::prelude as bv;
 use log::{debug, warn};
 
-use crate::{cartridge::Cartridge, gfx::Gfx, FrameSink};
+use crate::{cartridge::Cartridge, gfx::Gfx, FrameSink, timer::Timer};
 
 const BOOT_ROM_DATA: &[u8] = include_bytes!("../assets/dmg_boot.bin");
 
@@ -50,10 +49,13 @@ pub struct Bus {
     /// P1/JOYP Joypad contoller
     joypad: u8,
     has_booted: bool,
+
     /// IE - Interrupt Enable register
     interrupt_enable: u8,
     /// IF - Interrupt Flag register
     interrupt_flag: u8,
+
+    timer: Timer,
 }
 
 impl Bus {
@@ -69,12 +71,15 @@ impl Bus {
             has_booted: false,
             interrupt_enable: 0,
             interrupt_flag: 0,
+            timer: Timer::new(),
         }
     }
 
     /// Run the different peripherals for the given number of clock cycles
     pub fn cycle(&mut self, cycles: u8, frame_sync: &mut dyn FrameSink) {
         self.gfx.dots(cycles, frame_sync);
+        self.timer.cycle(cycles);
+
     }
 
     pub fn read_byte(&self, addr: u16) -> u8 {
@@ -149,7 +154,7 @@ impl Bus {
         } else if HRAM.contains(&addr) {
             self.hram[(addr - HRAM.start()) as usize] = b;
         } else if addr == 0xFFFF {
-            debug!("Setting Interrupt Enable Register with 0b{:08b}" , b);
+            debug!("Setting Interrupt Enable Register with 0b{:08b}", b);
             self.interrupt_enable = b;
         } else {
             unreachable!("How did we get here?");
@@ -175,18 +180,26 @@ impl Bus {
             self.joypad
         } else if IO_RANGE_COM.contains(&addr) {
             // Communication controller
-            debug!(
-                "Read communication controller register 0x{:04x} (NOT IMPLEMENTED)",
-                addr
-            );
+            // debug!(
+            //     "Read communication controller register 0x{:04x} (NOT IMPLEMENTED)",
+            //     addr
+            // );
             0
         } else if IO_RANGE_TIM.contains(&addr) {
-            // Divider and timer
-            debug!(
-                "Read divider and timer register 0x{:04x} (NOT IMPLEMENTED)",
-                addr
-            );
-            0
+            match addr {
+                0x0f04 => self.timer.div_timer(),
+                0x0f05 => self.timer.tima(),
+                0x0f06 => self.timer.tma(),
+                0x0f07 => self.timer.tac(),
+                _ => {
+                    // Divider and timer
+                    debug!(
+                        "Read divider and timer register 0x{:04x} (NOT IMPLEMENTED)",
+                        addr
+                    );
+                    0
+                }
+            }
         } else if IO_RANGE_INT.contains(&addr) {
             // IF - interrupt flag
             self.interrupt_flag
@@ -224,16 +237,24 @@ impl Bus {
             self.joypad |= b & 0b00110000;
         } else if IO_RANGE_COM.contains(&addr) {
             // Communication controller
-            debug!(
-                "Write communication controller register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
-                addr, b
-            );
+            // debug!(
+            //     "Write communication controller register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
+            //     addr, b
+            // );
         } else if IO_RANGE_TIM.contains(&addr) {
-            // Divider and timer
-            debug!(
-                "Write divider and timer register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
-                addr, b
-            );
+            match addr {
+                0x0f04 => self.timer.reset_div_timer(),
+                0x0f05 => self.timer.set_tima(b),
+                0x0f06 => self.timer.set_tma(b),
+                0x0f07 => self.timer.set_tac(b),
+                _ => {
+                    // Divider and timer
+                    debug!(
+                        "Write divider and timer register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
+                        addr, b
+                    );
+                }
+            }
         } else if IO_RANGE_INT.contains(&addr) {
             // IF - interrupt flag
             self.interrupt_flag = b;
@@ -251,10 +272,7 @@ impl Bus {
             );
         } else if IO_RANGE_LCD.contains(&addr) {
             // LCD
-            debug!(
-                "Write LCD controller 0x{:04x}<-0x{:02X}",
-                addr, b
-            );
+            debug!("Write LCD controller 0x{:04x}<-0x{:02X}", addr, b);
             self.gfx.write_reg(addr, b);
         } else if IO_RANGE_DBR.contains(&addr) {
             if b == 0x01 {
@@ -262,6 +280,8 @@ impl Bus {
                 // Disable boot rom
                 debug!("Boot sequence complete. Disabling boot ROM.");
             }
+        } else if (0xff68..=0xff69).contains(&addr) {
+            // CGB-only registers, just ignore for now
         } else {
             // unimplemented!("I/O Registers: 0x{:04x}", addr);
             debug!(
