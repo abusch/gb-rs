@@ -23,19 +23,21 @@ const HRAM: RangeInclusive<u16> = 0xFF80..=0xFFFE;
 //
 // IO registers ranges (TODO CGB registers)
 //
-// Joypad controller
+/// Joypad controller
 const IO_RANGE_JPD: RangeInclusive<u16> = 0xFF00..=0xFF00;
-// Communication
+/// Communication
 const IO_RANGE_COM: RangeInclusive<u16> = 0xFF01..=0xFF02;
-// Divider and Timer
+/// Divider and Timer
 const IO_RANGE_TIM: RangeInclusive<u16> = 0xFF04..=0xFF07;
-// Sound (APU)
+/// IF - Interrupt Flag
+const IO_RANGE_INT: RangeInclusive<u16> = 0xFF0F..=0xFF0F;
+/// Sound (APU)
 const IO_RANGE_APU: RangeInclusive<u16> = 0xFF10..=0xFF26;
-// Waveform RAM
+/// Waveform RAM
 const IO_RANGE_WAV: RangeInclusive<u16> = 0xFF30..=0xFF3F;
-// LCD
+/// LCD
 const IO_RANGE_LCD: RangeInclusive<u16> = 0xFF40..=0xFF4B;
-// Disable Boot ROM
+/// Disable Boot ROM
 const IO_RANGE_DBR: RangeInclusive<u16> = 0xFF50..=0xFF50;
 
 const CYCLES_PER_SECOND: u64 = 4194304; // 4.194304 MHz
@@ -45,9 +47,13 @@ pub struct Bus {
     hram: Box<[u8]>,
     gfx: Gfx,
     cartridge: Cartridge,
-    // P1/JOYP Joypad contoller
+    /// P1/JOYP Joypad contoller
     joypad: u8,
     has_booted: bool,
+    /// IE - Interrupt Enable register
+    interrupt_enable: u8,
+    /// IF - Interrupt Flag register
+    interrupt_flag: u8,
 }
 
 impl Bus {
@@ -61,6 +67,8 @@ impl Bus {
             cartridge,
             joypad: 0,
             has_booted: false,
+            interrupt_enable: 0,
+            interrupt_flag: 0,
         }
     }
 
@@ -101,9 +109,7 @@ impl Bus {
         } else if HRAM.contains(&addr) {
             self.hram[(addr - HRAM.start()) as usize]
         } else if addr == 0xFFFF {
-            // unimplemented!("Interrupt Enable Register: 0x{:04x}", addr);
-            warn!("Interrupt Enable Register: 0x{:04x}", addr);
-            0xFF
+            self.interrupt_enable
         } else {
             unreachable!("How did we get here?");
         }
@@ -143,8 +149,8 @@ impl Bus {
         } else if HRAM.contains(&addr) {
             self.hram[(addr - HRAM.start()) as usize] = b;
         } else if addr == 0xFFFF {
-            // unimplemented!("Interrupt Enable Register: 0x{:04x}", addr);
-            warn!("Unimplemented Interrupt Enable Register: 0x{:04x}", addr);
+            debug!("Setting Interrupt Enable Register with 0b{:08b}" , b);
+            self.interrupt_enable = b;
         } else {
             unreachable!("How did we get here?");
         }
@@ -181,6 +187,9 @@ impl Bus {
                 addr
             );
             0
+        } else if IO_RANGE_INT.contains(&addr) {
+            // IF - interrupt flag
+            self.interrupt_flag
         } else if IO_RANGE_APU.contains(&addr) {
             // Sound
             debug!("Read sound register 0x{:04x} (NOT IMPLEMENTED)", addr);
@@ -225,6 +234,9 @@ impl Bus {
                 "Write divider and timer register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
                 addr, b
             );
+        } else if IO_RANGE_INT.contains(&addr) {
+            // IF - interrupt flag
+            self.interrupt_flag = b;
         } else if IO_RANGE_APU.contains(&addr) {
             // Sound
             debug!(

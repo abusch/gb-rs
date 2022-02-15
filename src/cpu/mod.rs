@@ -10,6 +10,8 @@ pub struct Cpu {
 
     sp: u16,
     pc: u16,
+    /// IME - Interrupt Master Enable Flag
+    ime: bool,
 
     // for debugging
     breakpoint: u16,
@@ -22,6 +24,7 @@ impl Default for Cpu {
             regs: Default::default(),
             sp: Default::default(),
             pc: Default::default(),
+            ime: true, // is this correct?
             breakpoint: 0xffff,
             paused: Default::default(),
         }
@@ -476,12 +479,25 @@ impl Cpu {
             }
             // POP AF
             0xf1 => self.pop_rr(bus, RegPair::AF),
+            // DI
+            0xf3 => {
+                debug!("Disabling interrupts");
+                self.ime = false;
+                4
+            }
             // PUSH AF
             0xf5 => self.push_rr(bus, RegPair::AF),
             // RST 0x30
             0xf7 => self.rst(0x30),
             // LD A,(a16)
             0xfa => self.ld_r_a16(bus, Reg::A),
+            // EI
+            0xfb => {
+                debug!("Enabling interrupts");
+                // TODO the effect needs to be delayed by one instruction...
+                self.ime = true;
+                4
+            }
             // CP d8
             0xfe => self.cp_d8(bus),
             // RST 0x38
