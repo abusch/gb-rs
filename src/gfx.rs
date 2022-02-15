@@ -1,5 +1,5 @@
 use bitvec::prelude::*;
-use log::debug;
+use log::{debug, warn};
 
 use crate::{FrameSink, SCREEN_HEIGHT, SCREEN_WIDTH};
 
@@ -190,7 +190,8 @@ impl Gfx {
         } else if addr == OBP1_REG {
             get_palette_as_byte(&self.obp1)
         } else {
-            unimplemented!();
+            warn!("unimplemented register 0x{:04x}", addr);
+            0xFF
         }
     }
 
@@ -232,7 +233,7 @@ impl Gfx {
         } else if addr == OBP1_REG {
             set_palette_data(&mut self.obp1, b);
         } else {
-            unimplemented!();
+            warn!("unimplemented register 0x{:04x}", addr);
         }
     }
 

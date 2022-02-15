@@ -71,7 +71,9 @@ impl Cpu {
             0x0e => self.ld_r_d8(bus, Reg::C),
             // STOP 0
             0x10 => {
-                halted = true;
+                warn!("STOP!");
+                self.paused = true;
+                // halted = true;
                 4
             }
             // LD DE,d16
@@ -91,7 +93,7 @@ impl Cpu {
             // JR r8
             0x18 => self.jr_if_r8(bus, true),
             // ADD HL,DE
-            0x09 => self.add_rr_rr(RegPair::HL, *self.regs.de),
+            0x19 => self.add_rr_rr(RegPair::HL, *self.regs.de),
             // LD A,(DE)
             0x1a => self.ld_r_addr(bus, Reg::A, RegPair::DE),
             // DEC DE
@@ -304,6 +306,18 @@ impl Cpu {
             0x8f => self.adc_r(Reg::A),
             // SUB B
             0x90 => self.sub_r(Reg::B),
+            // SUB C
+            0x91 => self.sub_r(Reg::C),
+            // SUB D
+            0x92 => self.sub_r(Reg::D),
+            // SUB E
+            0x93 => self.sub_r(Reg::E),
+            // SUB H
+            0x94 => self.sub_r(Reg::H),
+            // SUB L
+            0x95 => self.sub_r(Reg::L),
+            // SUB A
+            0x97 => self.sub_r(Reg::A),
             // AND B
             0xa0 => self.and_r(Reg::B),
             // AND C
