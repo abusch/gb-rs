@@ -2,8 +2,8 @@ mod register;
 
 use log::{debug, warn};
 
+use self::register::{Reg, RegPair, Registers};
 use crate::bus::Bus;
-use self::register::{Registers, Reg, RegPair};
 
 pub struct Cpu {
     regs: Registers,
@@ -57,6 +57,8 @@ impl Cpu {
             0x05 => self.dec_r(Reg::B),
             // LD B,d8
             0x06 => self.ld_r_d8(bus, Reg::B),
+            // ADD HL,BC
+            0x09 => self.add_rr_rr(RegPair::HL, *self.regs.bc),
             // LD A,(BC)
             0x0a => self.ld_r_addr(bus, Reg::A, RegPair::BC),
             // DEC BC
@@ -88,6 +90,8 @@ impl Cpu {
             0x17 => self.rla(),
             // JR r8
             0x18 => self.jr_if_r8(bus, true),
+            // ADD HL,DE
+            0x09 => self.add_rr_rr(RegPair::HL, *self.regs.de),
             // LD A,(DE)
             0x1a => self.ld_r_addr(bus, Reg::A, RegPair::DE),
             // DEC DE
@@ -120,12 +124,16 @@ impl Cpu {
             0x24 => self.inc_r(Reg::H),
             // DEC H
             0x25 => self.dec_r(Reg::H),
+            // LD H,d8
+            0x26 => self.ld_r_d8(bus, Reg::H),
             // JR Z,r8
             0x28 => {
                 // Z
                 let flag = self.regs.flag_z().is_set();
                 self.jr_if_r8(bus, flag)
             }
+            // ADD HL,HL
+            0x29 => self.add_rr_rr(RegPair::HL, *self.regs.hl),
             // LD A,(HL+)
             0x2a => {
                 self.ld_r_addr(bus, Reg::A, RegPair::HL);
@@ -157,12 +165,16 @@ impl Cpu {
                 *self.regs.hl = self.regs.hl.wrapping_sub(1);
                 8
             }
+            // DEC (HL)
+            0x35 => self.dec_hl(bus),
             // JR C,r8
             0x38 => {
                 // C
                 let flag = self.regs.flag_c().is_set();
                 self.jr_if_r8(bus, flag)
             }
+            // ADD HL,SP
+            0x39 => self.add_rr_rr(RegPair::HL, self.sp),
             // // INC SP
             // 0x33 => self.inc_rr(RegPair::SP),
             // LD A,(HL-)
@@ -184,6 +196,7 @@ impl Cpu {
             0x43 => self.ld_r_r(Reg::B, Reg::E),
             0x44 => self.ld_r_r(Reg::B, Reg::H),
             0x45 => self.ld_r_r(Reg::B, Reg::L),
+            0x46 => self.ld_r_addr(bus, Reg::B, RegPair::HL),
             0x47 => self.ld_r_r(Reg::B, Reg::A),
             // LD C,A..L
             0x48 => self.ld_r_r(Reg::C, Reg::B),
@@ -192,6 +205,7 @@ impl Cpu {
             0x4b => self.ld_r_r(Reg::C, Reg::E),
             0x4c => self.ld_r_r(Reg::C, Reg::H),
             0x4d => self.ld_r_r(Reg::C, Reg::L),
+            0x4e => self.ld_r_addr(bus, Reg::C, RegPair::HL),
             0x4f => self.ld_r_r(Reg::C, Reg::A),
             // LD D,A..L
             0x50 => self.ld_r_r(Reg::D, Reg::B),
@@ -200,6 +214,7 @@ impl Cpu {
             0x53 => self.ld_r_r(Reg::D, Reg::E),
             0x54 => self.ld_r_r(Reg::D, Reg::H),
             0x55 => self.ld_r_r(Reg::D, Reg::L),
+            0x56 => self.ld_r_addr(bus, Reg::D, RegPair::HL),
             0x57 => self.ld_r_r(Reg::D, Reg::A),
             // LD E,A..L
             0x58 => self.ld_r_r(Reg::E, Reg::B),
@@ -208,6 +223,7 @@ impl Cpu {
             0x5b => self.ld_r_r(Reg::E, Reg::E),
             0x5c => self.ld_r_r(Reg::E, Reg::H),
             0x5d => self.ld_r_r(Reg::E, Reg::L),
+            0x5e => self.ld_r_addr(bus, Reg::E, RegPair::HL),
             0x5f => self.ld_r_r(Reg::E, Reg::A),
             // LD H,A..L
             0x60 => self.ld_r_r(Reg::H, Reg::B),
@@ -216,6 +232,7 @@ impl Cpu {
             0x63 => self.ld_r_r(Reg::H, Reg::E),
             0x64 => self.ld_r_r(Reg::H, Reg::H),
             0x65 => self.ld_r_r(Reg::H, Reg::L),
+            0x66 => self.ld_r_addr(bus, Reg::H, RegPair::HL),
             0x67 => self.ld_r_r(Reg::H, Reg::A),
             // LD L,A..L
             0x68 => self.ld_r_r(Reg::L, Reg::B),
@@ -224,13 +241,29 @@ impl Cpu {
             0x6b => self.ld_r_r(Reg::L, Reg::E),
             0x6c => self.ld_r_r(Reg::L, Reg::H),
             0x6d => self.ld_r_r(Reg::L, Reg::L),
+            0x6e => self.ld_r_addr(bus, Reg::L, RegPair::HL),
             0x6f => self.ld_r_r(Reg::L, Reg::A),
-            // LD (HL),A
-            0x77 => {
-                let addr = *self.regs.hl;
-                bus.write_byte(addr, self.regs.get(Reg::A));
-                8
+            // LD (HL),B
+            0x70 => self.ld_addr_r(bus, RegPair::HL, Reg::B),
+            // LD (HL),C
+            0x71 => self.ld_addr_r(bus, RegPair::HL, Reg::C),
+            // LD (HL),D
+            0x72 => self.ld_addr_r(bus, RegPair::HL, Reg::D),
+            // LD (HL),E
+            0x73 => self.ld_addr_r(bus, RegPair::HL, Reg::E),
+            // LD (HL),H
+            0x74 => self.ld_addr_r(bus, RegPair::HL, Reg::H),
+            // LD (HL),L
+            0x75 => self.ld_addr_r(bus, RegPair::HL, Reg::L),
+            // HALT
+            0x76 => {
+                warn!("HALT!");
+                halted = true;
+                4
             }
+            // LD (HL),A
+            0x77 => self.ld_addr_r(bus, RegPair::HL, Reg::A),
+
             // LD A,A..L
             0x78 => self.ld_r_r(Reg::A, Reg::B),
             0x79 => self.ld_r_r(Reg::A, Reg::C),
@@ -239,8 +272,36 @@ impl Cpu {
             0x7c => self.ld_r_r(Reg::A, Reg::H),
             0x7d => self.ld_r_r(Reg::A, Reg::L),
             0x7f => self.ld_r_r(Reg::A, Reg::A),
+            // ADD A,B
+            0x80 => self.add_r(Reg::B),
+            // ADD A,C
+            0x81 => self.add_r(Reg::C),
+            // ADD A,D
+            0x82 => self.add_r(Reg::D),
+            // ADD A,E
+            0x83 => self.add_r(Reg::E),
+            // ADD A,H
+            0x84 => self.add_r(Reg::H),
+            // ADD A,L
+            0x85 => self.add_r(Reg::L),
             // ADD A,(HL)
-            0x86 => self.add_hl(bus),
+            0x86 => self.add_hl_addr(bus),
+            // ADD A,A
+            0x87 => self.add_r(Reg::A),
+            // ADC A,B
+            0x88 => self.adc_r(Reg::B),
+            // ADC A,C
+            0x89 => self.adc_r(Reg::C),
+            // ADC A,D
+            0x8a => self.adc_r(Reg::D),
+            // ADC A,E
+            0x8b => self.adc_r(Reg::E),
+            // ADC A,H
+            0x8c => self.adc_r(Reg::H),
+            // ADC A,L
+            0x8d => self.adc_r(Reg::L),
+            // ADC A,A
+            0x8f => self.adc_r(Reg::A),
             // SUB B
             0x90 => self.sub_r(Reg::B),
             // AND B
@@ -269,6 +330,8 @@ impl Cpu {
             0xac => self.xor_r(Reg::H),
             // XOR L
             0xad => self.xor_r(Reg::L),
+            // XOR (HL)
+            0xae => self.xor_hl(bus),
             // XOR A
             0xaf => self.xor_r(Reg::A),
             // OR B
@@ -283,10 +346,17 @@ impl Cpu {
             0xb4 => self.or_r(Reg::H),
             // OR L
             0xb5 => self.or_r(Reg::L),
+            // OR (HL)
+            0xb6 => self.or_hl(bus),
             // OR A
             0xb7 => self.or_r(Reg::A),
             // CP (HL)
             0xbe => self.cp_hl(bus),
+            // RET NZ
+            0xc0 => {
+                let nz = !self.regs.flag_z().is_set();
+                self.ret_if(bus, nz)
+            }
             // POP BC
             0xc1 => self.pop_rr(bus, RegPair::BC),
             // JP a16
@@ -298,11 +368,18 @@ impl Cpu {
             }
             // PUSH BC
             0xc5 => self.push_rr(bus, RegPair::BC),
+            // ADD d8
+            0xc6 => self.add_d8(bus),
             // RST 0x00
             0xc7 => self.rst(0x00),
+            // RET Z
+            0xc8 => {
+                let z = self.regs.flag_z().is_set();
+                self.ret_if(bus, z)
+            }
             // RET
             0xc9 => {
-                self.pc = self.pop_word(bus);
+                self.ret_if(bus, true);
                 // debug!("Returning from subroutine to 0x{:04x}", self.pc);
                 16
             }
@@ -315,8 +392,15 @@ impl Cpu {
             }
             // CALL a16
             0xcd => self.call_if_a16(bus, true),
+            // ADC A,d8
+            0xce => self.adc_d8(bus),
             // RST 0x08
             0xcf => self.rst(0x08),
+            // RET NC
+            0xd0 => {
+                let nc = !self.regs.flag_c().is_set();
+                self.ret_if(bus, nc)
+            }
             // POP DE
             0xd1 => self.pop_rr(bus, RegPair::DE),
             // CALL NC a16
@@ -326,8 +410,15 @@ impl Cpu {
             }
             // PUSH DE
             0xd5 => self.push_rr(bus, RegPair::DE),
+            // SUB d8
+            0xd6 => self.sub_d8(bus),
             // RST 0x10
             0xd7 => self.rst(0x10),
+            // RET C
+            0xd8 => {
+                let c = self.regs.flag_c().is_set();
+                self.ret_if(bus, c)
+            }
             // CALL C a16
             0xdc => {
                 let c = self.regs.flag_c().is_set();
@@ -469,7 +560,10 @@ impl Cpu {
             0x3f => self.srl_r(Reg::A),
             0x7c => self.bit_n_r(7, Reg::H),
             _ => {
-                warn!("Unimplemented CB prefix op=0x{:02x}, PC=0x{:04x}", cb_op, orig_pc);
+                warn!(
+                    "Unimplemented CB prefix op=0x{:02x}, PC=0x{:04x}",
+                    cb_op, orig_pc
+                );
                 0
             }
         }
@@ -529,16 +623,16 @@ impl Cpu {
     }
 
     fn ld_a16_r(&mut self, bus: &mut Bus, r: Reg) -> u8 {
-       let addr = self.fetch_word(bus);
-       bus.write_byte(addr, self.regs.get(r));
-       16
+        let addr = self.fetch_word(bus);
+        bus.write_byte(addr, self.regs.get(r));
+        16
     }
 
     fn ld_r_a16(&mut self, bus: &mut Bus, r: Reg) -> u8 {
-       let addr = self.fetch_word(bus);
-       let byte = bus.read_byte(addr);
-       self.regs.set(r, byte);
-       16
+        let addr = self.fetch_word(bus);
+        let byte = bus.read_byte(addr);
+        self.regs.set(r, byte);
+        16
     }
 
     fn xor_r(&mut self, reg: Reg) -> u8 {
@@ -548,6 +642,12 @@ impl Cpu {
 
     fn xor_d8(&mut self, bus: &mut Bus) -> u8 {
         let v = self.fetch(bus);
+        self.xor(v);
+        8
+    }
+
+    fn xor_hl(&mut self, bus: &mut Bus) -> u8 {
+        let v = bus.read_byte(*self.regs.hl);
         self.xor(v);
         8
     }
@@ -567,14 +667,14 @@ impl Cpu {
         self.and(self.regs.get(r))
     }
 
-    /// AND d8 
+    /// AND d8
     fn and_d8(&mut self, bus: &mut Bus) -> u8 {
         let d8 = self.fetch(bus);
         self.and(d8);
         8
     }
 
-    /// AND <value> 
+    /// AND <value>
     fn and(&mut self, v: u8) -> u8 {
         let res = self.regs.get(Reg::A) & v;
         self.regs.flag_z().set_value(res == 0);
@@ -587,7 +687,18 @@ impl Cpu {
 
     /// OR r
     fn or_r(&mut self, r: Reg) -> u8 {
-        let res = self.regs.get(Reg::A) | self.regs.get(r);
+        self.or(self.regs.get(r))
+    }
+
+    /// OR (HL)
+    fn or_hl(&mut self, bus: &mut Bus) -> u8 {
+        let v = bus.read_byte(*self.regs.hl);
+        self.or(v);
+        8
+    }
+
+    fn or(&mut self, v: u8) -> u8 {
+        let res = self.regs.get(Reg::A) | v;
         self.regs.flag_z().set_value(res == 0);
         self.regs.flag_n().clear();
         self.regs.flag_h().clear();
@@ -636,6 +747,25 @@ impl Cpu {
         self.regs.flag_h().clear();
         self.regs.flag_c().set_value(c);
         8
+    }
+
+    /// DEC (HL)
+    fn dec_hl(&mut self, bus: &mut Bus) -> u8 {
+        let mut r = bus.read_byte(*self.regs.hl);
+        r = r.wrapping_sub(1);
+        bus.write_byte(*self.regs.hl, r);
+        if r == 0 {
+            self.regs.flag_z().set();
+        } else {
+            self.regs.flag_z().clear();
+        }
+        self.regs.flag_n().set();
+        if r > 0x0F {
+            self.regs.flag_h().set();
+        } else {
+            self.regs.flag_h().clear();
+        }
+        12
     }
 
     /// DEC r
@@ -716,13 +846,13 @@ impl Cpu {
 
     /// conditional absolute jump
     fn jp_if_a16(&mut self, bus: &mut Bus, flag: bool) -> u8 {
-       let a16 = self.fetch_word(bus); 
-       if flag {
-           self.pc = a16;
-           16
-       } else {
-           12
-       }
+        let a16 = self.fetch_word(bus);
+        if flag {
+            self.pc = a16;
+            16
+        } else {
+            12
+        }
     }
 
     /// conditional CALL
@@ -736,6 +866,15 @@ impl Cpu {
             24
         } else {
             12
+        }
+    }
+
+    fn ret_if(&mut self, bus: &mut Bus, flag: bool) -> u8 {
+        if flag {
+            self.pc = self.pop_word(bus);
+            20
+        } else {
+            8
         }
     }
 
@@ -847,9 +986,65 @@ impl Cpu {
         4
     }
 
-    fn add_hl(&mut self, bus: &mut Bus) -> u8 {
+    /// ADD (HL)
+    fn add_hl_addr(&mut self, bus: &mut Bus) -> u8 {
         let hl = bus.read_byte(*self.regs.hl);
-        let (sum, carry) = self.regs.get(Reg::A).overflowing_add(hl);
+        self.add(hl);
+        8
+    }
+
+    /// ADD r
+    fn add_r(&mut self, reg: Reg) -> u8 {
+        self.add(self.regs.get(reg))
+    }
+
+    /// ADD d8
+    fn add_d8(&mut self, bus: &mut Bus) -> u8 {
+        let d8 = self.fetch(bus);
+        self.add(d8);
+        4
+    }
+
+    fn add(&mut self, value: u8) -> u8 {
+        self.adc(value, false)
+    }
+
+    /// ADD rr,rr
+    fn add_rr_rr(&mut self, rt: RegPair, v: u16) -> u8 {
+        let (sum, carry) = self.regs.get_pair(rt).overflowing_add(v);
+        self.regs.set_pair(rt, sum);
+        self.regs.flag_c().set_value(carry);
+        self.regs.flag_n().clear();
+        // TODO handle H flag
+        8
+    }
+
+    /// ADD (HL)
+    fn adc_hl(&mut self, bus: &mut Bus) -> u8 {
+        let hl = bus.read_byte(*self.regs.hl);
+        self.adc(hl, true);
+        8
+    }
+
+    /// ADD r
+    fn adc_r(&mut self, reg: Reg) -> u8 {
+        self.adc(self.regs.get(reg), true)
+    }
+
+    /// ADD d8
+    fn adc_d8(&mut self, bus: &mut Bus) -> u8 {
+        let d8 = self.fetch(bus);
+        self.adc(d8, true);
+        4
+    }
+
+    fn adc(&mut self, value: u8, with_carry: bool) -> u8 {
+        let to_add = if with_carry && self.regs.flag_c().is_set() {
+            value + 1
+        } else {
+            value
+        };
+        let (sum, carry) = self.regs.get(Reg::A).overflowing_add(to_add);
         self.regs.set(Reg::A, sum);
         self.regs.flag_z().set_value(sum == 0);
         self.regs.flag_n().clear();
@@ -858,9 +1053,19 @@ impl Cpu {
         8
     }
 
+    /// SUB d8
+    fn sub_d8(&mut self, bus: &mut Bus) -> u8 {
+        let d8 = self.fetch(bus);
+        self.sub(d8);
+        8
+    }
+
     fn sub_r(&mut self, reg: Reg) -> u8 {
-        let d8 = self.regs.get(reg);
-        let (sub, carry) = self.regs.get(Reg::A).overflowing_sub(d8);
+        self.sub(self.regs.get(reg))
+    }
+
+    fn sub(&mut self, v: u8) -> u8 {
+        let (sub, carry) = self.regs.get(Reg::A).overflowing_sub(v);
         self.regs.set(Reg::A, sub);
         self.regs.flag_z().set_value(sub == 0);
         self.regs.flag_n().set();
