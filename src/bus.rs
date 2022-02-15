@@ -35,7 +35,7 @@ const IO_RANGE_APU: RangeInclusive<u16> = 0xFF10..=0xFF26;
 /// Waveform RAM
 const IO_RANGE_WAV: RangeInclusive<u16> = 0xFF30..=0xFF3F;
 /// LCD
-const IO_RANGE_LCD: RangeInclusive<u16> = 0xFF40..=0xFF4B;
+const IO_RANGE_LCD: RangeInclusive<u16> = 0xFF40..=0xFF4F;
 /// Disable Boot ROM
 const IO_RANGE_DBR: RangeInclusive<u16> = 0xFF50..=0xFF50;
 
@@ -105,7 +105,7 @@ impl Bus {
             warn!("Accessing ECHO RAM!");
             self.ram[(addr - 0x2000) as usize]
         } else if OAM.contains(&addr) {
-            debug!("Reading Sprite attribute table (OAM): 0x{:04x}", addr);
+            // debug!("Reading Sprite attribute table (OAM): 0x{:04x}", addr);
             self.gfx.read_oam(addr)
         } else if INVALID_AREA.contains(&addr) {
             panic!("Invalid access to address 0x{:04x}", addr);
@@ -145,7 +145,7 @@ impl Bus {
             // FIXME should we panic here instead?
             self.ram[(addr - 0x2000) as usize] = b;
         } else if OAM.contains(&addr) {
-            debug!("Writing Sprite attribute table (OAM): 0x{:04x}", addr);
+            // debug!("Writing Sprite attribute table (OAM): 0x{:04x}", addr);
             self.gfx.write_oam(addr, b);
         } else if INVALID_AREA.contains(&addr) {
             panic!("Invalid access to address 0x{:04x}", addr);
@@ -272,7 +272,7 @@ impl Bus {
             );
         } else if IO_RANGE_LCD.contains(&addr) {
             // LCD
-            debug!("Write LCD controller 0x{:04x}<-0x{:02X}", addr, b);
+            // debug!("Write LCD controller 0x{:04x}<-0x{:02X}", addr, b);
             self.gfx.write_reg(addr, b);
         } else if IO_RANGE_DBR.contains(&addr) {
             if b == 0x01 {
