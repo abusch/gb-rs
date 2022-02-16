@@ -2,7 +2,7 @@ use std::ops::RangeInclusive;
 
 use log::{debug, warn};
 
-use crate::{cartridge::Cartridge, gfx::Gfx, FrameSink, timer::Timer};
+use crate::{cartridge::Cartridge, gfx::Gfx, timer::Timer, FrameSink};
 
 const BOOT_ROM_DATA: &[u8] = include_bytes!("../assets/dmg_boot.bin");
 
@@ -79,7 +79,6 @@ impl Bus {
     pub fn cycle(&mut self, cycles: u8, frame_sync: &mut dyn FrameSink) {
         self.gfx.dots(cycles, frame_sync);
         self.timer.cycle(cycles);
-
     }
 
     pub fn read_byte(&self, addr: u16) -> u8 {
@@ -103,12 +102,13 @@ impl Bus {
         } else if ECHO_RAM.contains(&addr) {
             // ECHO RAM: mirror of C000-DDFF
             warn!("Accessing ECHO RAM!");
-            self.ram[(addr - 0x2000) as usize]
+            self.read_byte(addr - 0x2000)
         } else if OAM.contains(&addr) {
             // debug!("Reading Sprite attribute table (OAM): 0x{:04x}", addr);
             self.gfx.read_oam(addr)
         } else if INVALID_AREA.contains(&addr) {
-            panic!("Invalid access to address 0x{:04x}", addr);
+            warn!("Invalid access to address 0x{:04x}", addr);
+            0xFF
         } else if IO_REGISTERS.contains(&addr) {
             self.read_io(addr)
         } else if HRAM.contains(&addr) {
@@ -143,12 +143,12 @@ impl Bus {
         } else if ECHO_RAM.contains(&addr) {
             // ECHO RAM: mirror of C000-DDFF
             // FIXME should we panic here instead?
-            self.ram[(addr - 0x2000) as usize] = b;
+            self.write_byte(addr - 0x2000, b);
         } else if OAM.contains(&addr) {
             // debug!("Writing Sprite attribute table (OAM): 0x{:04x}", addr);
             self.gfx.write_oam(addr, b);
         } else if INVALID_AREA.contains(&addr) {
-            panic!("Invalid access to address 0x{:04x}", addr);
+            warn!("Invalid access to address 0x{:04x}", addr);
         } else if IO_REGISTERS.contains(&addr) {
             self.write_io(addr, b);
         } else if HRAM.contains(&addr) {

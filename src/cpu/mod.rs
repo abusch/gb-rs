@@ -173,6 +173,8 @@ impl Cpu {
             }
             // DEC (HL)
             0x35 => self.dec_hl(bus),
+            // LD (HL), d8
+            0x36 => self.ld_hl_d8(bus),
             // JR C,r8
             0x38 => {
                 // C
@@ -636,6 +638,13 @@ impl Cpu {
         let d8 = self.fetch(bus);
         self.regs.set(reg, d8);
         8
+    }
+
+    /// LD (HL),d8
+    fn ld_hl_d8(&mut self, bus: &mut Bus) -> u8 {
+        let d8 = self.fetch(bus);
+        bus.write_byte(*self.regs.hl, d8);
+        12
     }
 
     /// LD r,r
