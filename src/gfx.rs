@@ -1,5 +1,5 @@
 use bitvec::prelude::*;
-use log::{debug, warn};
+use log::debug;
 
 use crate::{FrameSink, SCREEN_HEIGHT, SCREEN_WIDTH};
 
@@ -35,7 +35,6 @@ pub struct Gfx {
     /// Number of clock cycles since we began rendering the current frame
     dots: usize,
     running_mode: Mode,
-    pixel_bg_fetcher_step: PixelFetcherStep,
     line_drawing_state: LineDrawingState,
 
     // LCDC individual flags:
@@ -87,7 +86,6 @@ impl Gfx {
             lcd: vec![(0, 0, 0); SCREEN_WIDTH * SCREEN_HEIGHT].into_boxed_slice(),
             dots: 0,
             running_mode: Mode::Mode2,
-            pixel_bg_fetcher_step: PixelFetcherStep::GetTile,
             line_drawing_state: LineDrawingState::Idle,
             // TODO should it be exploded into individual flags?
             lcd_and_ppu_enabled: false,
@@ -115,7 +113,7 @@ impl Gfx {
     /// Note: when the PPU is active (mode 3), this area is locked to the CPU so reads will return
     /// 0xFF in that case.
     pub fn read_vram(&self, addr: u16) -> u8 {
-        if self.running_mode != Mode::Mode3 {
+        if self.running_mode != Mode::Mode3 || !self.lcd_and_ppu_enabled {
             self.read_vram_internal(addr)
         } else {
             0xff
@@ -128,13 +126,15 @@ impl Gfx {
     }
 
     pub fn write_vram(&mut self, addr: u16, b: u8) {
-        if self.running_mode != Mode::Mode3 {
+        if self.running_mode != Mode::Mode3 || !self.lcd_and_ppu_enabled {
             self.vram[(addr - VRAM_START) as usize] = b;
         }
     }
 
     pub fn read_oam(&self, addr: u16) -> u8 {
-        if self.running_mode != Mode::Mode2 && self.running_mode != Mode::Mode3 {
+        if !self.lcd_and_ppu_enabled
+            || (self.running_mode != Mode::Mode2 && self.running_mode != Mode::Mode3)
+        {
             self.oam_ram[(addr - OAM_START) as usize]
         } else {
             0xff
@@ -142,7 +142,9 @@ impl Gfx {
     }
 
     pub fn write_oam(&mut self, addr: u16, b: u8) {
-        if self.running_mode != Mode::Mode2 && self.running_mode != Mode::Mode3 {
+        if !self.lcd_and_ppu_enabled
+            || (self.running_mode != Mode::Mode2 && self.running_mode != Mode::Mode3)
+        {
             self.oam_ram[(addr - OAM_START) as usize] = b;
         }
     }
@@ -262,6 +264,10 @@ impl Gfx {
 
     /// Run the graphics subsystem for one clock cycle (or _dot_)
     fn dot(&mut self, frame_sink: &mut dyn FrameSink) {
+        if !self.lcd_and_ppu_enabled {
+            return
+        }
+
         self.dots += 1;
         // Each scanline takes 456 dots
         let mut scanline = (self.dots / 456) as u8;
@@ -453,15 +459,6 @@ enum Mode {
     Mode2 = 2,
     /// Drawing pixels
     Mode3 = 3,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PixelFetcherStep {
-    GetTile,
-    GetTileDataLow,
-    GetTileDataHigh,
-    Sleep,
-    Push,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -21,10 +21,11 @@ pub struct Cpu {
 impl Default for Cpu {
     fn default() -> Self {
         Self {
-            regs: Default::default(),
+            regs: Registers::default(),
             sp: Default::default(),
             pc: Default::default(),
             ime: true, // is this correct?
+            // breakpoint: 0x0100,
             breakpoint: 0xffff,
             paused: Default::default(),
         }
@@ -276,6 +277,7 @@ impl Cpu {
             0x7b => self.ld_r_r(Reg::A, Reg::E),
             0x7c => self.ld_r_r(Reg::A, Reg::H),
             0x7d => self.ld_r_r(Reg::A, Reg::L),
+            0x7e => self.ld_r_addr(bus, Reg::A, RegPair::HL),
             0x7f => self.ld_r_r(Reg::A, Reg::A),
             // ADD A,B
             0x80 => self.add_r(Reg::B),
@@ -402,6 +404,11 @@ impl Cpu {
                 // debug!("Returning from subroutine to 0x{:04x}", self.pc);
                 16
             }
+            // JP Z,a16
+            0xca => {
+                let z = self.regs.flag_z().is_set();
+                self.jp_if_a16(bus, z)
+            }
             // CB prefix
             0xcb => self.step_cb(bus),
             // CALL Z a16
@@ -466,6 +473,8 @@ impl Cpu {
             0xe6 => self.and_d8(bus),
             // RST 0x20
             0xe7 => self.rst(0x20),
+            // JP (HL)
+            0xe9 => self.jp_hl(bus),
             // LD (a16),A
             0xea => self.ld_a16_r(bus, Reg::A),
             // XOR d8
@@ -604,7 +613,7 @@ impl Cpu {
     // TODO probably should implement Debug instead...
     pub fn dump_cpu(&self) {
         println!(
-            "PC=0x{:04x}, SP=0x{:04x},\n\tregs={:?}",
+            "PC=${:04X}, SP=${:04X}, regs={:?}",
             self.pc, self.sp, self.regs
         );
     }
@@ -887,6 +896,11 @@ impl Cpu {
         }
     }
 
+    fn jp_hl(&mut self, bus: &mut Bus) -> u8 {
+        self.pc = bus.read_word(*self.regs.hl);
+        4
+    }
+
     /// conditional CALL
     fn call_if_a16(&mut self, bus: &mut Bus, flag: bool) -> u8 {
         if flag {
@@ -940,12 +954,12 @@ impl Cpu {
     fn rl_r(&mut self, reg: Reg) -> u8 {
         // C <- [7 <- 0] <- C
         let mut r = self.regs.get(reg);
-        let c = self.regs.flag_c().is_set();
-        r = r.rotate_left(1);
+        let c = self.regs.flag_c().is_set() as u8;
         // What used to be the 7th bit (and is now the 0th bit) should be the new carry flag
-        let new_c = r & 0x1;
+        let new_c = (r & 0x80) != 0;
+        r = r.rotate_left(1);
         // What was the carry should now be the 0th bit
-        if c {
+        if c != 0 {
             // set the bit
             r |= 0x01;
         } else {
@@ -960,16 +974,12 @@ impl Cpu {
         }
         self.regs.flag_n().clear();
         self.regs.flag_h().clear();
-        if new_c == 0 {
-            self.regs.flag_c().clear();
-        } else {
-            self.regs.flag_c().set();
-        }
+        self.regs.flag_c().set_value(new_c);
 
         8
     }
 
-    /// RR r ;rotate left through carry
+    /// RR r ;rotate right through carry
     fn rr_r(&mut self, reg: Reg) -> u8 {
         // C -> [7 -> 0] -> C
         let mut r = self.regs.get(reg);
@@ -993,11 +1003,7 @@ impl Cpu {
         }
         self.regs.flag_n().clear();
         self.regs.flag_h().clear();
-        if new_c == 0 {
-            self.regs.flag_c().clear();
-        } else {
-            self.regs.flag_c().set();
-        }
+        self.regs.flag_c().set_value(new_c != 0);
 
         8
     }

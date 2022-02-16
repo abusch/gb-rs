@@ -20,7 +20,7 @@ fn main() -> Result<()> {
     // let cartridge = Cartridge::load("assets/Tetris (World).gb")?;
     let file = std::env::args()
         .nth(1)
-        .unwrap_or("assets/Tetris (World).gb".into());
+        .unwrap_or_else(|| "assets/Tetris (World).gb".into());
     let cartridge = Cartridge::load(file)?;
     if cartridge.is_cgb() {
         info!("CGB flag is set");
@@ -34,15 +34,17 @@ fn main() -> Result<()> {
     let mut gb = GameBoy::new(cartridge);
 
     let mut sink = MinifbFrameSink::new()?;
+    // Draw an empty frame to  show the window
+    sink.draw_current_frame();
 
     let mut rl = Editor::<()>::new();
 
-    while !gb.is_halted() {
+    loop {
         if rx.try_recv().is_ok() {
             info!("Got ctrl-c");
             gb.pause();
         }
-        if gb.is_paused() {
+        if gb.is_halted() || gb.is_paused() {
             let readline = rl.readline("gb-rs> ");
             match readline {
                 Ok(line) => {
@@ -50,6 +52,7 @@ fn main() -> Result<()> {
                     match line.as_str() {
                         "next" => {
                             gb.step(&mut sink);
+                            gb.dump_cpu();
                         }
                         "continue" => {
                             gb.resume();
@@ -116,6 +119,14 @@ impl MinifbFrameSink {
             buf: [0u32; SCREEN_WIDTH * SCREEN_HEIGHT],
         })
     }
+
+    fn draw_current_frame(&mut self) {
+        // debug!("Updating minifb buffer");
+        self.window
+            .update_with_buffer(&self.buf, SCREEN_WIDTH, SCREEN_HEIGHT)
+            .expect("Failed to update window buffer");
+        // debug!("done minifb buffer");
+    }
 }
 
 impl FrameSink for MinifbFrameSink {
@@ -126,10 +137,6 @@ impl FrameSink for MinifbFrameSink {
             *buf_p = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
         });
 
-        // debug!("Updating minifb buffer");
-        self.window
-            .update_with_buffer(&self.buf, SCREEN_WIDTH, SCREEN_HEIGHT)
-            .expect("Failed to update window buffer");
-        // debug!("done minifb buffer");
+        self.draw_current_frame();
     }
 }

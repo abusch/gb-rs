@@ -187,10 +187,10 @@ impl Bus {
             0
         } else if IO_RANGE_TIM.contains(&addr) {
             match addr {
-                0x0f04 => self.timer.div_timer(),
-                0x0f05 => self.timer.tima(),
-                0x0f06 => self.timer.tma(),
-                0x0f07 => self.timer.tac(),
+                0xff04 => self.timer.div_timer(),
+                0xff05 => self.timer.tima(),
+                0xff06 => self.timer.tma(),
+                0xff07 => self.timer.tac(),
                 _ => {
                     // Divider and timer
                     debug!(

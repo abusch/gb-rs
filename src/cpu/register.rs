@@ -1,5 +1,7 @@
-use std::{fmt::Debug, ops::{Deref, DerefMut}};
-
+use std::{
+    fmt::Debug,
+    ops::{Deref, DerefMut},
+};
 
 // TODO don't think this is a great design... maybe we need a `Register` struct for a single
 // register.
@@ -91,7 +93,32 @@ impl Debug for Registers {
             .field("bc", &format_args!("${:04X}", *self.bc))
             .field("de", &format_args!("${:04X}", *self.de))
             .field("hl", &format_args!("${:04X}", *self.hl))
-            .field("flags", &format_args!("b{:08b}", self.af.lo()))
+            .field(
+                "flags",
+                &format_args!(
+                    "{}{}{}{}",
+                    if (*self.af & Self::FLAG_Z) != 0 {
+                        "Z"
+                    } else {
+                        "-"
+                    },
+                    if (*self.af & Self::FLAG_N) != 0 {
+                        "N"
+                    } else {
+                        "-"
+                    },
+                    if (*self.af & Self::FLAG_H) != 0 {
+                        "H"
+                    } else {
+                        "-"
+                    },
+                    if (*self.af & Self::FLAG_C) != 0 {
+                        "C"
+                    } else {
+                        "-"
+                    },
+                ),
+            )
             .finish()
     }
 }
@@ -188,7 +215,7 @@ mod tests {
     #[test]
     fn test_flags() {
         let mut regs = Registers::default();
-        
+
         assert!(!regs.flag_z().is_set());
         regs.flag_z().set();
         assert!(regs.flag_z().is_set());
