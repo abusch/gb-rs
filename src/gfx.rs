@@ -265,7 +265,7 @@ impl Gfx {
     /// Run the graphics subsystem for one clock cycle (or _dot_)
     fn dot(&mut self, frame_sink: &mut dyn FrameSink) {
         if !self.lcd_and_ppu_enabled {
-            return
+            return;
         }
 
         self.dots += 1;
@@ -324,23 +324,38 @@ impl Gfx {
 
     fn draw_scan_line(&mut self) {
         // TODO handle window
-        let tilemap_area = if self.bg_tile_map_area {
+        let bg_tilemap_area = if self.bg_tile_map_area {
             0x9C00
         } else {
             0x9800
         };
-        // let tile_y = (self.scy + self.ly) / 8;
+        let win_tilemap_area = if self.window_tile_map_area {
+            0x9C00
+        } else {
+            0x9800
+        };
         // Render a line of pixels
         for x in 0..SCREEN_WIDTH as u8 {
             // Coordinates in "LCD space" (i.e 160x144)
             let (lcd_x, lcd_y) = (x, self.ly);
             // Coordinates in "Background area" space (i.e 256x256)
-            let (bg_x, bg_y) = (lcd_x + self.scx, lcd_y + self.scy);
+            let (bg_x, bg_y, tilemap_area) = if self.bg_and_window_enable_priority
+                && self.window_enable
+                && lcd_x + 7 >= self.wx
+                && lcd_y >= self.wy
+            {
+                // We're in the window
+                (lcd_x - self.wx, lcd_y - self.wy, win_tilemap_area)
+            } else {
+                // we're in the background
+
+                (lcd_x + self.scx, lcd_y + self.scy, bg_tilemap_area)
+            };
             // Coordinates in "tilemap space" (i.e. 32x32)
             let (tilemap_x, tilemap_y) = (bg_x / 8, bg_y / 8);
 
-            let tile_id =
-                self.read_vram_internal(tilemap_area + (tilemap_y as u16 * 32 + tilemap_x as u16));
+            let tile_id = self
+                .read_vram_internal(tilemap_area + (tilemap_y as u16 * 32 + tilemap_x as u16));
 
             // Now that we've got the tileid, look up the tile data in the appropriate location.
 
