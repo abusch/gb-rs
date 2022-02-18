@@ -1,6 +1,6 @@
 use std::ops::RangeInclusive;
 
-use log::{debug, warn};
+use log::{debug, info, trace, warn};
 
 use crate::{cartridge::Cartridge, gfx::Gfx, timer::Timer, FrameSink};
 
@@ -50,6 +50,8 @@ pub struct Bus {
     joypad: u8,
     has_booted: bool,
 
+    selected_rom_bank: u8,
+
     /// IE - Interrupt Enable register
     interrupt_enable: u8,
     /// IF - Interrupt Flag register
@@ -69,6 +71,7 @@ impl Bus {
             cartridge,
             joypad: 0,
             has_booted: false,
+            selected_rom_bank: 0x01,
             interrupt_enable: 0,
             interrupt_flag: 0,
             timer: Timer::new(),
@@ -85,29 +88,36 @@ impl Bus {
         if BOOT_ROM.contains(&addr) && !self.has_booted {
             // read from boot rom
             BOOT_ROM_DATA[addr as usize]
-        } else if CART_BANK_00.contains(&addr) || CART_BANK_MAPPED.contains(&addr) {
+        } else if CART_BANK_00.contains(&addr) {
+            self.cartridge.data[addr as usize]
+        } else if CART_BANK_MAPPED.contains(&addr) {
             // TODO implement MBC + bank switching
             // TODO if no MBC, check ROM size too
             // unimplemented!("switchable banks 0x{:04x}", addr);
             // warn!("unimplemented switchable banks 0x{:04x}", addr);
-            self.cartridge.data[addr as usize]
+            let mapped_addr = (addr - 0x4000) + (0x4000 * self.selected_rom_bank as u16);
+            debug!(
+                "Reading from external ROM bank {:02x}. Mapping 0x{:04x}->0x{:04x}",
+                self.selected_rom_bank, addr, mapped_addr
+            );
+            self.cartridge.data[mapped_addr as usize]
         } else if VRAM.contains(&addr) {
             self.gfx.read_vram(addr)
         } else if EXT_RAM.contains(&addr) {
             // unimplemented!("External RAM 0x{:04x}", addr);
-            warn!("External RAM 0x{:04x}", addr);
+            trace!("External RAM 0x{:04x}", addr);
             0xFF
         } else if WRAM.contains(&addr) {
             self.ram[(addr - WRAM.start()) as usize]
         } else if ECHO_RAM.contains(&addr) {
             // ECHO RAM: mirror of C000-DDFF
-            warn!("Accessing ECHO RAM!");
+            trace!("Accessing ECHO RAM!");
             self.read_byte(addr - 0x2000)
         } else if OAM.contains(&addr) {
             // debug!("Reading Sprite attribute table (OAM): 0x{:04x}", addr);
             self.gfx.read_oam(addr)
         } else if INVALID_AREA.contains(&addr) {
-            warn!("Invalid access to address 0x{:04x}", addr);
+            trace!("Invalid access to address 0x{:04x}", addr);
             0xFF
         } else if IO_REGISTERS.contains(&addr) {
             self.read_io(addr)
@@ -132,7 +142,22 @@ impl Bus {
         if BOOT_ROM.contains(&addr) && !self.has_booted {
             panic!("Tried to write into boot ROM during the boot sequence!");
         } else if CART_BANK_00.contains(&addr) {
-            self.cartridge.data[addr as usize] = b;
+            if (0x0000..=0x1FFF).contains(&addr) {
+                if b & 0x0A == 0x0A {
+                    trace!("Enabling external RAM");
+                } else {
+                    trace!("Disabling external RAM");
+                }
+                // RAM Enable register
+            } else if (0x2000..=0x3FFF).contains(&addr) {
+                // ROM Bank Number register
+                let b = if b == 0 { 0x01 } else { b };
+                // TODO handle secondary banking register
+                self.selected_rom_bank = b & 0x1F;
+                info!("Selected ROM Bank {:02x}", self.selected_rom_bank);
+            } else {
+                // unimplemented
+            }
         } else if CART_BANK_MAPPED.contains(&addr) {
             // unimplemented!("switchable banks 0x{:04x}", addr);
             warn!("unimplemented switchable banks 0x{:04x}", addr);
