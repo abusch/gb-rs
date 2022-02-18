@@ -54,4 +54,8 @@ impl GameBoy {
     pub fn resume(&mut self) {
         self.cpu.set_pause(false);
     }
+
+    pub fn set_breakpoint(&mut self, addr: u16) {
+        self.cpu.set_breakpoint(addr);
+    }
 }

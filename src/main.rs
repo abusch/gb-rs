@@ -68,6 +68,14 @@ fn main() -> Result<()> {
                                 }
                             }
                         }
+                        s if s.starts_with("br") => {
+                            if let Some(addr_str) = s.split_whitespace().nth(1) {
+                                if let Ok(addr) = u16::from_str_radix(addr_str, 16) {
+                                    println!("Setting breakpoint at {:x}", addr);
+                                    gb.set_breakpoint(addr);
+                                }
+                            }
+                        }
                         "quit" => {
                             break;
                         }
@@ -110,6 +118,7 @@ impl MinifbFrameSink {
             144,
             minifb::WindowOptions {
                 resize: false,
+                topmost: true,
                 scale: minifb::Scale::X2,
                 ..Default::default()
             },
