@@ -298,7 +298,16 @@ impl Bus {
         } else if IO_RANGE_LCD.contains(&addr) {
             // LCD
             // debug!("Write LCD controller 0x{:04x}<-0x{:02X}", addr, b);
-            self.gfx.write_reg(addr, b);
+            if addr == 0xff46 {
+                // DMA transfer
+                let base_addr = (b as u16) * 0x100;
+                debug!("Starting DMA transfer from 0x{:04x} to OAM", base_addr);
+                for i in 0..=0x9Fu16 {
+                    self.gfx.write_oam(OAM.start() + i, self.read_byte(base_addr + i));
+                }
+            } else {
+                self.gfx.write_reg(addr, b);
+            }
         } else if IO_RANGE_DBR.contains(&addr) {
             if b == 0x01 {
                 self.has_booted = true;
