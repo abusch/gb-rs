@@ -1,15 +1,23 @@
 mod register;
 
-use log::{debug, warn};
+use log::{debug, trace, warn};
 
 use self::register::{Reg, RegPair, Registers};
-use crate::bus::Bus;
+use crate::{bus::Bus, interrupt::InterruptFlag};
+
+const ITR_VBLANK: u16 = 0x0040;
+const ITR_STAT: u16 = 0x0048;
+const ITR_TIMER: u16 = 0x0050;
+const ITR_SERIAL: u16 = 0x0058;
+const ITR_JOYP: u16 = 0x0060;
 
 pub struct Cpu {
     regs: Registers,
 
     sp: u16,
     pc: u16,
+    halted: bool,
+
     /// IME - Interrupt Master Enable Flag
     ime: bool,
 
@@ -24,28 +32,67 @@ impl Default for Cpu {
             regs: Registers::default(),
             sp: Default::default(),
             pc: Default::default(),
+            halted: false,
             ime: true, // is this correct?
             // breakpoint: 0x0100,
-            breakpoint: 0xffff,
+            breakpoint: 0x0040,
             paused: Default::default(),
         }
     }
 }
 
 impl Cpu {
+    pub fn handle_interrupt(&mut self, bus: &mut Bus) {
+        let interrupt_flag = bus.interrupt_flag();
+        let interrupt_enable = bus.interrupt_enable();
+
+        if !self.ime || interrupt_flag.is_empty() || interrupt_enable.is_empty() {
+            // If interrupts are disabled, return
+            // debug!("interrupts are disabled, ignoring");
+            return;
+        }
+        debug!("Handling interrupts: pending: {:?} / enabled: {:?}", interrupt_flag, interrupt_enable);
+
+        let should_handle = |f: InterruptFlag| -> bool {
+            interrupt_flag.contains(f) && interrupt_enable.contains(f)
+        };
+
+        if should_handle(InterruptFlag::VBLANK) {
+            debug!("Handling VBLANK interrupt");
+            self.call_interrupt(bus, InterruptFlag::VBLANK);
+        } else if should_handle(InterruptFlag::STAT) {
+            debug!("Handling TIMER interrupt");
+            self.call_interrupt(bus, InterruptFlag::STAT);
+        } else if should_handle(InterruptFlag::TIMER) {
+            debug!("Handling TIMER interrupt");
+            self.call_interrupt(bus, InterruptFlag::TIMER);
+        }
+    }
+
+    fn get_itr_vector(&self, flag: InterruptFlag) -> u16 {
+       match flag {
+           InterruptFlag::VBLANK => ITR_VBLANK,
+           InterruptFlag::TIMER => ITR_TIMER,
+           InterruptFlag::STAT => ITR_STAT,
+           _ => unimplemented!()
+       }
+    }
+
     /// Fetch and execute the next instructions.
     ///
-    /// Return the number of clock cycles used.
-    pub fn step(&mut self, bus: &mut Bus) -> (u8, bool) {
+    /// Return the number of clock cycles used
+    pub fn step(&mut self, bus: &mut Bus) -> u8 {
         // for debugging
         if self.pc == self.breakpoint {
             self.paused = true;
+        }
+        if self.halted {
+            return 4;
         }
 
         let orig_pc = self.pc;
         let op = self.fetch(bus);
 
-        let mut halted = false;
         let cycles = match op {
             // NOP
             0x00 => 4,
@@ -80,7 +127,7 @@ impl Cpu {
             // STOP 0
             0x10 => {
                 warn!("STOP!");
-                self.paused = true;
+                self.halted = true;
                 // halted = true;
                 4
             }
@@ -179,6 +226,8 @@ impl Cpu {
             }
             // INC SP
             0x33 => self.inc_sp(),
+            // INC (HL)
+            0x34 => self.inc_hl(bus),
             // DEC (HL)
             0x35 => self.dec_hl(bus),
             // LD (HL), d8
@@ -273,8 +322,8 @@ impl Cpu {
             0x75 => self.ld_addr_r(bus, RegPair::HL, Reg::L),
             // HALT
             0x76 => {
-                warn!("HALT!");
-                // halted = true;
+                debug!("HALT!");
+                self.halted = true;
                 4
             }
             // LD (HL),A
@@ -335,6 +384,20 @@ impl Cpu {
             0x95 => self.sub_r(Reg::L),
             // SUB A
             0x97 => self.sub_r(Reg::A),
+            // SBC B
+            0x98 => self.sbc_r(Reg::B),
+            // SBC C
+            0x99 => self.sbc_r(Reg::C),
+            // SBC D
+            0x9a => self.sbc_r(Reg::D),
+            // SBC E
+            0x9b => self.sbc_r(Reg::E),
+            // SBC H
+            0x9c => self.sbc_r(Reg::H),
+            // SBC L
+            0x9d => self.sbc_r(Reg::L),
+            // SBC A
+            0x9f => self.sbc_r(Reg::A),
             // AND B
             0xa0 => self.and_r(Reg::B),
             // AND C
@@ -465,11 +528,21 @@ impl Cpu {
                 let c = self.regs.flag_c().is_set();
                 self.ret_if(bus, c)
             }
+            // RETI
+            0xd9 => {
+                self.ret_if(bus, true);
+                // Re-enable interrupts
+                self.ime = true;
+                debug!("Returning from interrupt handler to 0x{:04x}", self.pc);
+                16
+            }
             // CALL C a16
             0xdc => {
                 let c = self.regs.flag_c().is_set();
                 self.call_if_a16(bus, c)
             }
+            // SBC A,d8
+            0xde => self.sbc_d8(bus),
             // RST 0x18
             0xdf => self.rst(0x18),
             // LDH (a8),A
@@ -552,7 +625,7 @@ impl Cpu {
                 0
             }
         };
-        (cycles, halted)
+        cycles
     }
 
     /// CB-prefixed instruction
@@ -752,8 +825,8 @@ impl Cpu {
     // TODO probably should implement Debug instead...
     pub fn dump_cpu(&self) {
         println!(
-            "PC=${:04X}, SP=${:04X}, regs={:?}",
-            self.pc, self.sp, self.regs
+            "PC=${:04X}, SP=${:04X}, regs={:?}, IME={}",
+            self.pc, self.sp, self.regs, self.ime
         );
     }
 
@@ -978,22 +1051,25 @@ impl Cpu {
         8
     }
 
+    /// INC (HL)
+    fn inc_hl(&mut self, bus: &mut Bus) -> u8 {
+        let mut r = bus.read_byte(*self.regs.hl);
+        r = r.wrapping_add(1);
+        bus.write_byte(*self.regs.hl, r);
+        self.regs.flag_z().set_value(r == 0);
+        self.regs.flag_n().clear();
+        self.regs.flag_h().set_value(r > 0x0F);
+        12
+    }
+
     /// DEC (HL)
     fn dec_hl(&mut self, bus: &mut Bus) -> u8 {
         let mut r = bus.read_byte(*self.regs.hl);
         r = r.wrapping_sub(1);
         bus.write_byte(*self.regs.hl, r);
-        if r == 0 {
-            self.regs.flag_z().set();
-        } else {
-            self.regs.flag_z().clear();
-        }
+        self.regs.flag_z().set_value(r == 0);
         self.regs.flag_n().set();
-        if r > 0x0F {
-            self.regs.flag_h().set();
-        } else {
-            self.regs.flag_h().clear();
-        }
+        self.regs.flag_h().set_value(r > 0x0F);
         12
     }
 
@@ -1099,14 +1175,29 @@ impl Cpu {
     fn call_if_a16(&mut self, bus: &mut Bus, flag: bool) -> u8 {
         if flag {
             let addr = self.fetch_word(bus);
-            self.push_word(bus, self.pc);
-            self.pc = addr;
+            self.call(bus, addr);
 
-            // debug!("Calling subroutine at 0x{:04x}", addr);
             24
         } else {
             12
         }
+    }
+
+    fn call_interrupt(&mut self, bus: &mut Bus, itr_flag: InterruptFlag) {
+        let addr = self.get_itr_vector(itr_flag);
+        debug!("Calling ITR 0x{:02X}", addr);
+        // disable interrupts
+        self.ime = false;
+        bus.ack_interrupt(itr_flag);
+        self.halted = false;
+        self.push_word(bus, self.pc);
+        self.pc = addr;
+    }
+
+    fn call(&mut self, bus: &mut Bus, addr: u16) {
+        trace!("Calling subroutine at 0x{:04x}", addr);
+        self.push_word(bus, self.pc);
+        self.pc = addr;
     }
 
     fn ret_if(&mut self, bus: &mut Bus, flag: bool) -> u8 {
@@ -1325,6 +1416,26 @@ impl Cpu {
         8
     }
 
+    /// SBC (HL)
+    fn sbc_hl(&mut self, bus: &mut Bus) -> u8 {
+        let hl = bus.read_byte(*self.regs.hl);
+        self.sbc(hl, true);
+        8
+    }
+
+    /// SBC r
+    fn sbc_r(&mut self, reg: Reg) -> u8 {
+        self.sbc(self.regs.get(reg), true)
+    }
+
+    /// SBC d8
+    fn sbc_d8(&mut self, bus: &mut Bus) -> u8 {
+        let d8 = self.fetch(bus);
+        self.sbc(d8, true);
+        4
+    }
+
+
     /// SUB d8
     fn sub_d8(&mut self, bus: &mut Bus) -> u8 {
         let d8 = self.fetch(bus);
@@ -1337,15 +1448,24 @@ impl Cpu {
     }
 
     fn sub(&mut self, v: u8) -> u8 {
-        let (sub, carry) = self.regs.get(Reg::A).overflowing_sub(v);
+        self.sbc(v, false);
+        4
+    }
+
+    fn sbc(&mut self, value: u8, with_carry: bool) -> u8 {
+        let to_sub = if with_carry && self.regs.flag_c().is_set() {
+            value - 1
+        } else {
+            value
+        };
+        let (sub, carry) = self.regs.get(Reg::A).overflowing_sub(to_sub);
         self.regs.set(Reg::A, sub);
         self.regs.flag_z().set_value(sub == 0);
         self.regs.flag_n().set();
         self.regs.flag_c().set_value(carry);
         // TODO how to set H?
-        4
+        8
     }
-
     fn cp_hl(&mut self, bus: &mut Bus) -> u8 {
         let d8 = bus.read_byte(self.regs.get_pair(RegPair::HL));
         self.cp(d8);
@@ -1393,5 +1513,10 @@ impl Cpu {
     /// Set the cpu's breakpoint.
     pub fn set_breakpoint(&mut self, breakpoint: u16) {
         self.breakpoint = breakpoint;
+    }
+
+    /// Get the cpu's halted.
+    pub fn halted(&self) -> bool {
+        self.halted
     }
 }

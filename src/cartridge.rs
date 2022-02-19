@@ -1,10 +1,13 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use log::info;
+use log::{info, debug};
 
 pub struct Cartridge {
-    pub(crate) data: Box<[u8]>,
+    data: Box<[u8]>,
+    ram: Box<[u8]>,
+    selected_rom_bank: u8,
+    selected_ram_bank: u8,
 }
 
 impl Cartridge {
@@ -14,6 +17,10 @@ impl Cartridge {
 
         Ok(Self {
             data: content.into_boxed_slice(),
+            // Allocate the most RAM a cart can have
+            ram: vec![0; 64 * 1024].into_boxed_slice(),
+            selected_rom_bank: 0x01,
+            selected_ram_bank: 0x00,
         })
     }
 
@@ -66,11 +73,86 @@ impl Cartridge {
         }
     }
 
+    pub fn has_mbc1(&self) -> bool {
+        matches!(self.data[0x0147], 0x01..=0x03)
+    }
+
     pub fn get_rom_size(&self) -> u8 {
         self.data[0x0148]
     }
 
     pub fn get_ram_size(&self) -> u8 {
         self.data[0x0149]
+    }
+
+    pub fn select_rom_bank(&mut self, bank: u8) {
+        if bank == 0 {
+            self.selected_rom_bank = 0x01;
+        } else {
+            self.selected_rom_bank = bank & 0x1f;
+        }
+        // assert!(bank <= self.get_num_rom_banks());
+        debug!("Selected ROM bank {}", self.selected_rom_bank);
+    }
+
+    pub fn select_ram_bank(&mut self, bank: u8) {
+        self.selected_ram_bank = bank & 0x03;
+        debug!("Selected RAM bank {}", self.selected_ram_bank);
+    }
+
+    /// Read a byte from the selected bank of this cartridge's ROM.
+    ///
+    /// The given address should be relative to the selected bank, i.e. in the range 0000-3FFF.
+    pub fn read_rom(&self, addr: u16) -> u8 {
+        // assert!(addr < 0x4000);
+        let mapped_addr = if addr < 0x4000 {
+            addr
+        } else {
+            0x4000 * self.selected_rom_bank as u16 + (addr - 0x4000)
+        };
+        self.data[mapped_addr as usize]
+    }
+
+    /// Write a byte into the selected bank of this cartridge's ROM
+    ///
+    /// The given address should be relative to the selected bank, i.e. in the range 0000-3FFF.
+    pub fn write_rom(&mut self, addr: u16, b: u8) {
+        assert!(addr < 0x4000);
+        let addr = 0x4000 * self.selected_rom_bank as u16 + addr;
+        self.ram[addr as usize] = b;
+    }
+
+    /// Read a byte from the selected bank of this cartridge's external RAM.
+    ///
+    /// The given address should be relative to the selected bank, i.e. in the range 0000-1FFF.
+    pub fn read_ram(&self, addr: u16) -> u8 {
+        assert!(addr < 0x2000, "addr=0x{:04x}", addr);
+        let addr = 0x2000 * self.selected_ram_bank as u16 + addr;
+        self.ram[addr as usize]
+    }
+
+    /// Write a byte into the selected bank of this cartridge's external RAM
+    ///
+    /// The given address should be relative to the selected bank, i.e. in the range 0000-1FFF.
+    pub fn write_ram(&mut self, addr: u16, b: u8) {
+        assert!(addr < 0x2000);
+        let addr = 0x2000 * self.selected_ram_bank as u16 + addr;
+        self.ram[addr as usize] = b;
+    }
+
+    #[allow(dead_code)]
+    fn get_num_rom_banks(&self) -> u16 {
+        match self.get_rom_size() {
+            0x00 => 2,
+            0x01 => 4,
+            0x02 => 8,
+            0x03 => 16,
+            0x04 => 32,
+            0x05 => 64,
+            0x06 => 128,
+            0x07 => 256,
+            0x08 => 512,
+            s => panic!("Invalid ROM size {}", s),
+        }
     }
 }

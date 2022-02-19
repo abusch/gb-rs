@@ -1,7 +1,7 @@
 use bitvec::prelude::*;
 use log::debug;
 
-use crate::{FrameSink, SCREEN_HEIGHT, SCREEN_WIDTH};
+use crate::{FrameSink, SCREEN_HEIGHT, SCREEN_WIDTH, interrupt::InterruptFlag};
 
 const VRAM_START: u16 = 0x8000;
 const OAM_START: u16 = 0xFE00;
@@ -70,6 +70,12 @@ pub struct Gfx {
     /// WX (Window X Position + 7)
     wx: u8,
 
+    // STAT interrupt sources
+    stat_lyc_eq_ly_itr_source: bool,
+    stat_oam_itr_source: bool,
+    stat_vblank_itr_source: bool,
+    stat_hblank_itr_source: bool,
+
     /// BG Palette
     bgp: [Color; 4],
     /// OBJ Palette 0
@@ -105,6 +111,10 @@ impl Gfx {
             lyc: 0,
             wy: 0,
             wx: 0,
+            stat_lyc_eq_ly_itr_source: false,
+            stat_oam_itr_source: false,
+            stat_vblank_itr_source: false,
+            stat_hblank_itr_source: false,
         }
     }
 
@@ -210,6 +220,8 @@ impl Gfx {
             self.obj_enabled = bits[1];
             self.bg_and_window_enable_priority = bits[0];
             // debug!("LCDC reg = 0b{:b}", b);
+        } else if addr == STAT_REG {
+            self.set_stat(b);
         } else if addr == SCY_REG {
             // FF42 SCY
             self.scy = b;
@@ -243,9 +255,15 @@ impl Gfx {
 
     /// Return the value of the STAT register (FF41)
     fn stat(&self) -> u8 {
-        // TODO interrupt sources
         let mut byte = 0u8;
         let bits = byte.view_bits_mut::<Lsb0>();
+
+        // interrupt sources
+        bits.set(6, self.stat_lyc_eq_ly_itr_source);
+        bits.set(5, self.stat_oam_itr_source);
+        bits.set(4, self.stat_vblank_itr_source);
+        bits.set(3, self.stat_hblank_itr_source);
+
         bits.set(2, self.ly == self.lyc);
 
         let mode = self.running_mode as u8;
@@ -256,16 +274,29 @@ impl Gfx {
         bits.load()
     }
 
-    pub(crate) fn dots(&mut self, cycles: u8, frame_sink: &mut dyn FrameSink) {
+    fn set_stat(&mut self, stat: u8) {
+       let bits = stat.view_bits::<Lsb0>(); 
+       self.stat_lyc_eq_ly_itr_source = bits[6];
+       self.stat_oam_itr_source = bits[5];
+       self.stat_vblank_itr_source = bits[4];
+       self.stat_hblank_itr_source = bits[3];
+    }
+
+    pub(crate) fn dots(&mut self, cycles: u8, frame_sink: &mut dyn FrameSink) -> InterruptFlag {
+        let mut interrupt = InterruptFlag::empty();
         for _ in 0..cycles {
-            self.dot(frame_sink);
+            interrupt |= self.dot(frame_sink);
         }
+
+        interrupt
     }
 
     /// Run the graphics subsystem for one clock cycle (or _dot_)
-    fn dot(&mut self, frame_sink: &mut dyn FrameSink) {
+    fn dot(&mut self, frame_sink: &mut dyn FrameSink) -> InterruptFlag {
+        let mut interrupts = InterruptFlag::empty();
+
         if !self.lcd_and_ppu_enabled {
-            return;
+            return interrupts;
         }
 
         self.dots += 1;
@@ -279,6 +310,9 @@ impl Gfx {
             scanline = 0;
         }
         self.ly = scanline;
+        if self.ly == self.lyc && self.stat_lyc_eq_ly_itr_source {
+            interrupts |= InterruptFlag::STAT;
+        }
 
         if scanline > 143 {
             self.running_mode = Mode::Mode1;
@@ -296,11 +330,18 @@ impl Gfx {
             Mode::Mode0 => {
                 if self.line_drawing_state == LineDrawingState::Drawing {
                     self.line_drawing_state = LineDrawingState::Idle;
+                    if self.stat_hblank_itr_source {
+                        interrupts |= InterruptFlag::STAT;
+                    }
                 }
             }
             Mode::Mode1 => {
                 if self.line_drawing_state == LineDrawingState::Idle {
                     frame_sink.push_frame(&self.lcd);
+                    interrupts |= InterruptFlag::VBLANK;
+                    if self.stat_vblank_itr_source {
+                        interrupts |= InterruptFlag::STAT;
+                    }
                     self.line_drawing_state = LineDrawingState::FramePushed;
                 }
             }
@@ -311,6 +352,9 @@ impl Gfx {
                     // OAM scan
                     self.line_drawing_state = LineDrawingState::OamScan;
                     // TODO do the actual scan
+                    if self.stat_oam_itr_source {
+                        interrupts |= InterruptFlag::STAT;
+                    }
                 }
             }
             Mode::Mode3 => {
@@ -320,6 +364,7 @@ impl Gfx {
                 }
             }
         }
+        interrupts
     }
 
     fn draw_scan_line(&mut self) {

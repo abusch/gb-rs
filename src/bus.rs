@@ -1,8 +1,8 @@
 use std::ops::RangeInclusive;
 
-use log::{debug, info, trace, warn};
+use log::{debug, trace, warn};
 
-use crate::{cartridge::Cartridge, gfx::Gfx, timer::Timer, FrameSink};
+use crate::{cartridge::Cartridge, gfx::Gfx, timer::Timer, FrameSink, interrupt::InterruptFlag};
 
 const BOOT_ROM_DATA: &[u8] = include_bytes!("../assets/dmg_boot.bin");
 
@@ -50,12 +50,10 @@ pub struct Bus {
     joypad: u8,
     has_booted: bool,
 
-    selected_rom_bank: u8,
-
     /// IE - Interrupt Enable register
-    interrupt_enable: u8,
+    interrupt_enable: InterruptFlag,
     /// IF - Interrupt Flag register
-    interrupt_flag: u8,
+    interrupt_flag: InterruptFlag,
 
     timer: Timer,
 }
@@ -71,42 +69,32 @@ impl Bus {
             cartridge,
             joypad: 0,
             has_booted: false,
-            selected_rom_bank: 0x01,
-            interrupt_enable: 0,
-            interrupt_flag: 0,
+            interrupt_enable: InterruptFlag::empty(),
+            interrupt_flag: InterruptFlag::empty(),
             timer: Timer::new(),
         }
     }
 
     /// Run the different peripherals for the given number of clock cycles
     pub fn cycle(&mut self, cycles: u8, frame_sync: &mut dyn FrameSink) {
-        self.gfx.dots(cycles, frame_sync);
-        self.timer.cycle(cycles);
+        self.interrupt_flag |= self.gfx.dots(cycles, frame_sync);
+        // if self.timer.cycle(cycles) {
+        //     self.interrupt_flag |= InterruptFlag::TIMER;
+        // }
     }
 
     pub fn read_byte(&self, addr: u16) -> u8 {
         if BOOT_ROM.contains(&addr) && !self.has_booted {
             // read from boot rom
             BOOT_ROM_DATA[addr as usize]
-        } else if CART_BANK_00.contains(&addr) {
-            self.cartridge.data[addr as usize]
-        } else if CART_BANK_MAPPED.contains(&addr) {
-            // TODO implement MBC + bank switching
-            // TODO if no MBC, check ROM size too
-            // unimplemented!("switchable banks 0x{:04x}", addr);
-            // warn!("unimplemented switchable banks 0x{:04x}", addr);
-            let mapped_addr = (addr - 0x4000) + (0x4000 * self.selected_rom_bank as u16);
-            debug!(
-                "Reading from external ROM bank {:02x}. Mapping 0x{:04x}->0x{:04x}",
-                self.selected_rom_bank, addr, mapped_addr
-            );
-            self.cartridge.data[mapped_addr as usize]
+        } else if CART_BANK_00.contains(&addr) || CART_BANK_MAPPED.contains(&addr) {
+            self.cartridge.read_rom(addr)
         } else if VRAM.contains(&addr) {
             self.gfx.read_vram(addr)
         } else if EXT_RAM.contains(&addr) {
             // unimplemented!("External RAM 0x{:04x}", addr);
             trace!("External RAM 0x{:04x}", addr);
-            0xFF
+            self.cartridge.read_ram(addr - EXT_RAM.start())
         } else if WRAM.contains(&addr) {
             self.ram[(addr - WRAM.start()) as usize]
         } else if ECHO_RAM.contains(&addr) {
@@ -118,13 +106,14 @@ impl Bus {
             self.gfx.read_oam(addr)
         } else if INVALID_AREA.contains(&addr) {
             trace!("Invalid access to address 0x{:04x}", addr);
-            0xFF
+            0x00
         } else if IO_REGISTERS.contains(&addr) {
             self.read_io(addr)
         } else if HRAM.contains(&addr) {
             self.hram[(addr - HRAM.start()) as usize]
         } else if addr == 0xFFFF {
-            self.interrupt_enable
+            debug!("Reading IE register: {:?}", self.interrupt_enable);
+            self.interrupt_enable.bits()
         } else {
             unreachable!("How did we get here?");
         }
@@ -151,18 +140,19 @@ impl Bus {
                 // RAM Enable register
             } else if (0x2000..=0x3FFF).contains(&addr) {
                 // ROM Bank Number register
-                let b = if b == 0 { 0x01 } else { b };
-                // TODO handle secondary banking register
-                self.selected_rom_bank = b & 0x1F;
-                info!("Selected ROM Bank {:02x}", self.selected_rom_bank);
+                self.cartridge.select_rom_bank(b);
             } else {
                 // unimplemented
             }
         } else if CART_BANK_MAPPED.contains(&addr) {
-            // unimplemented!("switchable banks 0x{:04x}", addr);
-            warn!("unimplemented switchable banks 0x{:04x}", addr);
+            if (0x4000..=0x5FFF).contains(&addr) {
+                debug!("Selecting external RAM bank {:02X}", b);
+                self.cartridge.select_ram_bank(b);
+            }
         } else if VRAM.contains(&addr) {
             self.gfx.write_vram(addr, b);
+        } else if EXT_RAM.contains(&addr) {
+            self.cartridge.write_ram(addr - EXT_RAM.start(), b);
         } else if WRAM.contains(&addr) {
             self.ram[(addr - WRAM.start()) as usize] = b;
         } else if ECHO_RAM.contains(&addr) {
@@ -173,16 +163,17 @@ impl Bus {
             // debug!("Writing Sprite attribute table (OAM): 0x{:04x}", addr);
             self.gfx.write_oam(addr, b);
         } else if INVALID_AREA.contains(&addr) {
-            warn!("Invalid access to address 0x{:04x}", addr);
+            // Ignore writes to this are
+            // warn!("Invalid access to address 0x{:04x}", addr);
         } else if IO_REGISTERS.contains(&addr) {
             self.write_io(addr, b);
         } else if HRAM.contains(&addr) {
             self.hram[(addr - HRAM.start()) as usize] = b;
         } else if addr == 0xFFFF {
             debug!("Setting Interrupt Enable Register with 0b{:08b}", b);
-            self.interrupt_enable = b;
+            self.interrupt_enable = InterruptFlag::from_bits_truncate(b);
         } else {
-            unreachable!("How did we get here?");
+            unreachable!("How did we get here? addr=0x{:04x}", addr);
         }
     }
 
@@ -192,6 +183,19 @@ impl Bus {
         self.write_byte(addr, lsb);
         // then the msb
         self.write_byte(addr + 1, msb);
+    }
+
+    pub fn interrupt_enable(&self) -> InterruptFlag {
+        self.interrupt_enable
+    }
+
+    pub fn interrupt_flag(&self) -> InterruptFlag {
+        self.interrupt_flag
+    }
+
+    pub fn ack_interrupt(&mut self, flag: InterruptFlag) {
+        self.interrupt_flag.toggle(flag);
+        debug!("Acknowledging interrupt: {:?}. Pending: {:?}", flag, self.interrupt_flag);
     }
 
     /// Read access to IO registers
@@ -227,7 +231,7 @@ impl Bus {
             }
         } else if IO_RANGE_INT.contains(&addr) {
             // IF - interrupt flag
-            self.interrupt_flag
+            self.interrupt_flag.bits()
         } else if IO_RANGE_APU.contains(&addr) {
             // Sound
             debug!("Read sound register 0x{:04x} (NOT IMPLEMENTED)", addr);
@@ -282,7 +286,7 @@ impl Bus {
             }
         } else if IO_RANGE_INT.contains(&addr) {
             // IF - interrupt flag
-            self.interrupt_flag = b;
+            self.interrupt_flag = InterruptFlag::from_bits_truncate(b);
         } else if IO_RANGE_APU.contains(&addr) {
             // Sound
             debug!(

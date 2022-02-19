@@ -30,7 +30,8 @@ impl Timer {
         }
     }
 
-    pub fn cycle(&mut self, cycles: u8) {
+    pub fn cycle(&mut self, cycles: u8) -> bool {
+        let mut request_interrupt = false;
         for _ in 0..cycles {
             self.cycle_counter = self.cycle_counter.wrapping_add(1);
             // Update DIV
@@ -38,8 +39,10 @@ impl Timer {
             if self.div_timer_ticker > 255 {
                 self.div_timer = self.div_timer.wrapping_add(1);
                 self.div_timer_ticker = 0;
+                request_interrupt = true;
             }
         }
+        request_interrupt
     } 
 
     pub fn set_tac(&mut self, tac: u8) {

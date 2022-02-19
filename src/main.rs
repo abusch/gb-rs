@@ -44,7 +44,7 @@ fn main() -> Result<()> {
             info!("Got ctrl-c");
             gb.pause();
         }
-        if gb.is_halted() || gb.is_paused() {
+        if gb.is_paused() {
             let readline = rl.readline("gb-rs> ");
             match readline {
                 Ok(line) => {
