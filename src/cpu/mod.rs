@@ -444,8 +444,22 @@ impl Cpu {
             0xb6 => self.or_hl(bus),
             // OR A
             0xb7 => self.or_r(Reg::A),
+            // CP B
+            0xb8 => self.cp_r(Reg::B),
+            // CP C
+            0xb9 => self.cp_r(Reg::C),
+            // CP D
+            0xba => self.cp_r(Reg::D),
+            // CP E
+            0xbb => self.cp_r(Reg::E),
+            // CP H
+            0xbc => self.cp_r(Reg::H),
+            // CP L
+            0xbd => self.cp_r(Reg::L),
             // CP (HL)
             0xbe => self.cp_hl(bus),
+            // CP A
+            0xbf => self.cp_r(Reg::A),
             // RET NZ
             0xc0 => {
                 let nz = !self.regs.flag_z().is_set();
@@ -1476,6 +1490,12 @@ impl Cpu {
         let d8 = self.fetch(bus);
         self.cp(d8);
         8
+    }
+
+    fn cp_r(&mut self, reg: Reg) -> u8 {
+        let r = self.regs.get(reg);
+        self.cp(r);
+        4
     }
 
     fn cp(&mut self, value: u8) {
