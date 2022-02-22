@@ -16,10 +16,12 @@ impl GameBoy {
         }
     }
 
-    pub fn step(&mut self, frame_sink: &mut dyn FrameSink) {
+    pub fn step(&mut self, frame_sink: &mut dyn FrameSink) -> u64 {
         let cycles = self.cpu.step(&mut self.bus);
         let interrupt_flag = self.bus.cycle(cycles, frame_sink);
         self.cpu.handle_interrupt(&mut self.bus);
+
+        cycles as u64
     }
 
     pub fn dump_cpu(&self) {
