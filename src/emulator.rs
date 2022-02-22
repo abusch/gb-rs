@@ -5,7 +5,8 @@ use log::info;
 use minifb::{Window, Key};
 
 use gb_rs::{cartridge::Cartridge, gameboy::GameBoy, SCREEN_WIDTH, SCREEN_HEIGHT, FrameSink};
-use rustyline::{Editor, error::ReadlineError};
+
+use crate::debugger::Debugger;
 
 // 4.194304MHZ -> 4194304 cycles per seconds
 const CPU_CYCLE_PER_SEC: u64 = 4194304;
@@ -53,7 +54,7 @@ impl Emulator {
         // Draw an empty frame to  show the window
         sink.draw_current_frame(&mut self.window);
 
-        let mut rl = Editor::<()>::new();
+        let mut debugger = Debugger::new();
 
         let start_time_ns = Instant::now();
         let mut emulated_cycles = 0;
@@ -72,57 +73,8 @@ impl Emulator {
             let target_cycles = target_time_ns.as_nanos() as u64 / CPU_CYCLE_TIME_NS;
 
             if self.gb.is_paused() {
-                let readline = rl.readline("gb-rs> ");
-                match readline {
-                    Ok(line) => {
-                        rl.add_history_entry(line.as_str());
-                        match line.as_str() {
-                            "next" => {
-                                self.gb.step(&mut sink);
-                                self.gb.dump_cpu();
-                            }
-                            "continue" => {
-                                self.gb.resume();
-                            }
-                            "dump_cpu" => {
-                                self.gb.dump_cpu();
-                            }
-                            s if s.starts_with("dump_mem") => {
-                                if let Some(addr_str) = s.split_whitespace().nth(1) {
-                                    if let Ok(addr) = u16::from_str_radix(addr_str, 16) {
-                                        println!("Dumping memory at {:x}", addr);
-                                        self.gb.dump_mem(addr);
-                                    }
-                                }
-                            }
-                            s if s.starts_with("br") => {
-                                if let Some(addr_str) = s.split_whitespace().nth(1) {
-                                    if let Ok(addr) = u16::from_str_radix(addr_str, 16) {
-                                        println!("Setting breakpoint at {:x}", addr);
-                                        self.gb.set_breakpoint(addr);
-                                    }
-                                }
-                            }
-                            "quit" => {
-                                break;
-                            }
-                            _ => {
-                                eprintln!("Unknown command {}", line);
-                            }
-                        }
-                    }
-                    Err(ReadlineError::Interrupted) => {
-                        println!("CTRL-C");
-                        break;
-                    }
-                    Err(ReadlineError::Eof) => {
-                        println!("CTRL-D");
-                        break;
-                    }
-                    Err(err) => {
-                        println!("Error: {:?}", err);
-                        break;
-                    }
+                if debugger.debug(&mut self.gb, &mut sink) {
+                    break;
                 }
             } else {
                 while emulated_cycles < target_cycles {
