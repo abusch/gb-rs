@@ -1187,10 +1187,9 @@ impl Cpu {
 
     /// conditional CALL
     fn call_if_a16(&mut self, bus: &mut Bus, flag: bool) -> u8 {
+        let addr = self.fetch_word(bus);
         if flag {
-            let addr = self.fetch_word(bus);
             self.call(bus, addr);
-
             24
         } else {
             12
