@@ -1,5 +1,6 @@
-#![allow(dead_code)]
-use gb_rs::{gameboy::GameBoy, FrameSink};
+use std::borrow::Cow;
+
+use ansi_term::Colour;
 use rustyline::{
     completion::{Completer, Pair},
     error::ReadlineError,
@@ -8,6 +9,8 @@ use rustyline::{
     validate::Validator,
     Editor, Helper,
 };
+
+use gb_rs::{gameboy::GameBoy, FrameSink};
 
 #[derive(Debug)]
 pub struct Debugger {
@@ -114,9 +117,49 @@ impl Completer for DebuggerHelper {
 
 impl Hinter for DebuggerHelper {
     type Hint = String;
+
+    fn hint(&self, line: &str, pos: usize, ctx: &rustyline::Context<'_>) -> Option<Self::Hint> {
+        if line == "br " {
+            Some("<hex address>".to_string())
+        } else {
+            None
+        }
+    }
 }
 
-impl Highlighter for DebuggerHelper {}
+impl Highlighter for DebuggerHelper {
+    fn highlight<'l>(&self, line: &'l str, pos: usize) -> std::borrow::Cow<'l, str> {
+        let _ = pos;
+        std::borrow::Cow::Borrowed(line)
+    }
+
+    fn highlight_prompt<'b, 's: 'b, 'p: 'b>(
+        &'s self,
+        prompt: &'p str,
+        _default: bool,
+    ) -> std::borrow::Cow<'b, str> {
+        Cow::Owned(format!("{}", Colour::Green.dimmed().paint(prompt)))
+    }
+
+    fn highlight_hint<'h>(&self, hint: &'h str) -> std::borrow::Cow<'h, str> {
+        Cow::Owned(format!("{}", Colour::White.dimmed().paint(hint)))
+        // std::borrow::Cow::Borrowed(hint)
+    }
+
+    fn highlight_candidate<'c>(
+        &self,
+        candidate: &'c str, // FIXME should be Completer::Candidate
+        completion: rustyline::CompletionType,
+    ) -> std::borrow::Cow<'c, str> {
+        let _ = completion;
+        std::borrow::Cow::Borrowed(candidate)
+    }
+
+    fn highlight_char(&self, line: &str, pos: usize) -> bool {
+        let _ = (line, pos);
+        false
+    }
+}
 
 impl Validator for DebuggerHelper {}
 
