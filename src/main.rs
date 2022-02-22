@@ -33,9 +33,20 @@ fn main() -> Result<()> {
 
     let mut gb = GameBoy::new(cartridge);
 
-    let mut sink = MinifbFrameSink::new()?;
+    let mut window = Window::new(
+        "gb-rs",
+        160,
+        144,
+        minifb::WindowOptions {
+            resize: false,
+            topmost: true,
+            scale: minifb::Scale::X2,
+            ..Default::default()
+        },
+    )?;
+    let mut sink = MinifbFrameSink::default();
     // Draw an empty frame to  show the window
-    sink.draw_current_frame();
+    sink.draw_current_frame(&mut window);
 
     let mut rl = Editor::<()>::new();
 
@@ -44,6 +55,12 @@ fn main() -> Result<()> {
             info!("Got ctrl-c");
             gb.pause();
         }
+        if sink.new_frame {
+            sink.draw_current_frame(&mut window);
+        // } else {
+        //     window.update();
+        }
+
         if gb.is_paused() {
             let readline = rl.readline("gb-rs> ");
             match readline {
@@ -106,35 +123,31 @@ fn main() -> Result<()> {
 }
 
 pub struct MinifbFrameSink {
-    window: Window,
     buf: [u32; SCREEN_WIDTH * SCREEN_HEIGHT],
+    new_frame: bool,
 }
 
 impl MinifbFrameSink {
-    pub fn new() -> Result<Self> {
-        let window = Window::new(
-            "gb-rs",
-            160,
-            144,
-            minifb::WindowOptions {
-                resize: false,
-                topmost: true,
-                scale: minifb::Scale::X2,
-                ..Default::default()
-            },
-        )?;
-        Ok(Self {
-            window,
+    pub fn new() -> Self {
+        Self {
             buf: [0u32; SCREEN_WIDTH * SCREEN_HEIGHT],
-        })
+            new_frame: true,
+        }
     }
 
-    fn draw_current_frame(&mut self) {
+    fn draw_current_frame(&mut self, window: &mut Window) {
         // debug!("Updating minifb buffer");
-        self.window
+        window
             .update_with_buffer(&self.buf, SCREEN_WIDTH, SCREEN_HEIGHT)
             .expect("Failed to update window buffer");
+        self.new_frame = false;
         // debug!("done minifb buffer");
+    }
+}
+
+impl Default for MinifbFrameSink {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -145,7 +158,6 @@ impl FrameSink for MinifbFrameSink {
             let (r, g, b) = *lcd_p;
             *buf_p = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
         });
-
-        self.draw_current_frame();
+        self.new_frame = true;
     }
 }
