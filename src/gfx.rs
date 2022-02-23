@@ -1,7 +1,7 @@
 use bitvec::prelude::*;
 use log::debug;
 
-use crate::{FrameSink, SCREEN_HEIGHT, SCREEN_WIDTH, interrupt::InterruptFlag};
+use crate::{interrupt::InterruptFlag, FrameSink, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 const VRAM_START: u16 = 0x8000;
 const OAM_START: u16 = 0xFE00;
@@ -283,11 +283,11 @@ impl Gfx {
     }
 
     fn set_stat(&mut self, stat: u8) {
-       let bits = stat.view_bits::<Lsb0>(); 
-       self.stat_lyc_eq_ly_itr_source = bits[6];
-       self.stat_oam_itr_source = bits[5];
-       self.stat_vblank_itr_source = bits[4];
-       self.stat_hblank_itr_source = bits[3];
+        let bits = stat.view_bits::<Lsb0>();
+        self.stat_lyc_eq_ly_itr_source = bits[6];
+        self.stat_oam_itr_source = bits[5];
+        self.stat_vblank_itr_source = bits[4];
+        self.stat_hblank_itr_source = bits[3];
     }
 
     pub(crate) fn dots(&mut self, cycles: u8, frame_sink: &mut dyn FrameSink) -> InterruptFlag {
@@ -376,7 +376,6 @@ impl Gfx {
     }
 
     fn draw_scan_line(&mut self) {
-        // TODO handle window
         let bg_tilemap_area = if self.bg_tile_map_area {
             0x9C00
         } else {
@@ -387,6 +386,7 @@ impl Gfx {
         } else {
             0x9800
         };
+        let sprites = self.get_sprites_for_scanline(self.ly);
         // Render a line of pixels
         for x in 0..SCREEN_WIDTH as u8 {
             // Coordinates in "LCD space" (i.e 160x144)
@@ -407,8 +407,8 @@ impl Gfx {
             // Coordinates in "tilemap space" (i.e. 32x32)
             let (tilemap_x, tilemap_y) = (bg_x / 8, bg_y / 8);
 
-            let tile_id = self
-                .read_vram_internal(tilemap_area + (tilemap_y as u16 * 32 + tilemap_x as u16));
+            let tile_id =
+                self.read_vram_internal(tilemap_area + (tilemap_y as u16 * 32 + tilemap_x as u16));
 
             // Now that we've got the tileid, look up the tile data in the appropriate location.
 
@@ -435,9 +435,55 @@ impl Gfx {
             // Use Msb0 order here as pixel 0 is the leftmost bit (bit 7).
             color_bits.set(1, hi_byte.view_bits::<Msb0>()[tile_col as usize]);
             color_bits.set(0, lo_byte.view_bits::<Msb0>()[tile_col as usize]);
+            // Background / window pixel
             let color = self.bgp[color_byte as usize];
-            self.write_pixel(x, self.ly, color);
+
+            let sprite_pixel = sprites.iter()
+                .find_map(|s| self.get_sprite_pixel(s, lcd_x, lcd_y));
+
+            self.write_pixel(x, self.ly, sprite_pixel.unwrap_or(color));
         }
+    }
+
+    fn get_block0_tile_data(&self, tile_id: u8, tile_row: u8) -> (u8, u8) {
+        let base = VRAM_TILE_DATA_BLOCK_0_ADDR;
+        // treat tile id as unsigned
+        let mut tile_offset = base + 16 * tile_id as u16;
+        tile_offset += 2 * tile_row as u16;
+        let hi_byte = self.read_vram_internal(tile_offset);
+        let lo_byte = self.read_vram_internal(tile_offset + 1);
+
+        (lo_byte, hi_byte)
+    }
+
+    fn get_sprites_for_scanline(&self, y: u8) -> Vec<Sprite> {
+        self.oam_ram
+            .chunks(4)
+            .map(Sprite::new)
+            .filter(|sprite| sprite.matches_scanline(y, self.obj_size))
+            .take(10)
+            .collect()
+    }
+
+    fn get_sprite_pixel(&self, sprite: &Sprite, x: u8, y: u8) -> Option<Color> {
+        // TODO support 8x16 mode
+        sprite.get_tile_coordinates(x, y).and_then(|(tile_x, tile_y)| {
+        let (lo_byte, hi_byte) = self.get_block0_tile_data(sprite.tile_index, tile_y);
+
+        let mut color_byte = 0u8;
+        let color_bits = color_byte.view_bits_mut::<Lsb0>();
+        // Use Msb0 order here as pixel 0 is the leftmost bit (bit 7).
+        color_bits.set(1, hi_byte.view_bits::<Msb0>()[tile_x as usize]);
+        color_bits.set(0, lo_byte.view_bits::<Msb0>()[tile_x as usize]);
+
+        if color_byte == 0 {
+            None
+        } else if sprite.obp1_palette() {
+            Some(self.obp1[color_byte as usize])
+        } else {
+            Some(self.obp0[color_byte as usize])
+        }
+        })
     }
 
     fn write_pixel(&mut self, x: u8, y: u8, color: Color) {
@@ -535,6 +581,54 @@ enum LineDrawingState {
     OamScan,
     Drawing,
     FramePushed,
+}
+
+struct Sprite {
+    x: u8,
+    y: u8,
+    tile_index: u8,
+    attrs: u8,
+}
+
+impl Sprite {
+    pub fn new(data: &[u8]) -> Self {
+        assert!(data.len() == 4);
+        Self {
+            x: data[0],
+            y: data[1],
+            tile_index: data[2],
+            attrs: data[3],
+        }
+    }
+
+    pub fn matches_scanline(&self, y: u8, double_size: bool) -> bool {
+        let top_y = self.y.wrapping_sub(16);
+        let bottom_y = if double_size {
+            top_y.wrapping_add(15)
+        } else {
+            top_y.wrapping_add(7)
+        };
+
+        (y >= top_y) && (y <= bottom_y)
+    }
+
+    /// Convert the given coordinates (in LCD space) into tile-space coordinates.
+    pub fn get_tile_coordinates(&self, x: u8, y: u8) -> Option<(u8, u8)> {
+        let left_x = self.x.wrapping_sub(8);
+        let right_x = self.x.wrapping_sub(1);
+        if (x >= left_x) && (x <= right_x) {
+            let tile_x = x.wrapping_add(8).wrapping_sub(self.x);
+            let tile_y = y.wrapping_add(16).wrapping_sub(self.y);
+
+            Some((tile_x, tile_y))
+        } else {
+            None
+        }
+    }
+
+    pub fn obp1_palette(&self) -> bool {
+        self.attrs.view_bits::<Lsb0>()[4]
+    }
 }
 
 #[cfg(test)]
