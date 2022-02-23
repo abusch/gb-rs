@@ -35,7 +35,7 @@ impl Default for Cpu {
             halted: false,
             ime: true, // is this correct?
             // breakpoint: 0x0100,
-            breakpoint: 0xffff,
+            breakpoint: 0x06ee,
             paused: Default::default(),
         }
     }
@@ -191,6 +191,8 @@ impl Cpu {
             0x25 => self.dec_r(Reg::H),
             // LD H,d8
             0x26 => self.ld_r_d8(bus, Reg::H),
+            // DAA
+            0x27 => self.daa(),
             // JR Z,r8
             0x28 => {
                 // Z
@@ -1437,12 +1439,13 @@ impl Cpu {
         } else {
             value
         };
-        let (sum, carry) = self.regs.get(Reg::A).overflowing_add(to_add);
+        let reg_a = self.regs.get(Reg::A);
+        let (sum, carry) = reg_a.overflowing_add(to_add);
         self.regs.set(Reg::A, sum);
         self.regs.flag_z().set_value(sum == 0);
         self.regs.flag_n().clear();
         self.regs.flag_c().set_value(carry);
-        // TODO how to set H?
+        self.regs.flag_h().set_value(half_carry(reg_a, to_add));
         8
     }
 
@@ -1495,12 +1498,13 @@ impl Cpu {
         } else {
             value
         };
-        let (sub, carry) = self.regs.get(Reg::A).overflowing_sub(to_sub);
+        let reg_a = self.regs.get(Reg::A);
+        let (sub, carry) = reg_a.overflowing_sub(to_sub);
         self.regs.set(Reg::A, sub);
         self.regs.flag_z().set_value(sub == 0);
         self.regs.flag_n().set();
         self.regs.flag_c().set_value(carry);
-        // TODO how to set H?
+        self.regs.flag_h().set_value(half_carry(reg_a, !to_sub));
         8
     }
     fn cp_hl(&mut self, bus: &mut Bus) -> u8 {
@@ -1522,11 +1526,12 @@ impl Cpu {
     }
 
     fn cp(&mut self, value: u8) {
-        let (sub, carry) = self.regs.get(Reg::A).overflowing_sub(value);
+        let reg_a = self.regs.get(Reg::A);
+        let (sub, carry) = reg_a.overflowing_sub(value);
         self.regs.flag_z().set_value(sub == 0);
         self.regs.flag_n().set();
         self.regs.flag_c().set_value(carry);
-        // TODO how to set H?
+        self.regs.flag_h().set_value(half_carry(reg_a, !value));
     }
 
     fn rst(&mut self, vec: u8) -> u8 {
@@ -1543,6 +1548,54 @@ impl Cpu {
         let r = self.regs.get(reg).rotate_right(4);
         self.regs.set(reg, r);
         8
+    }
+
+    fn daa(&mut self) -> u8 {
+        let reg_a = self.regs.get(Reg::A);
+        let hi = (reg_a & 0xf0) >> 4;
+        let lo = reg_a & 0x0f;
+
+        if self.regs.flag_n().is_set() {
+            // Last operation was subtraction
+            match (self.regs.flag_c().is_set(), self.regs.flag_h().is_set()) {
+                (false, false) => (),
+                (false, true) => if hi <= 8 && lo >= 6 {
+                    self.add(0xfa);
+                }
+                (true, false) => if hi >= 7 && lo <= 9 {
+                    self.add(0xa0);
+                }
+                (true, true) => if hi >= 6 && lo >= 6 {
+                    self.add(0x9a);
+                }
+            }
+        } else {
+            // Last operation was an addition
+            match (self.regs.flag_c().is_set(), self.regs.flag_h().is_set()) {
+                (false, false) => if hi <= 8 && lo >= 0x0a {
+                    self.add(0x06);
+                } else if hi >= 0x0a && lo <= 9 {
+                    self.add(0x60);
+                } else if hi >= 0x09 && lo >= 0x0a {
+                    self.add(0x66);
+                }
+                (false, true) => if hi <= 9 && lo <= 3 {
+                    self.add(0x06);
+                } else if hi >= 0x0a && lo <= 3 {
+                    self.add(0x66);
+                }
+                (true, false) => if hi <= 2 && lo <= 9 {
+                    self.add(0x60);
+                } else if hi <= 2 && lo >= 0x0a {
+                    self.add(0x66);
+                }
+                (true, true) => if hi <= 3 && lo <= 3 {
+                    self.add(0x66);
+                }
+            }
+        }
+
+        4
     }
 
     pub fn is_paused(&self) -> bool {
@@ -1562,4 +1615,9 @@ impl Cpu {
     pub fn halted(&self) -> bool {
         self.halted
     }
+}
+
+#[inline]
+fn half_carry(a: u8, b: u8) -> bool {
+    ((a & 0x0f) + (b & 0x0f)) & 0x10 == 0x10
 }
