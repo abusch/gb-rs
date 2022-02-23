@@ -438,7 +438,8 @@ impl Gfx {
             // Background / window pixel
             let color = self.bgp[color_byte as usize];
 
-            let sprite_pixel = sprites.iter()
+            let sprite_pixel = sprites
+                .iter()
                 .find_map(|s| self.get_sprite_pixel(s, lcd_x, lcd_y));
 
             self.write_pixel(x, self.ly, sprite_pixel.unwrap_or(color));
@@ -467,23 +468,26 @@ impl Gfx {
 
     fn get_sprite_pixel(&self, sprite: &Sprite, x: u8, y: u8) -> Option<Color> {
         // TODO support 8x16 mode
-        sprite.get_tile_coordinates(x, y).and_then(|(tile_x, tile_y)| {
-        let (lo_byte, hi_byte) = self.get_block0_tile_data(sprite.tile_index, tile_y);
+        sprite
+            .get_tile_coordinates(x, y)
+            .and_then(|(tile_x, tile_y)| {
+                // dbg!(sprite.x, sprite.y, x, y, tile_x, tile_y);
+                let (lo_byte, hi_byte) = self.get_block0_tile_data(sprite.tile_index, tile_y);
 
-        let mut color_byte = 0u8;
-        let color_bits = color_byte.view_bits_mut::<Lsb0>();
-        // Use Msb0 order here as pixel 0 is the leftmost bit (bit 7).
-        color_bits.set(1, hi_byte.view_bits::<Msb0>()[tile_x as usize]);
-        color_bits.set(0, lo_byte.view_bits::<Msb0>()[tile_x as usize]);
+                let mut color_byte = 0u8;
+                let color_bits = color_byte.view_bits_mut::<Lsb0>();
+                // Use Msb0 order here as pixel 0 is the leftmost bit (bit 7).
+                color_bits.set(1, hi_byte.view_bits::<Msb0>()[tile_x as usize]);
+                color_bits.set(0, lo_byte.view_bits::<Msb0>()[tile_x as usize]);
 
-        if color_byte == 0 {
-            None
-        } else if sprite.obp1_palette() {
-            Some(self.obp1[color_byte as usize])
-        } else {
-            Some(self.obp0[color_byte as usize])
-        }
-        })
+                if color_byte == 0 {
+                    None
+                } else if sprite.obp1_palette() {
+                    Some(self.obp1[color_byte as usize])
+                } else {
+                    Some(self.obp0[color_byte as usize])
+                }
+            })
     }
 
     fn write_pixel(&mut self, x: u8, y: u8, color: Color) {
@@ -594,8 +598,8 @@ impl Sprite {
     pub fn new(data: &[u8]) -> Self {
         assert!(data.len() == 4);
         Self {
-            x: data[0],
-            y: data[1],
+            y: data[0],
+            x: data[1],
             tile_index: data[2],
             attrs: data[3],
         }
