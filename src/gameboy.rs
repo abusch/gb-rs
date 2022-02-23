@@ -1,5 +1,5 @@
 use crate::bus::Bus;
-use crate::buttons::Button;
+use crate::joypad::Button;
 use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
 use crate::FrameSink;

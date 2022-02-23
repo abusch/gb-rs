@@ -59,19 +59,19 @@ impl Cpu {
 
         // These need to be ordered by priority:
         if should_handle(InterruptFlag::VBLANK) {
-            debug!("Handling VBLANK interrupt");
+            trace!("Handling VBLANK interrupt");
             self.call_interrupt(bus, InterruptFlag::VBLANK);
         } else if should_handle(InterruptFlag::STAT) {
-            debug!("Handling STAT interrupt");
+            trace!("Handling STAT interrupt");
             self.call_interrupt(bus, InterruptFlag::STAT);
         } else if should_handle(InterruptFlag::TIMER) {
-            debug!("Handling TIMER interrupt");
+            trace!("Handling TIMER interrupt");
             self.call_interrupt(bus, InterruptFlag::TIMER);
         } else if should_handle(InterruptFlag::SERIAL) {
-            debug!("Handling SERIAL interrupt");
+            trace!("Handling SERIAL interrupt");
             self.call_interrupt(bus, InterruptFlag::SERIAL);
         } else if should_handle(InterruptFlag::JOYPAD) {
-            debug!("Handling JOYPAD interrupt");
+            trace!("Handling JOYPAD interrupt");
             self.call_interrupt(bus, InterruptFlag::JOYPAD);
         }
     }
@@ -390,6 +390,8 @@ impl Cpu {
             0x94 => self.sub_r(Reg::H),
             // SUB L
             0x95 => self.sub_r(Reg::L),
+            // SUB (HL)
+            0x96 => self.sub_hl_addr(bus),
             // SUB A
             0x97 => self.sub_r(Reg::A),
             // SBC B
@@ -557,7 +559,7 @@ impl Cpu {
                 self.ret_if(bus, true);
                 // Re-enable interrupts
                 self.ime = true;
-                debug!("Returning from interrupt handler to 0x{:04x}", self.pc);
+                trace!("Returning from interrupt handler to 0x{:04x}", self.pc);
                 16
             }
             // CALL C a16
@@ -1463,6 +1465,13 @@ impl Cpu {
         4
     }
 
+
+    /// SUB (HL)
+    fn sub_hl_addr(&mut self, bus: &mut Bus) -> u8 {
+        let hl = bus.read_byte(*self.regs.hl);
+        self.sub(hl);
+        8
+    }
 
     /// SUB d8
     fn sub_d8(&mut self, bus: &mut Bus) -> u8 {

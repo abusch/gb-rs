@@ -4,7 +4,7 @@ use anyhow::Result;
 use log::info;
 use minifb::{Window, Key};
 
-use gb_rs::{cartridge::Cartridge, gameboy::GameBoy, SCREEN_WIDTH, SCREEN_HEIGHT, FrameSink, buttons::Button};
+use gb_rs::{cartridge::Cartridge, gameboy::GameBoy, SCREEN_WIDTH, SCREEN_HEIGHT, FrameSink, joypad::Button};
 
 use crate::debugger::{Debugger, Command};
 
@@ -101,6 +101,12 @@ impl Emulator {
     fn read_input_keys(&mut self) {
         self.gb.set_button_pressed(Button::Start, self.window.is_key_down(Key::Enter));
         self.gb.set_button_pressed(Button::Select, self.window.is_key_down(Key::Space));
+        self.gb.set_button_pressed(Button::A, self.window.is_key_down(Key::A));
+        self.gb.set_button_pressed(Button::B, self.window.is_key_down(Key::B));
+        self.gb.set_button_pressed(Button::Up, self.window.is_key_down(Key::Up));
+        self.gb.set_button_pressed(Button::Down, self.window.is_key_down(Key::Down));
+        self.gb.set_button_pressed(Button::Left, self.window.is_key_down(Key::Left));
+        self.gb.set_button_pressed(Button::Right, self.window.is_key_down(Key::Right));
     }
 }
 

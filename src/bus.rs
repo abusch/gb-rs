@@ -1,10 +1,9 @@
 use std::ops::RangeInclusive;
 
-use bitvec::{view::BitView, order::Lsb0};
-use log::{debug, trace, warn, info};
+use log::{debug, info, trace};
 
 use crate::{
-    buttons::Button, cartridge::Cartridge, gfx::Gfx, interrupt::InterruptFlag, timer::Timer,
+    cartridge::Cartridge, gfx::Gfx, interrupt::InterruptFlag, joypad::Joypad, timer::Timer,
     FrameSink,
 };
 
@@ -43,15 +42,13 @@ const IO_RANGE_LCD: RangeInclusive<u16> = 0xFF40..=0xFF4F;
 /// Disable Boot ROM
 const IO_RANGE_DBR: RangeInclusive<u16> = 0xFF50..=0xFF50;
 
-const CYCLES_PER_SECOND: u64 = 4194304; // 4.194304 MHz
-
 pub struct Bus {
     ram: Box<[u8]>,
     hram: Box<[u8]>,
     gfx: Gfx,
     cartridge: Cartridge,
     /// P1/JOYP Joypad contoller
-    joypad: u8,
+    joypad: Joypad,
     input_has_changed: bool,
 
     has_booted: bool,
@@ -73,7 +70,7 @@ impl Bus {
             hram: vec![0; 0x80].into_boxed_slice(),
             gfx: Gfx::new(),
             cartridge,
-            joypad: 0xFF,
+            joypad: Joypad::default(),
             input_has_changed: false,
             has_booted: false,
             interrupt_enable: InterruptFlag::empty(),
@@ -90,8 +87,8 @@ impl Bus {
         }
         if self.input_has_changed {
             info!("XXX Input has changed!");
-           self.interrupt_flag |= InterruptFlag::JOYPAD;
-           self.input_has_changed = false;
+            self.interrupt_flag |= InterruptFlag::JOYPAD;
+            self.input_has_changed = false;
         }
     }
 
@@ -145,9 +142,9 @@ impl Bus {
         } else if CART_BANK_00.contains(&addr) {
             if (0x0000..=0x1FFF).contains(&addr) {
                 if b & 0x0A == 0x0A {
-                    trace!("Enabling external RAM");
+                    debug!("Enabling external RAM");
                 } else {
-                    trace!("Disabling external RAM");
+                    debug!("Disabling external RAM");
                 }
                 // RAM Enable register
             } else if (0x2000..=0x3FFF).contains(&addr) {
@@ -209,7 +206,8 @@ impl Bus {
         self.interrupt_flag.toggle(flag);
         trace!(
             "Acknowledging interrupt: {:?}. Pending: {:?}",
-            flag, self.interrupt_flag
+            flag,
+            self.interrupt_flag
         );
     }
 
@@ -217,11 +215,8 @@ impl Bus {
     fn read_io(&self, addr: u16) -> u8 {
         if IO_RANGE_JPD.contains(&addr) {
             // Joypad controller register
-            trace!(
-                "Read Joypad controller register 0x{:04x}",
-                addr
-            );
-            self.joypad | 0x04
+            trace!("Read Joypad controller register 0x{:04x}", addr);
+            self.joypad.read()
         } else if IO_RANGE_COM.contains(&addr) {
             // Communication controller
             // debug!(
@@ -273,14 +268,12 @@ impl Bus {
     fn write_io(&mut self, addr: u16, b: u8) {
         if IO_RANGE_JPD.contains(&addr) {
             // Joypad controller register
-            // only bits 4 and 5 can be written to
-            let input_bits = b.view_bits::<Lsb0>();
-            let output_bits = self.joypad.view_bits_mut::<Lsb0>();
-            output_bits.set(4, input_bits[4]);
-            output_bits.set(5, input_bits[5]);
-            debug!(
+            self.joypad.write(b);
+            trace!(
                 "Write Joypad controller register 0x{:04x}<-0x{:02X}. Register is now {:08b}",
-                addr, b, self.joypad
+                addr,
+                b,
+                self.joypad.read()
             );
         } else if IO_RANGE_COM.contains(&addr) {
             // Communication controller
@@ -351,27 +344,7 @@ impl Bus {
         }
     }
 
-    pub(crate) fn set_button_pressed(&mut self, button: crate::buttons::Button, is_pressed: bool) {
-        let old_value = self.joypad;
-        let bits = self.joypad.view_bits_mut::<Lsb0>();
-
-        // Careful: the logic here is "inverted" i.e. bits 4 and 5 are set to 0 to select action or
-        // direction buttons, and bits 0-3 are set to 0 when the key is pressed.
-        match button {
-            Button::Start => {
-                if !bits[5] {
-                    bits.set(3, !is_pressed);
-                }
-            }
-            Button::Select => {
-                if !bits[5] {
-                    bits.set(2, !is_pressed);
-                }
-            }
-        }
-
-        if old_value != self.joypad {
-            self.input_has_changed = true;
-        }
+    pub(crate) fn set_button_pressed(&mut self, button: crate::joypad::Button, is_pressed: bool) {
+        self.input_has_changed = self.joypad.set_button(button, is_pressed);
     }
 }
