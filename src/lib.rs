@@ -1,4 +1,5 @@
 mod bus;
+pub mod buttons;
 pub mod cartridge;
 mod cpu;
 pub mod gameboy;

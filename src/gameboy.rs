@@ -1,4 +1,5 @@
 use crate::bus::Bus;
+use crate::buttons::Button;
 use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
 use crate::FrameSink;
@@ -57,5 +58,9 @@ impl GameBoy {
 
     pub fn set_breakpoint(&mut self, addr: u16) {
         self.cpu.set_breakpoint(addr);
+    }
+
+    pub fn set_button_pressed(&mut self, button: Button, is_pressed: bool) {
+        self.bus.set_button_pressed(button, is_pressed);
     }
 }

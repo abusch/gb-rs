@@ -184,6 +184,7 @@ impl Gfx {
             self.scx
         } else if addr == LY_REG {
             // FF44 LY
+            // debug!("LY={}", self.ly);
             self.ly
         } else if addr == LYC_REG {
             // FF45 LYC
@@ -210,6 +211,7 @@ impl Gfx {
 
     pub fn write_reg(&mut self, addr: u16, b: u8) {
         if addr == LCDC_REG {
+            let orig_lcd_state = self.lcd_and_ppu_enabled;
             let bits = b.view_bits::<Lsb0>();
             self.lcd_and_ppu_enabled = bits[7];
             self.window_tile_map_area = bits[6];
@@ -220,6 +222,11 @@ impl Gfx {
             self.obj_enabled = bits[1];
             self.bg_and_window_enable_priority = bits[0];
             // debug!("LCDC reg = 0b{:b}", b);
+            if orig_lcd_state && !self.lcd_and_ppu_enabled {
+                debug!("LCD turned OFF!");
+            } else if !orig_lcd_state && self.lcd_and_ppu_enabled {
+                debug!("LCD turned ON!");
+            }
         } else if addr == STAT_REG {
             self.set_stat(b);
         } else if addr == SCY_REG {
@@ -237,6 +244,7 @@ impl Gfx {
         } else if addr == WY_REG {
             // FF4A WY
             self.wy = b;
+            debug!("Setting WX={}", self.wy);
         } else if addr == WX_REG {
             // FF4B WX
             self.wx = b;

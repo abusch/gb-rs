@@ -1,8 +1,12 @@
 use std::ops::RangeInclusive;
 
-use log::{debug, trace, warn};
+use bitvec::{view::BitView, order::Lsb0};
+use log::{debug, trace, warn, info};
 
-use crate::{cartridge::Cartridge, gfx::Gfx, timer::Timer, FrameSink, interrupt::InterruptFlag};
+use crate::{
+    buttons::Button, cartridge::Cartridge, gfx::Gfx, interrupt::InterruptFlag, timer::Timer,
+    FrameSink,
+};
 
 const BOOT_ROM_DATA: &[u8] = include_bytes!("../assets/dmg_boot.bin");
 
@@ -48,6 +52,8 @@ pub struct Bus {
     cartridge: Cartridge,
     /// P1/JOYP Joypad contoller
     joypad: u8,
+    input_has_changed: bool,
+
     has_booted: bool,
 
     /// IE - Interrupt Enable register
@@ -67,7 +73,8 @@ impl Bus {
             hram: vec![0; 0x80].into_boxed_slice(),
             gfx: Gfx::new(),
             cartridge,
-            joypad: 0,
+            joypad: 0xFF,
+            input_has_changed: false,
             has_booted: false,
             interrupt_enable: InterruptFlag::empty(),
             interrupt_flag: InterruptFlag::empty(),
@@ -78,9 +85,14 @@ impl Bus {
     /// Run the different peripherals for the given number of clock cycles
     pub fn cycle(&mut self, cycles: u8, frame_sync: &mut dyn FrameSink) {
         self.interrupt_flag |= self.gfx.dots(cycles, frame_sync);
-        // if self.timer.cycle(cycles) {
-        //     self.interrupt_flag |= InterruptFlag::TIMER;
-        // }
+        if self.timer.cycle(cycles) {
+            self.interrupt_flag |= InterruptFlag::TIMER;
+        }
+        if self.input_has_changed {
+            info!("XXX Input has changed!");
+           self.interrupt_flag |= InterruptFlag::JOYPAD;
+           self.input_has_changed = false;
+        }
     }
 
     pub fn read_byte(&self, addr: u16) -> u8 {
@@ -195,18 +207,21 @@ impl Bus {
 
     pub fn ack_interrupt(&mut self, flag: InterruptFlag) {
         self.interrupt_flag.toggle(flag);
-        debug!("Acknowledging interrupt: {:?}. Pending: {:?}", flag, self.interrupt_flag);
+        trace!(
+            "Acknowledging interrupt: {:?}. Pending: {:?}",
+            flag, self.interrupt_flag
+        );
     }
 
     /// Read access to IO registers
     fn read_io(&self, addr: u16) -> u8 {
         if IO_RANGE_JPD.contains(&addr) {
             // Joypad controller register
-            debug!(
-                "Read Joypad controller register 0x{:04x} (NOT IMPLEMENTED)",
+            trace!(
+                "Read Joypad controller register 0x{:04x}",
                 addr
             );
-            self.joypad
+            self.joypad | 0x04
         } else if IO_RANGE_COM.contains(&addr) {
             // Communication controller
             // debug!(
@@ -258,12 +273,15 @@ impl Bus {
     fn write_io(&mut self, addr: u16, b: u8) {
         if IO_RANGE_JPD.contains(&addr) {
             // Joypad controller register
-            debug!(
-                "Write Joypad controller register 0x{:04x}<-0x{:02X}",
-                addr, b
-            );
             // only bits 4 and 5 can be written to
-            self.joypad |= b & 0b00110000;
+            let input_bits = b.view_bits::<Lsb0>();
+            let output_bits = self.joypad.view_bits_mut::<Lsb0>();
+            output_bits.set(4, input_bits[4]);
+            output_bits.set(5, input_bits[5]);
+            debug!(
+                "Write Joypad controller register 0x{:04x}<-0x{:02X}. Register is now {:08b}",
+                addr, b, self.joypad
+            );
         } else if IO_RANGE_COM.contains(&addr) {
             // Communication controller
             // debug!(
@@ -278,9 +296,10 @@ impl Bus {
                 0x0f07 => self.timer.set_tac(b),
                 _ => {
                     // Divider and timer
-                    debug!(
+                    trace!(
                         "Write divider and timer register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
-                        addr, b
+                        addr,
+                        b
                     );
                 }
             }
@@ -289,15 +308,17 @@ impl Bus {
             self.interrupt_flag = InterruptFlag::from_bits_truncate(b);
         } else if IO_RANGE_APU.contains(&addr) {
             // Sound
-            debug!(
+            trace!(
                 "Write sound register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
-                addr, b
+                addr,
+                b
             );
         } else if IO_RANGE_WAV.contains(&addr) {
             // Waveform ram
-            debug!(
+            trace!(
                 "Write waveform RAM 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
-                addr, b
+                addr,
+                b
             );
         } else if IO_RANGE_LCD.contains(&addr) {
             // LCD
@@ -307,7 +328,8 @@ impl Bus {
                 let base_addr = (b as u16) * 0x100;
                 debug!("Starting DMA transfer from 0x{:04x} to OAM", base_addr);
                 for i in 0..=0x9Fu16 {
-                    self.gfx.write_oam(OAM.start() + i, self.read_byte(base_addr + i));
+                    self.gfx
+                        .write_oam(OAM.start() + i, self.read_byte(base_addr + i));
                 }
             } else {
                 self.gfx.write_reg(addr, b);
@@ -326,6 +348,30 @@ impl Bus {
                 "Write I/O Register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
                 addr, b
             );
+        }
+    }
+
+    pub(crate) fn set_button_pressed(&mut self, button: crate::buttons::Button, is_pressed: bool) {
+        let old_value = self.joypad;
+        let bits = self.joypad.view_bits_mut::<Lsb0>();
+
+        // Careful: the logic here is "inverted" i.e. bits 4 and 5 are set to 0 to select action or
+        // direction buttons, and bits 0-3 are set to 0 when the key is pressed.
+        match button {
+            Button::Start => {
+                if !bits[5] {
+                    bits.set(3, !is_pressed);
+                }
+            }
+            Button::Select => {
+                if !bits[5] {
+                    bits.set(2, !is_pressed);
+                }
+            }
+        }
+
+        if old_value != self.joypad {
+            self.input_has_changed = true;
         }
     }
 }

@@ -1,6 +1,6 @@
 mod register;
 
-use log::{debug, trace, warn};
+use log::{debug, trace, warn, info};
 
 use self::register::{Reg, RegPair, Registers};
 use crate::{bus::Bus, interrupt::InterruptFlag};
@@ -35,7 +35,7 @@ impl Default for Cpu {
             halted: false,
             ime: true, // is this correct?
             // breakpoint: 0x0100,
-            breakpoint: 0x0040,
+            breakpoint: 0xffff,
             paused: Default::default(),
         }
     }
@@ -51,29 +51,38 @@ impl Cpu {
             // debug!("interrupts are disabled, ignoring");
             return;
         }
-        debug!("Handling interrupts: pending: {:?} / enabled: {:?}", interrupt_flag, interrupt_enable);
+        // debug!("Handling interrupts: pending: {:?} / enabled: {:?}", interrupt_flag, interrupt_enable);
 
         let should_handle = |f: InterruptFlag| -> bool {
             interrupt_flag.contains(f) && interrupt_enable.contains(f)
         };
 
+        // These need to be ordered by priority:
         if should_handle(InterruptFlag::VBLANK) {
             debug!("Handling VBLANK interrupt");
             self.call_interrupt(bus, InterruptFlag::VBLANK);
         } else if should_handle(InterruptFlag::STAT) {
-            debug!("Handling TIMER interrupt");
+            debug!("Handling STAT interrupt");
             self.call_interrupt(bus, InterruptFlag::STAT);
         } else if should_handle(InterruptFlag::TIMER) {
             debug!("Handling TIMER interrupt");
             self.call_interrupt(bus, InterruptFlag::TIMER);
+        } else if should_handle(InterruptFlag::SERIAL) {
+            debug!("Handling SERIAL interrupt");
+            self.call_interrupt(bus, InterruptFlag::SERIAL);
+        } else if should_handle(InterruptFlag::JOYPAD) {
+            debug!("Handling JOYPAD interrupt");
+            self.call_interrupt(bus, InterruptFlag::JOYPAD);
         }
     }
 
     fn get_itr_vector(&self, flag: InterruptFlag) -> u16 {
        match flag {
            InterruptFlag::VBLANK => ITR_VBLANK,
-           InterruptFlag::TIMER => ITR_TIMER,
            InterruptFlag::STAT => ITR_STAT,
+           InterruptFlag::TIMER => ITR_TIMER,
+           InterruptFlag::SERIAL => ITR_SERIAL,
+           InterruptFlag::JOYPAD => ITR_JOYP,
            _ => unimplemented!()
        }
     }
@@ -126,9 +135,8 @@ impl Cpu {
             0x0f => self.rrca(),
             // STOP 0
             0x10 => {
-                warn!("STOP!");
                 self.halted = true;
-                // halted = true;
+                trace!("STOP @{:04x}, halted={}", orig_pc, self.halted);
                 4
             }
             // LD DE,d16
@@ -322,8 +330,8 @@ impl Cpu {
             0x75 => self.ld_addr_r(bus, RegPair::HL, Reg::L),
             // HALT
             0x76 => {
-                debug!("HALT!");
                 self.halted = true;
+                trace!("HALT! halted={}", self.halted);
                 4
             }
             // LD (HL),A
@@ -396,6 +404,8 @@ impl Cpu {
             0x9c => self.sbc_r(Reg::H),
             // SBC L
             0x9d => self.sbc_r(Reg::L),
+            // SBC (HL)
+            0x9e => self.sbc_hl(bus),
             // SBC A
             0x9f => self.sbc_r(Reg::A),
             // AND B
@@ -639,6 +649,9 @@ impl Cpu {
                 0
             }
         };
+        if self.paused {
+            info!("Done stepping!");
+        }
         cycles
     }
 
@@ -1198,11 +1211,13 @@ impl Cpu {
 
     fn call_interrupt(&mut self, bus: &mut Bus, itr_flag: InterruptFlag) {
         let addr = self.get_itr_vector(itr_flag);
-        debug!("Calling ITR 0x{:02X}", addr);
+        trace!("Calling ITR 0x{:02X}", addr);
         // disable interrupts
         self.ime = false;
         bus.ack_interrupt(itr_flag);
-        self.halted = false;
+        if self.halted {
+            self.halted = false;
+        }
         self.push_word(bus, self.pc);
         self.pc = addr;
     }
