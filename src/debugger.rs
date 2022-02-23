@@ -10,8 +10,6 @@ use rustyline::{
     Editor, Helper,
 };
 
-use gb_rs::{gameboy::GameBoy, FrameSink};
-
 #[derive(Debug)]
 pub struct Debugger {
     editor: Editor<DebuggerHelper>,
@@ -25,64 +23,81 @@ impl Debugger {
         Self { editor }
     }
 
-    pub fn debug(&mut self, gb: &mut GameBoy, sink: &mut dyn FrameSink) -> bool {
+    pub fn debug(&mut self) -> Command {
         let readline = self.editor.readline("gb-rs> ");
         match readline {
             Ok(line) => {
                 self.editor.add_history_entry(line.as_str());
                 match line.as_str() {
                     "next" => {
-                        gb.step(sink);
-                        gb.dump_cpu();
-                        false
+                        Command::Next
+                        // gb.step(sink);
+                        // gb.dump_cpu();
+                        // false
                     }
                     "continue" => {
-                        gb.resume();
-                        false
+                        Command::Continue
+                        // gb.resume();
+                        // false
                     }
                     "dump_cpu" => {
-                        gb.dump_cpu();
-                        false
+                        Command::DumpCpu
+                        // gb.dump_cpu();
+                        // false
                     }
                     s if s.starts_with("dump_mem") => {
                         if let Some(addr_str) = s.split_whitespace().nth(1) {
                             if let Ok(addr) = u16::from_str_radix(addr_str, 16) {
-                                println!("Dumping memory at {:x}", addr);
-                                gb.dump_mem(addr);
+                                // println!("Dumping memory at {:x}", addr);
+                                // gb.dump_mem(addr);
+                                return Command::DumpMem(addr);
                             }
                         }
-                        false
+                        Command::Nop
                     }
                     s if s.starts_with("br") => {
                         if let Some(addr_str) = s.split_whitespace().nth(1) {
                             if let Ok(addr) = u16::from_str_radix(addr_str, 16) {
-                                println!("Setting breakpoint at {:x}", addr);
-                                gb.set_breakpoint(addr);
+                                // println!("Setting breakpoint at {:x}", addr);
+                                // gb.set_breakpoint(addr);
+                                return Command::Break(addr);
                             }
                         }
-                        false
+                        Command::Nop
                     }
-                    "quit" => true,
+                    "quit" => Command::Quit,
                     _ => {
-                        eprintln!("Unknown command {}", line);
-                        false
+                        // eprintln!("Unknown command {}", line);
+                        // false
+                        Command::Nop
                     }
                 }
             }
             Err(ReadlineError::Interrupted) => {
                 println!("CTRL-C");
-                true
+                Command::Nop
             }
             Err(ReadlineError::Eof) => {
                 println!("CTRL-D");
-                true
+                Command::Quit
             }
             Err(err) => {
                 println!("Error: {:?}", err);
-                true
+                Command::Nop
             }
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Command {
+    Next,
+    Continue,
+    DumpMem(u16),
+    DumpCpu,
+    Break(u16),
+    Quit,
+    Nop,
 }
 
 struct DebuggerHelper {
@@ -118,7 +133,7 @@ impl Completer for DebuggerHelper {
 impl Hinter for DebuggerHelper {
     type Hint = String;
 
-    fn hint(&self, line: &str, pos: usize, ctx: &rustyline::Context<'_>) -> Option<Self::Hint> {
+    fn hint(&self, line: &str, _pos: usize, _ctx: &rustyline::Context<'_>) -> Option<Self::Hint> {
         if line == "br " {
             Some("<hex address>".to_string())
         } else {

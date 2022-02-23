@@ -1,18 +1,17 @@
-use std::{time::Instant, sync::mpsc::Receiver};
+use std::{time::{Instant, Duration}, sync::mpsc::Receiver};
 
 use anyhow::Result;
 use log::info;
 use minifb::{Window, Key};
 
-use gb_rs::{cartridge::Cartridge, gameboy::GameBoy, SCREEN_WIDTH, SCREEN_HEIGHT, FrameSink};
+use gb_rs::{cartridge::Cartridge, gameboy::GameBoy, SCREEN_WIDTH, SCREEN_HEIGHT, FrameSink, buttons::Button};
 
-use crate::debugger::Debugger;
+use crate::debugger::{Debugger, Command};
 
 // 4.194304MHZ -> 4194304 cycles per seconds
 const CPU_CYCLE_PER_SEC: u64 = 4194304;
 // 1/4194304 seconds per cycle -> 238 nanoseconds per cycle
 const CPU_CYCLE_TIME_NS: u64 = 238;
-
 /// The object that pulls everything together and drives the emulation engine while interfacing
 /// with actual input/outputs.
 pub struct Emulator {
@@ -56,15 +55,17 @@ impl Emulator {
 
         let mut debugger = Debugger::new();
 
-        let start_time_ns = Instant::now();
+        let mut start_time_ns = Instant::now();
         let mut emulated_cycles = 0;
         while self.window.is_open() && !self.window.is_key_down(Key::Escape) {
-            if ctrl_c.try_recv().is_ok() {
-                info!("Got ctrl-c");
+            // if ctrl_c.try_recv().is_ok() {
+            if self.window.is_key_down(Key::D) {
+                info!("Starting debugger...");
                 self.gb.pause();
             }
             if sink.new_frame {
                 sink.draw_current_frame(&mut self.window);
+                self.read_input_keys();
             } else {
                 self.window.update();
             }
@@ -73,15 +74,33 @@ impl Emulator {
             let target_cycles = target_time_ns.as_nanos() as u64 / CPU_CYCLE_TIME_NS;
 
             if self.gb.is_paused() {
-                if debugger.debug(&mut self.gb, &mut sink) {
-                    break;
+                match debugger.debug() {
+                    Command::Next => {
+                        emulated_cycles += self.gb.step(&mut sink);
+                        self.gb.dump_cpu();
+                    }
+                    Command::Continue => {
+                        // Reset start time
+                        start_time_ns = Instant::now() - Duration::from_nanos(emulated_cycles * CPU_CYCLE_TIME_NS);
+                        self.gb.resume();
+                    }
+                    Command::DumpMem(addr) => self.gb.dump_mem(addr),
+                    Command::DumpCpu => self.gb.dump_cpu(),
+                    Command::Break(addr) => self.gb.set_breakpoint(addr),
+                    Command::Quit => break,
+                    Command::Nop => (),
                 }
             } else {
-                while emulated_cycles < target_cycles {
+                while emulated_cycles < target_cycles && !self.gb.is_paused() {
                     emulated_cycles += self.gb.step(&mut sink);
                 }
             }
         }
+    }
+
+    fn read_input_keys(&mut self) {
+        self.gb.set_button_pressed(Button::Start, self.window.is_key_down(Key::Enter));
+        self.gb.set_button_pressed(Button::Select, self.window.is_key_down(Key::Space));
     }
 }
 
