@@ -119,6 +119,12 @@ impl Cpu {
             0x06 => self.ld_r_d8(bus, Reg::B),
             // RLCA
             0x07 => self.rlca(),
+            // LD (a16),SP
+            0x08 => {
+                let addr = self.fetch_word(bus);
+                bus.write_word(addr, self.sp);
+                20
+            }
             // ADD HL,BC
             0x09 => self.add_rr_rr(RegPair::HL, *self.regs.bc),
             // LD A,(BC)
@@ -564,6 +570,11 @@ impl Cpu {
                 trace!("Returning from interrupt handler to 0x{:04x}", self.pc);
                 16
             }
+            // JP C,a16
+            0xda => {
+                let c = self.regs.flag_c().is_set();
+                self.jp_if_a16(bus, c)
+            }
             // CALL C a16
             0xdc => {
                 let c = self.regs.flag_c().is_set();
@@ -613,6 +624,12 @@ impl Cpu {
             }
             // POP AF
             0xf1 => self.pop_rr(bus, RegPair::AF),
+            // LD A,(C)
+            0xf2 => {
+                let addr = 0xFF00 + self.regs.get(Reg::C) as u16;
+                self.regs.set(Reg::A, bus.read_byte(addr));
+                8
+            }
             // DI
             0xf3 => {
                 debug!("Disabling interrupts");
@@ -842,6 +859,70 @@ impl Cpu {
             0x7c => self.bit_n_r(7, Reg::H),
             0x7d => self.bit_n_r(7, Reg::L),
             0x7f => self.bit_n_r(7, Reg::A),
+            // RES 0,r
+            0x80 => self.res_n_r(0, Reg::B),
+            0x81 => self.res_n_r(0, Reg::C),
+            0x82 => self.res_n_r(0, Reg::D),
+            0x83 => self.res_n_r(0, Reg::E),
+            0x84 => self.res_n_r(0, Reg::H),
+            0x85 => self.res_n_r(0, Reg::L),
+            0x87 => self.res_n_r(0, Reg::A),
+            // RES 1,r
+            0x88 => self.res_n_r(1, Reg::B),
+            0x89 => self.res_n_r(1, Reg::C),
+            0x8a => self.res_n_r(1, Reg::D),
+            0x8b => self.res_n_r(1, Reg::E),
+            0x8c => self.res_n_r(1, Reg::H),
+            0x8d => self.res_n_r(1, Reg::L),
+            0x8f => self.res_n_r(1, Reg::A),
+            // RES 2,r
+            0x90 => self.res_n_r(2, Reg::B),
+            0x91 => self.res_n_r(2, Reg::C),
+            0x92 => self.res_n_r(2, Reg::D),
+            0x93 => self.res_n_r(2, Reg::E),
+            0x94 => self.res_n_r(2, Reg::H),
+            0x95 => self.res_n_r(2, Reg::L),
+            0x97 => self.res_n_r(2, Reg::A),
+            // RES 3,r
+            0x98 => self.res_n_r(3, Reg::B),
+            0x99 => self.res_n_r(3, Reg::C),
+            0x9a => self.res_n_r(3, Reg::D),
+            0x9b => self.res_n_r(3, Reg::E),
+            0x9c => self.res_n_r(3, Reg::H),
+            0x9d => self.res_n_r(3, Reg::L),
+            0x9f => self.res_n_r(3, Reg::A),
+            // RES 4,r
+            0xa0 => self.res_n_r(4, Reg::B),
+            0xa1 => self.res_n_r(4, Reg::C),
+            0xa2 => self.res_n_r(4, Reg::D),
+            0xa3 => self.res_n_r(4, Reg::E),
+            0xa4 => self.res_n_r(4, Reg::H),
+            0xa5 => self.res_n_r(4, Reg::L),
+            0xa7 => self.res_n_r(4, Reg::A),
+            // RES 5,r
+            0xa8 => self.res_n_r(5, Reg::B),
+            0xa9 => self.res_n_r(5, Reg::C),
+            0xaa => self.res_n_r(5, Reg::D),
+            0xab => self.res_n_r(5, Reg::E),
+            0xac => self.res_n_r(5, Reg::H),
+            0xad => self.res_n_r(5, Reg::L),
+            0xaf => self.res_n_r(5, Reg::A),
+            // RES 6,r
+            0xb0 => self.res_n_r(6, Reg::B),
+            0xb1 => self.res_n_r(6, Reg::C),
+            0xb2 => self.res_n_r(6, Reg::D),
+            0xb3 => self.res_n_r(6, Reg::E),
+            0xb4 => self.res_n_r(6, Reg::H),
+            0xb5 => self.res_n_r(6, Reg::L),
+            0xb7 => self.res_n_r(6, Reg::A),
+            // RES 7,r
+            0xb8 => self.res_n_r(7, Reg::B),
+            0xb9 => self.res_n_r(7, Reg::C),
+            0xba => self.res_n_r(7, Reg::D),
+            0xbb => self.res_n_r(7, Reg::E),
+            0xbc => self.res_n_r(7, Reg::H),
+            0xbd => self.res_n_r(7, Reg::L),
+            0xbf => self.res_n_r(7, Reg::A),
 
             _ => {
                 warn!(
@@ -1547,6 +1628,14 @@ impl Cpu {
     fn swap_r(&mut self, reg: Reg) -> u8 {
         let r = self.regs.get(reg).rotate_right(4);
         self.regs.set(reg, r);
+        8
+    }
+
+    fn res_n_r(&mut self, n: u8, reg: Reg) -> u8 {
+        let mut r = self.regs.get(reg);
+        r.view_bits_mut::<Lsb0>().set(n as usize, false); 
+        self.regs.set(reg, r);
+
         8
     }
 
