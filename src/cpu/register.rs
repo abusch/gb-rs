@@ -58,7 +58,7 @@ impl Registers {
 
     pub(super) fn set_pair(&mut self, pair: RegPair, value: u16) {
         match pair {
-            RegPair::AF => *self.af = value,
+            RegPair::AF => *self.af = value & 0xFFF0, // ignore low bits of the flag
             RegPair::BC => *self.bc = value,
             RegPair::DE => *self.de = value,
             RegPair::HL => *self.hl = value,
