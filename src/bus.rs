@@ -283,13 +283,13 @@ impl Bus {
             // );
         } else if IO_RANGE_TIM.contains(&addr) {
             match addr {
-                0x0f04 => self.timer.reset_div_timer(),
-                0x0f05 => self.timer.set_tima(b),
-                0x0f06 => self.timer.set_tma(b),
-                0x0f07 => self.timer.set_tac(b),
+                0xff04 => self.timer.reset_div_timer(),
+                0xff05 => self.timer.set_tima(b),
+                0xff06 => self.timer.set_tma(b),
+                0xff07 => self.timer.set_tac(b),
                 _ => {
                     // Divider and timer
-                    trace!(
+                    debug!(
                         "Write divider and timer register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
                         addr,
                         b
