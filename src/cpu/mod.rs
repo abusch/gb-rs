@@ -596,8 +596,8 @@ impl Cpu {
             0xe7 => self.rst(0x20),
             // ADD SP,r8
             0xe8 => self.add_sp_r8(bus),
-            // JP (HL)
-            0xe9 => self.jp_hl(bus),
+            // JP HL
+            0xe9 => self.jp_hl(),
             // LD (a16),A
             0xea => self.ld_a16_r(bus, Reg::A),
             // XOR d8
@@ -1197,8 +1197,8 @@ impl Cpu {
         }
     }
 
-    fn jp_hl(&mut self, bus: &mut Bus) -> u8 {
-        self.pc = bus.read_word(*self.regs.hl);
+    fn jp_hl(&mut self) -> u8 {
+        self.pc = *self.regs.hl;
         4
     }
 
