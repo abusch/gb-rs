@@ -1,6 +1,7 @@
 mod register;
 
-use log::{debug, trace, warn, info};
+use bitvec::{order::Lsb0, view::BitView};
+use log::{debug, info, trace, warn};
 
 use self::register::{Reg, RegPair, Registers};
 use crate::{bus::Bus, interrupt::InterruptFlag};
@@ -35,7 +36,7 @@ impl Default for Cpu {
             halted: false,
             ime: true, // is this correct?
             // breakpoint: 0x0100,
-            breakpoint: 0x06ee,
+            breakpoint: 0x0179,
             paused: Default::default(),
         }
     }
@@ -65,7 +66,7 @@ impl Cpu {
             trace!("Handling STAT interrupt");
             self.call_interrupt(bus, InterruptFlag::STAT);
         } else if should_handle(InterruptFlag::TIMER) {
-            trace!("Handling TIMER interrupt");
+            debug!("Handling TIMER interrupt");
             self.call_interrupt(bus, InterruptFlag::TIMER);
         } else if should_handle(InterruptFlag::SERIAL) {
             trace!("Handling SERIAL interrupt");
@@ -77,14 +78,14 @@ impl Cpu {
     }
 
     fn get_itr_vector(&self, flag: InterruptFlag) -> u16 {
-       match flag {
-           InterruptFlag::VBLANK => ITR_VBLANK,
-           InterruptFlag::STAT => ITR_STAT,
-           InterruptFlag::TIMER => ITR_TIMER,
-           InterruptFlag::SERIAL => ITR_SERIAL,
-           InterruptFlag::JOYPAD => ITR_JOYP,
-           _ => unimplemented!()
-       }
+        match flag {
+            InterruptFlag::VBLANK => ITR_VBLANK,
+            InterruptFlag::STAT => ITR_STAT,
+            InterruptFlag::TIMER => ITR_TIMER,
+            InterruptFlag::SERIAL => ITR_SERIAL,
+            InterruptFlag::JOYPAD => ITR_JOYP,
+            _ => unimplemented!(),
+        }
     }
 
     /// Fetch and execute the next instructions.
@@ -924,6 +925,71 @@ impl Cpu {
             0xbd => self.res_n_r(7, Reg::L),
             0xbf => self.res_n_r(7, Reg::A),
 
+            // SET 0,r
+            0xc0 => self.set_n_r(0, Reg::B),
+            0xc1 => self.set_n_r(0, Reg::C),
+            0xc2 => self.set_n_r(0, Reg::D),
+            0xc3 => self.set_n_r(0, Reg::E),
+            0xc4 => self.set_n_r(0, Reg::H),
+            0xc5 => self.set_n_r(0, Reg::L),
+            0xc7 => self.set_n_r(0, Reg::A),
+            // SET 1,r
+            0xc8 => self.set_n_r(1, Reg::B),
+            0xc9 => self.set_n_r(1, Reg::C),
+            0xca => self.set_n_r(1, Reg::D),
+            0xcb => self.set_n_r(1, Reg::E),
+            0xcc => self.set_n_r(1, Reg::H),
+            0xcd => self.set_n_r(1, Reg::L),
+            0xcf => self.set_n_r(1, Reg::A),
+            // SET 2,r
+            0xd0 => self.set_n_r(2, Reg::B),
+            0xd1 => self.set_n_r(2, Reg::C),
+            0xd2 => self.set_n_r(2, Reg::D),
+            0xd3 => self.set_n_r(2, Reg::E),
+            0xd4 => self.set_n_r(2, Reg::H),
+            0xd5 => self.set_n_r(2, Reg::L),
+            0xd7 => self.set_n_r(2, Reg::A),
+            // SET 3,r
+            0xd8 => self.set_n_r(3, Reg::B),
+            0xd9 => self.set_n_r(3, Reg::C),
+            0xda => self.set_n_r(3, Reg::D),
+            0xdb => self.set_n_r(3, Reg::E),
+            0xdc => self.set_n_r(3, Reg::H),
+            0xdd => self.set_n_r(3, Reg::L),
+            0xdf => self.set_n_r(3, Reg::A),
+            // SET 4,r
+            0xe0 => self.set_n_r(4, Reg::B),
+            0xe1 => self.set_n_r(4, Reg::C),
+            0xe2 => self.set_n_r(4, Reg::D),
+            0xe3 => self.set_n_r(4, Reg::E),
+            0xe4 => self.set_n_r(4, Reg::H),
+            0xe5 => self.set_n_r(4, Reg::L),
+            0xe7 => self.set_n_r(4, Reg::A),
+            // SET 5,r
+            0xe8 => self.set_n_r(5, Reg::B),
+            0xe9 => self.set_n_r(5, Reg::C),
+            0xea => self.set_n_r(5, Reg::D),
+            0xeb => self.set_n_r(5, Reg::E),
+            0xec => self.set_n_r(5, Reg::H),
+            0xed => self.set_n_r(5, Reg::L),
+            0xef => self.set_n_r(5, Reg::A),
+            // SET 6,r
+            0xf0 => self.set_n_r(6, Reg::B),
+            0xf1 => self.set_n_r(6, Reg::C),
+            0xf2 => self.set_n_r(6, Reg::D),
+            0xf3 => self.set_n_r(6, Reg::E),
+            0xf4 => self.set_n_r(6, Reg::H),
+            0xf5 => self.set_n_r(6, Reg::L),
+            0xf7 => self.set_n_r(6, Reg::A),
+            // SET 7,r
+            0xf8 => self.set_n_r(7, Reg::B),
+            0xf9 => self.set_n_r(7, Reg::C),
+            0xfa => self.set_n_r(7, Reg::D),
+            0xfb => self.set_n_r(7, Reg::E),
+            0xfc => self.set_n_r(7, Reg::H),
+            0xfd => self.set_n_r(7, Reg::L),
+            0xff => self.set_n_r(7, Reg::A),
+
             _ => {
                 warn!(
                     "Unimplemented CB prefix op=0x{:02x}, PC=0x{:04x}",
@@ -1549,7 +1615,6 @@ impl Cpu {
         4
     }
 
-
     /// SUB (HL)
     fn sub_hl_addr(&mut self, bus: &mut Bus) -> u8 {
         let hl = bus.read_byte(*self.regs.hl);
@@ -1633,7 +1698,15 @@ impl Cpu {
 
     fn res_n_r(&mut self, n: u8, reg: Reg) -> u8 {
         let mut r = self.regs.get(reg);
-        r.view_bits_mut::<Lsb0>().set(n as usize, false); 
+        r.view_bits_mut::<Lsb0>().set(n as usize, false);
+        self.regs.set(reg, r);
+
+        8
+    }
+
+    fn set_n_r(&mut self, n: u8, reg: Reg) -> u8 {
+        let mut r = self.regs.get(reg);
+        r.view_bits_mut::<Lsb0>().set(n as usize, true);
         self.regs.set(reg, r);
 
         8
@@ -1648,38 +1721,52 @@ impl Cpu {
             // Last operation was subtraction
             match (self.regs.flag_c().is_set(), self.regs.flag_h().is_set()) {
                 (false, false) => (),
-                (false, true) => if hi <= 8 && lo >= 6 {
-                    self.add(0xfa);
+                (false, true) => {
+                    if hi <= 8 && lo >= 6 {
+                        self.add(0xfa);
+                    }
                 }
-                (true, false) => if hi >= 7 && lo <= 9 {
-                    self.add(0xa0);
+                (true, false) => {
+                    if hi >= 7 && lo <= 9 {
+                        self.add(0xa0);
+                    }
                 }
-                (true, true) => if hi >= 6 && lo >= 6 {
-                    self.add(0x9a);
+                (true, true) => {
+                    if hi >= 6 && lo >= 6 {
+                        self.add(0x9a);
+                    }
                 }
             }
         } else {
             // Last operation was an addition
             match (self.regs.flag_c().is_set(), self.regs.flag_h().is_set()) {
-                (false, false) => if hi <= 8 && lo >= 0x0a {
-                    self.add(0x06);
-                } else if hi >= 0x0a && lo <= 9 {
-                    self.add(0x60);
-                } else if hi >= 0x09 && lo >= 0x0a {
-                    self.add(0x66);
+                (false, false) => {
+                    if hi <= 8 && lo >= 0x0a {
+                        self.add(0x06);
+                    } else if hi >= 0x0a && lo <= 9 {
+                        self.add(0x60);
+                    } else if hi >= 0x09 && lo >= 0x0a {
+                        self.add(0x66);
+                    }
                 }
-                (false, true) => if hi <= 9 && lo <= 3 {
-                    self.add(0x06);
-                } else if hi >= 0x0a && lo <= 3 {
-                    self.add(0x66);
+                (false, true) => {
+                    if hi <= 9 && lo <= 3 {
+                        self.add(0x06);
+                    } else if hi >= 0x0a && lo <= 3 {
+                        self.add(0x66);
+                    }
                 }
-                (true, false) => if hi <= 2 && lo <= 9 {
-                    self.add(0x60);
-                } else if hi <= 2 && lo >= 0x0a {
-                    self.add(0x66);
+                (true, false) => {
+                    if hi <= 2 && lo <= 9 {
+                        self.add(0x60);
+                    } else if hi <= 2 && lo >= 0x0a {
+                        self.add(0x66);
+                    }
                 }
-                (true, true) => if hi <= 3 && lo <= 3 {
-                    self.add(0x66);
+                (true, true) => {
+                    if hi <= 3 && lo <= 3 {
+                        self.add(0x66);
+                    }
                 }
             }
         }
