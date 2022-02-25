@@ -244,10 +244,11 @@ impl Gfx {
         } else if addr == WY_REG {
             // FF4A WY
             self.wy = b;
-            debug!("Setting WX={}", self.wy);
+            debug!("Setting WY={}", self.wy);
         } else if addr == WX_REG {
             // FF4B WX
             self.wx = b;
+            debug!("Setting WY={}", self.wx);
         } else if addr == BGP_REG {
             // FF47 - BGP (BG Palette Data)
             set_palette_data(&mut self.bgp, b);
@@ -303,10 +304,6 @@ impl Gfx {
     fn dot(&mut self, frame_sink: &mut dyn FrameSink) -> InterruptFlag {
         let mut interrupts = InterruptFlag::empty();
 
-        if !self.lcd_and_ppu_enabled {
-            return interrupts;
-        }
-
         self.dots += 1;
         // Each scanline takes 456 dots
         let mut scanline = (self.dots / 456) as u8;
@@ -345,7 +342,9 @@ impl Gfx {
             }
             Mode::Mode1 => {
                 if self.line_drawing_state == LineDrawingState::Idle {
-                    frame_sink.push_frame(&self.lcd);
+                    if self.lcd_and_ppu_enabled {
+                        frame_sink.push_frame(&self.lcd);
+                    }
                     interrupts |= InterruptFlag::VBLANK;
                     if self.stat_vblank_itr_source {
                         interrupts |= InterruptFlag::STAT;
