@@ -633,7 +633,7 @@ impl Cpu {
             }
             // DI
             0xf3 => {
-                debug!("Disabling interrupts");
+                trace!("Disabling interrupts");
                 self.ime = false;
                 4
             }
@@ -654,7 +654,7 @@ impl Cpu {
             0xfa => self.ld_r_a16(bus, Reg::A),
             // EI
             0xfb => {
-                debug!("Enabling interrupts");
+                trace!("Enabling interrupts");
                 // TODO the effect needs to be delayed by one instruction...
                 self.ime = true;
                 4

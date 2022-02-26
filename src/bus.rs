@@ -142,21 +142,21 @@ impl Bus {
         } else if CART_BANK_00.contains(&addr) {
             if (0x0000..=0x1FFF).contains(&addr) {
                 if b & 0x0A == 0x0A {
-                    debug!("Enabling external RAM");
+                    trace!("Enabling external RAM");
                 } else {
-                    debug!("Disabling external RAM");
+                    trace!("Disabling external RAM");
                 }
                 // RAM Enable register
-            } else if (0x2000..=0x3FFF).contains(&addr) {
+            } else {
                 // ROM Bank Number register
                 self.cartridge.select_rom_bank(b);
-            } else {
-                // unimplemented
             }
         } else if CART_BANK_MAPPED.contains(&addr) {
             if (0x4000..=0x5FFF).contains(&addr) {
-                debug!("Selecting external RAM bank {:02X}", b);
+                trace!("Selecting external RAM bank {:02X}", b);
                 self.cartridge.select_ram_bank(b);
+            } else {
+                // unimplemented
             }
         } else if VRAM.contains(&addr) {
             self.gfx.write_vram(addr, b);
@@ -166,13 +166,12 @@ impl Bus {
             self.ram[(addr - WRAM.start()) as usize] = b;
         } else if ECHO_RAM.contains(&addr) {
             // ECHO RAM: mirror of C000-DDFF
-            // FIXME should we panic here instead?
             self.write_byte(addr - 0x2000, b);
         } else if OAM.contains(&addr) {
             // debug!("Writing Sprite attribute table (OAM): 0x{:04x}", addr);
             self.gfx.write_oam(addr, b);
         } else if INVALID_AREA.contains(&addr) {
-            // Ignore writes to this are
+            // Ignore writes to this area as some games reset it to 0 for some reason
             // warn!("Invalid access to address 0x{:04x}", addr);
         } else if IO_REGISTERS.contains(&addr) {
             self.write_io(addr, b);
@@ -319,7 +318,7 @@ impl Bus {
             if addr == 0xff46 {
                 // DMA transfer
                 let base_addr = (b as u16) * 0x100;
-                debug!("Starting DMA transfer from 0x{:04x} to OAM", base_addr);
+                // debug!("Starting DMA transfer from 0x{:04x} to OAM", base_addr);
                 for i in 0..=0x9Fu16 {
                     self.gfx
                         .write_oam(OAM.start() + i, self.read_byte(base_addr + i));
@@ -331,7 +330,7 @@ impl Bus {
             if b == 0x01 {
                 self.has_booted = true;
                 // Disable boot rom
-                debug!("Boot sequence complete. Disabling boot ROM.");
+                info!("Boot sequence complete. Disabling boot ROM.");
             }
         } else if (0xff68..=0xff69).contains(&addr) {
             // CGB-only registers, just ignore for now
