@@ -194,7 +194,9 @@ impl Validator for DebuggerHelper {}
 impl Default for DebuggerHelper {
     fn default() -> DebuggerHelper {
         DebuggerHelper {
-            commands: vec!["mem", "cpu", "oam", "sprite", "br", "next", "continue", "quit"],
+            commands: vec![
+                "mem", "cpu", "oam", "sprite", "br", "next", "continue", "quit",
+            ],
         }
     }
 }

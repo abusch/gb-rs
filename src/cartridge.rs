@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use log::{info, debug};
+use log::{debug, info};
 
 pub struct Cartridge {
     data: Box<[u8]>,

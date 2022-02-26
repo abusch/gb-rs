@@ -1,15 +1,17 @@
-use std::{time::{Instant, Duration}, sync::mpsc::Receiver};
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use log::info;
-use minifb::{Window, Key};
+use minifb::{Key, Window};
 
-use gb_rs::{cartridge::Cartridge, gameboy::GameBoy, SCREEN_WIDTH, SCREEN_HEIGHT, FrameSink, joypad::Button};
+use gb_rs::{
+    cartridge::Cartridge, gameboy::GameBoy, joypad::Button, FrameSink, SCREEN_HEIGHT, SCREEN_WIDTH,
+};
 
-use crate::debugger::{Debugger, Command};
+use crate::debugger::{Command, Debugger};
 
 // 4.194304MHZ -> 4194304 cycles per seconds
-const CPU_CYCLE_PER_SEC: u64 = 4194304;
+// const CPU_CYCLE_PER_SEC: u64 = 4194304;
 // 1/4194304 seconds per cycle -> 238 nanoseconds per cycle
 const CPU_CYCLE_TIME_NS: u64 = 238;
 /// The object that pulls everything together and drives the emulation engine while interfacing
@@ -48,7 +50,7 @@ impl Emulator {
         Ok(Self { window, gb })
     }
 
-    pub fn run(&mut self, ctrl_c: Receiver<()>) {
+    pub fn run(&mut self) {
         let mut sink = MinifbFrameSink::default();
         // Draw an empty frame to  show the window
         sink.draw_current_frame(&mut self.window);
@@ -81,7 +83,8 @@ impl Emulator {
                     }
                     Command::Continue => {
                         // Reset start time
-                        start_time_ns = Instant::now() - Duration::from_nanos(emulated_cycles * CPU_CYCLE_TIME_NS);
+                        start_time_ns = Instant::now()
+                            - Duration::from_nanos(emulated_cycles * CPU_CYCLE_TIME_NS);
                         self.gb.resume();
                     }
                     Command::DumpMem(addr) => self.gb.dump_mem(addr),
@@ -101,14 +104,22 @@ impl Emulator {
     }
 
     fn read_input_keys(&mut self) {
-        self.gb.set_button_pressed(Button::Start, self.window.is_key_down(Key::Enter));
-        self.gb.set_button_pressed(Button::Select, self.window.is_key_down(Key::Space));
-        self.gb.set_button_pressed(Button::A, self.window.is_key_down(Key::A));
-        self.gb.set_button_pressed(Button::B, self.window.is_key_down(Key::B));
-        self.gb.set_button_pressed(Button::Up, self.window.is_key_down(Key::Up));
-        self.gb.set_button_pressed(Button::Down, self.window.is_key_down(Key::Down));
-        self.gb.set_button_pressed(Button::Left, self.window.is_key_down(Key::Left));
-        self.gb.set_button_pressed(Button::Right, self.window.is_key_down(Key::Right));
+        self.gb
+            .set_button_pressed(Button::Start, self.window.is_key_down(Key::Enter));
+        self.gb
+            .set_button_pressed(Button::Select, self.window.is_key_down(Key::Space));
+        self.gb
+            .set_button_pressed(Button::A, self.window.is_key_down(Key::A));
+        self.gb
+            .set_button_pressed(Button::B, self.window.is_key_down(Key::B));
+        self.gb
+            .set_button_pressed(Button::Up, self.window.is_key_down(Key::Up));
+        self.gb
+            .set_button_pressed(Button::Down, self.window.is_key_down(Key::Down));
+        self.gb
+            .set_button_pressed(Button::Left, self.window.is_key_down(Key::Left));
+        self.gb
+            .set_button_pressed(Button::Right, self.window.is_key_down(Key::Right));
     }
 }
 

@@ -1,7 +1,7 @@
 use crate::bus::Bus;
-use crate::joypad::Button;
 use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
+use crate::joypad::Button;
 use crate::FrameSink;
 
 pub struct GameBoy {
