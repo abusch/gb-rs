@@ -440,13 +440,16 @@ impl Gfx {
             } else {
                 Color::White
             };
-                
 
-            let sprite_pixel = sprites
-                .iter()
-                .find_map(|s| self.get_sprite_pixel(s, lcd_x, lcd_y));
+            if self.obj_enabled {
+                let sprite_pixel = sprites
+                    .iter()
+                    .find_map(|s| self.get_sprite_pixel(s, lcd_x, lcd_y));
 
-            self.write_pixel(x, self.ly, sprite_pixel.unwrap_or(color));
+                self.write_pixel(x, self.ly, sprite_pixel.unwrap_or(color));
+            } else {
+                self.write_pixel(x, self.ly, color);
+            }
         }
     }
 
