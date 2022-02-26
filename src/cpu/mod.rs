@@ -66,7 +66,7 @@ impl Cpu {
             trace!("Handling STAT interrupt");
             self.call_interrupt(bus, InterruptFlag::STAT);
         } else if should_handle(InterruptFlag::TIMER) {
-            debug!("Handling TIMER interrupt");
+            trace!("Handling TIMER interrupt");
             self.call_interrupt(bus, InterruptFlag::TIMER);
         } else if should_handle(InterruptFlag::SERIAL) {
             trace!("Handling SERIAL interrupt");

@@ -40,6 +40,14 @@ impl GameBoy {
         }
     }
 
+    pub fn dump_oam(&self) {
+        self.bus.gfx.dump_oam();
+    }
+
+    pub fn dump_sprite(&self, id: u8) {
+        self.bus.gfx.dump_sprite(id);
+    }
+
     pub fn is_halted(&self) -> bool {
         self.cpu.halted()
     }
@@ -50,9 +58,11 @@ impl GameBoy {
 
     pub fn pause(&mut self) {
         self.cpu.set_pause(true);
+        self.bus.gfx.disable();
     }
 
     pub fn resume(&mut self) {
+        self.bus.gfx.enable();
         self.cpu.set_pause(false);
     }
 

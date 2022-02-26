@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use bitvec::prelude::*;
 use log::{debug, trace};
 
@@ -470,7 +472,8 @@ impl Gfx {
     }
 
     fn get_sprites_for_scanline(&self, y: u8) -> Vec<Sprite> {
-        let mut sprites = self.oam_ram
+        let mut sprites = self
+            .oam_ram
             .chunks(4)
             .map(Sprite::new)
             .filter(|sprite| sprite.matches_scanline(y, self.obj_size))
@@ -483,41 +486,82 @@ impl Gfx {
     }
 
     fn get_sprite_pixel(&self, sprite: &Sprite, x: u8, y: u8) -> Option<Color> {
-        // TODO support 8x16 mode
         sprite
             .get_tile_coordinates(x, y)
-            .and_then(|(tile_x, tile_y)| {
-                let (lo_byte, hi_byte) = if self.obj_size {
-                    let tile_idx_1 = sprite.tile_index & 0xFE;
-                    let tile_idx_2 = sprite.tile_index | 0x01;
+            .and_then(|(tile_x, tile_y)| self.get_sprite_color(sprite, tile_x, tile_y))
+    }
 
-                    if tile_y < 8 {
-                        self.get_block0_tile_data(tile_idx_1, y)
-                    } else {
-                        self.get_block0_tile_data(tile_idx_2, y - 8)
-                    }
-                } else {
-                    self.get_block0_tile_data(sprite.tile_index, tile_y)
-                };
+    fn get_sprite_color(&self, sprite: &Sprite, tile_x: u8, tile_y: u8) -> Option<Color> {
+        let (lo_byte, hi_byte) = if self.obj_size {
+            let tile_idx_1 = sprite.tile_index & 0xFE;
+            let tile_idx_2 = sprite.tile_index | 0x01;
 
-                let mut color_byte = 0u8;
-                let color_bits = color_byte.view_bits_mut::<Lsb0>();
-                // Use Msb0 order here as pixel 0 is the leftmost bit (bit 7).
-                color_bits.set(1, hi_byte.view_bits::<Msb0>()[tile_x as usize]);
-                color_bits.set(0, lo_byte.view_bits::<Msb0>()[tile_x as usize]);
+            if tile_y < 8 {
+                self.get_block0_tile_data(tile_idx_1, tile_y)
+            } else {
+                self.get_block0_tile_data(tile_idx_2, tile_y - 8)
+            }
+        } else {
+            self.get_block0_tile_data(sprite.tile_index, tile_y)
+        };
 
-                if color_byte == 0 {
-                    None
-                } else if sprite.obp1_palette() {
-                    Some(self.obp1[color_byte as usize])
-                } else {
-                    Some(self.obp0[color_byte as usize])
-                }
-            })
+        let mut color_byte = 0u8;
+        let color_bits = color_byte.view_bits_mut::<Lsb0>();
+        // Use Msb0 order here as pixel 0 is the leftmost bit (bit 7).
+        color_bits.set(1, hi_byte.view_bits::<Msb0>()[tile_x as usize]);
+        color_bits.set(0, lo_byte.view_bits::<Msb0>()[tile_x as usize]);
+
+        if color_byte == 0 {
+            None
+        } else if sprite.obp1_palette() {
+            Some(self.obp1[color_byte as usize])
+        } else {
+            Some(self.obp0[color_byte as usize])
+        }
     }
 
     fn write_pixel(&mut self, x: u8, y: u8, color: Color) {
         self.lcd[y as usize * SCREEN_WIDTH + x as usize] = color.as_rgba();
+    }
+
+    pub fn dump_oam(&self) {
+        println!("OAM:");
+        self.oam_ram
+            .chunks(4)
+            .map(Sprite::new)
+            .enumerate()
+            .for_each(|(i, s)| println!("  {:02}: {:?}", i, s));
+    }
+
+    pub fn dump_sprite(&self, id: u8) {
+        assert!(id < 40);
+        let offset = id as usize * 4;
+        let data = &self.oam_ram[offset..offset + 4];
+        let sprite = Sprite::new(data);
+
+        let height = if self.obj_size { 16 } else { 8 };
+        for y in 0..height {
+            for x in 0..8 {
+                let pixel = self.get_sprite_color(&sprite, x, y).unwrap_or(Color::White);
+                let (r, g, b) = pixel.as_rgba();
+                print!("{}", ansi_term::Color::RGB(r, g, b).paint("██"));
+            }
+            println!();
+        }
+    }
+
+    /// Disable the LCD.
+    ///
+    /// This is meant to be called by the debugger to allow access to VRAM.
+    pub(crate) fn disable(&mut self) {
+        self.lcd_and_ppu_enabled = false;
+    }
+
+    /// Enable the LCD.
+    ///
+    /// This is meant to be called by the debugger before resuming normal running mode.
+    pub(crate) fn enable(&mut self) {
+        self.lcd_and_ppu_enabled = true;
     }
 }
 
@@ -662,6 +706,16 @@ impl Sprite {
 
     pub fn bg_has_priority(&self) -> bool {
         self.attrs.view_bits::<Lsb0>()[7]
+    }
+}
+
+impl Debug for Sprite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Sprite")
+            .field("pos", &format_args!("({:3},{:3})", self.x, self.y))
+            .field("tile_idx", &format_args!("{:02x}", self.tile_index))
+            .field("attrs", &format_args!("{:08b}", self.attrs))
+            .finish()
     }
 }
 

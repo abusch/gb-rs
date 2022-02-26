@@ -40,12 +40,13 @@ impl Debugger {
                         // gb.resume();
                         // false
                     }
-                    "dump_cpu" => {
+                    "cpu" => {
                         Command::DumpCpu
                         // gb.dump_cpu();
                         // false
                     }
-                    s if s.starts_with("dump_mem") => {
+                    "oam" => Command::DumpOam,
+                    s if s.starts_with("mem") => {
                         if let Some(addr_str) = s.split_whitespace().nth(1) {
                             if let Ok(addr) = u16::from_str_radix(addr_str, 16) {
                                 // println!("Dumping memory at {:x}", addr);
@@ -61,6 +62,14 @@ impl Debugger {
                                 // println!("Setting breakpoint at {:x}", addr);
                                 // gb.set_breakpoint(addr);
                                 return Command::Break(addr);
+                            }
+                        }
+                        Command::Nop
+                    }
+                    s if s.starts_with("sprite ") => {
+                        if let Some(id_str) = s.split_whitespace().nth(1) {
+                            if let Ok(id) = id_str.parse::<u8>() {
+                                return Command::Sprite(id);
                             }
                         }
                         Command::Nop
@@ -95,6 +104,8 @@ pub enum Command {
     Continue,
     DumpMem(u16),
     DumpCpu,
+    DumpOam,
+    Sprite(u8),
     Break(u16),
     Quit,
     Nop,
@@ -136,6 +147,8 @@ impl Hinter for DebuggerHelper {
     fn hint(&self, line: &str, _pos: usize, _ctx: &rustyline::Context<'_>) -> Option<Self::Hint> {
         if line == "br " {
             Some("<hex address>".to_string())
+        } else if line == "sprite " {
+            Some("<sprite number>".to_string())
         } else {
             None
         }
@@ -181,7 +194,7 @@ impl Validator for DebuggerHelper {}
 impl Default for DebuggerHelper {
     fn default() -> DebuggerHelper {
         DebuggerHelper {
-            commands: vec!["dump_mem", "dump_cpu", "br", "next", "continue", "quit"],
+            commands: vec!["mem", "cpu", "oam", "sprite", "br", "next", "continue", "quit"],
         }
     }
 }

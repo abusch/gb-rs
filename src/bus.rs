@@ -45,7 +45,7 @@ const IO_RANGE_DBR: RangeInclusive<u16> = 0xFF50..=0xFF50;
 pub struct Bus {
     ram: Box<[u8]>,
     hram: Box<[u8]>,
-    gfx: Gfx,
+    pub(crate) gfx: Gfx,
     cartridge: Cartridge,
     /// P1/JOYP Joypad contoller
     joypad: Joypad,

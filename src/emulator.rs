@@ -86,7 +86,9 @@ impl Emulator {
                     }
                     Command::DumpMem(addr) => self.gb.dump_mem(addr),
                     Command::DumpCpu => self.gb.dump_cpu(),
+                    Command::DumpOam => self.gb.dump_oam(),
                     Command::Break(addr) => self.gb.set_breakpoint(addr),
+                    Command::Sprite(id) => self.gb.dump_sprite(id),
                     Command::Quit => break,
                     Command::Nop => (),
                 }
