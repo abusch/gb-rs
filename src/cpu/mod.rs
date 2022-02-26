@@ -249,6 +249,13 @@ impl Cpu {
             0x35 => self.dec_hl(bus),
             // LD (HL), d8
             0x36 => self.ld_hl_d8(bus),
+            // SCF
+            0x37 => {
+                self.regs.flag_n().clear();
+                self.regs.flag_h().clear();
+                self.regs.flag_c().set();
+                4
+            }
             // JR C,r8
             0x38 => {
                 // C
@@ -271,6 +278,14 @@ impl Cpu {
             0x3d => self.dec_r(Reg::A),
             // LD A,d8
             0x3e => self.ld_r_d8(bus, Reg::A),
+            // CCF
+            0x3f => {
+                self.regs.flag_n().clear();
+                self.regs.flag_h().clear();
+                let c = self.regs.flag_c().is_set();
+                self.regs.flag_c().set_value(!c);
+                4
+            }
             // LD B,A..L
             0x40 => self.ld_r_r(Reg::B, Reg::B),
             0x41 => self.ld_r_r(Reg::B, Reg::C),
