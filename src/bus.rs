@@ -285,14 +285,7 @@ impl Bus {
                 0xff05 => self.timer.set_tima(b),
                 0xff06 => self.timer.set_tma(b),
                 0xff07 => self.timer.set_tac(b),
-                _ => {
-                    // Divider and timer
-                    debug!(
-                        "Write divider and timer register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
-                        addr,
-                        b
-                    );
-                }
+                _ => unreachable!(),
             }
         } else if IO_RANGE_INT.contains(&addr) {
             // IF - interrupt flag

@@ -446,6 +446,8 @@ impl Cpu {
             0xa4 => self.and_r(Reg::H),
             // AND L
             0xa5 => self.and_r(Reg::L),
+            // AND (HL)
+            0xa6 => self.and_hl(bus),
             // AND A
             0xa7 => self.and_r(Reg::A),
             // XOR B
@@ -1172,6 +1174,13 @@ impl Cpu {
     fn and_d8(&mut self, bus: &mut Bus) -> u8 {
         let d8 = self.fetch(bus);
         self.and(d8);
+        8
+    }
+
+    // AND (HL)
+    fn and_hl(&mut self, bus: &mut Bus) -> u8 {
+        let hl = bus.read_byte(*self.regs.hl);
+        self.and(hl);
         8
     }
 

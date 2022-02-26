@@ -248,7 +248,7 @@ impl Gfx {
         } else if addr == WX_REG {
             // FF4B WX
             self.wx = b;
-            debug!("Setting WY={}", self.wx);
+            debug!("Setting WX={}", self.wx);
         } else if addr == BGP_REG {
             // FF47 - BGP (BG Palette Data)
             set_palette_data(&mut self.bgp, b);
