@@ -7,7 +7,7 @@ const VRAM_START: u16 = 0x8000;
 const OAM_START: u16 = 0xFE00;
 
 const VRAM_TILE_DATA_BLOCK_0_ADDR: u16 = 0x8000;
-const VRAM_TILE_DATA_BLOCK_1_ADDR: u16 = 0x8800;
+// const VRAM_TILE_DATA_BLOCK_1_ADDR: u16 = 0x8800;
 const VRAM_TILE_DATA_BLOCK_2_ADDR: u16 = 0x9000;
 
 const LCDC_REG: u16 = 0xFF40;
@@ -441,15 +441,20 @@ impl Gfx {
                 Color::White
             };
 
-            if self.obj_enabled {
-                let sprite_pixel = sprites
-                    .iter()
-                    .find_map(|s| self.get_sprite_pixel(s, lcd_x, lcd_y));
+            // Potential sprite pixel
+            let sprite_pixel_and_bg_has_priority = sprites.iter().find_map(|s| {
+                self.get_sprite_pixel(s, lcd_x, lcd_y)
+                    .map(|p| (p, s.bg_has_priority()))
+            });
 
-                self.write_pixel(x, self.ly, sprite_pixel.unwrap_or(color));
-            } else {
-                self.write_pixel(x, self.ly, color);
-            }
+            let final_color = match (self.obj_enabled, sprite_pixel_and_bg_has_priority) {
+                (true, Some((_p, true))) => color,
+                (true, Some((p, false))) => p,
+                (true, None) => color,
+                (false, _) => color,
+            };
+
+            self.write_pixel(x, self.ly, final_color);
         }
     }
 
@@ -465,12 +470,16 @@ impl Gfx {
     }
 
     fn get_sprites_for_scanline(&self, y: u8) -> Vec<Sprite> {
-        self.oam_ram
+        let mut sprites = self.oam_ram
             .chunks(4)
             .map(Sprite::new)
             .filter(|sprite| sprite.matches_scanline(y, self.obj_size))
             .take(10)
-            .collect()
+            .collect::<Vec<_>>();
+
+        // Order the sprites by smallest `x` as they have hight priority
+        (&mut sprites[..]).sort_by(|s1, s2| s1.x.cmp(&s2.x));
+        sprites
     }
 
     fn get_sprite_pixel(&self, sprite: &Sprite, x: u8, y: u8) -> Option<Color> {
@@ -478,8 +487,18 @@ impl Gfx {
         sprite
             .get_tile_coordinates(x, y)
             .and_then(|(tile_x, tile_y)| {
-                // dbg!(sprite.x, sprite.y, x, y, tile_x, tile_y);
-                let (lo_byte, hi_byte) = self.get_block0_tile_data(sprite.tile_index, tile_y);
+                let (lo_byte, hi_byte) = if self.obj_size {
+                    let tile_idx_1 = sprite.tile_index & 0xFE;
+                    let tile_idx_2 = sprite.tile_index | 0x01;
+
+                    if tile_y < 8 {
+                        self.get_block0_tile_data(tile_idx_1, y)
+                    } else {
+                        self.get_block0_tile_data(tile_idx_2, y - 8)
+                    }
+                } else {
+                    self.get_block0_tile_data(sprite.tile_index, tile_y)
+                };
 
                 let mut color_byte = 0u8;
                 let color_bits = color_byte.view_bits_mut::<Lsb0>();
@@ -553,10 +572,10 @@ impl Color {
 
     fn as_rgba(&self) -> (u8, u8, u8) {
         match self {
-            Color::White => (0xe0, 0xf8, 0xd0), // #e0f8d0
+            Color::White => (0xe0, 0xf8, 0xd0),     // #e0f8d0
             Color::LightGray => (0x88, 0xc0, 0x70), // #88c070
             Color::DarkGray => (0x30, 0x68, 0x50),  // #306850
-            Color::Black => (0x08, 0x18, 0x20), // #081820
+            Color::Black => (0x08, 0x18, 0x20),     // #081820
         }
     }
 }
@@ -639,6 +658,10 @@ impl Sprite {
 
     pub fn obp1_palette(&self) -> bool {
         self.attrs.view_bits::<Lsb0>()[4]
+    }
+
+    pub fn bg_has_priority(&self) -> bool {
+        self.attrs.view_bits::<Lsb0>()[7]
     }
 }
 
