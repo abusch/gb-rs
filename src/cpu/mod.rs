@@ -36,7 +36,7 @@ impl Default for Cpu {
             halted: false,
             ime: true, // is this correct?
             // breakpoint: 0x0100,
-            breakpoint: 0x0179,
+            breakpoint: 0xffff,
             paused: Default::default(),
         }
     }
@@ -803,6 +803,7 @@ impl Cpu {
             0x43 => self.bit_n_r(0, Reg::E),
             0x44 => self.bit_n_r(0, Reg::H),
             0x45 => self.bit_n_r(0, Reg::L),
+            0x46 => self.bit_n_hl(0, bus),
             0x47 => self.bit_n_r(0, Reg::A),
             // BIT 1,r
             0x48 => self.bit_n_r(1, Reg::B),
@@ -811,6 +812,7 @@ impl Cpu {
             0x4b => self.bit_n_r(1, Reg::E),
             0x4c => self.bit_n_r(1, Reg::H),
             0x4d => self.bit_n_r(1, Reg::L),
+            0x4e => self.bit_n_hl(1, bus),
             0x4f => self.bit_n_r(1, Reg::A),
             // BIT 2,r
             0x50 => self.bit_n_r(2, Reg::B),
@@ -819,6 +821,7 @@ impl Cpu {
             0x53 => self.bit_n_r(2, Reg::E),
             0x54 => self.bit_n_r(2, Reg::H),
             0x55 => self.bit_n_r(2, Reg::L),
+            0x56 => self.bit_n_hl(2, bus),
             0x57 => self.bit_n_r(2, Reg::A),
             // BIT 3,r
             0x58 => self.bit_n_r(3, Reg::B),
@@ -827,6 +830,7 @@ impl Cpu {
             0x5b => self.bit_n_r(3, Reg::E),
             0x5c => self.bit_n_r(3, Reg::H),
             0x5d => self.bit_n_r(3, Reg::L),
+            0x5e => self.bit_n_hl(3, bus),
             0x5f => self.bit_n_r(3, Reg::A),
             // BIT 4,r
             0x60 => self.bit_n_r(4, Reg::B),
@@ -835,6 +839,7 @@ impl Cpu {
             0x63 => self.bit_n_r(4, Reg::E),
             0x64 => self.bit_n_r(4, Reg::H),
             0x65 => self.bit_n_r(4, Reg::L),
+            0x66 => self.bit_n_hl(4, bus),
             0x67 => self.bit_n_r(4, Reg::A),
             // BIT 5,r
             0x68 => self.bit_n_r(5, Reg::B),
@@ -843,6 +848,7 @@ impl Cpu {
             0x6b => self.bit_n_r(5, Reg::E),
             0x6c => self.bit_n_r(5, Reg::H),
             0x6d => self.bit_n_r(5, Reg::L),
+            0x6e => self.bit_n_hl(5, bus),
             0x6f => self.bit_n_r(5, Reg::A),
             // BIT 6,r
             0x70 => self.bit_n_r(6, Reg::B),
@@ -851,6 +857,7 @@ impl Cpu {
             0x73 => self.bit_n_r(6, Reg::E),
             0x74 => self.bit_n_r(6, Reg::H),
             0x75 => self.bit_n_r(6, Reg::L),
+            0x76 => self.bit_n_hl(6, bus),
             0x77 => self.bit_n_r(6, Reg::A),
             // BIT 7,r
             0x78 => self.bit_n_r(7, Reg::B),
@@ -859,6 +866,7 @@ impl Cpu {
             0x7b => self.bit_n_r(7, Reg::E),
             0x7c => self.bit_n_r(7, Reg::H),
             0x7d => self.bit_n_r(7, Reg::L),
+            0x7e => self.bit_n_hl(7, bus),
             0x7f => self.bit_n_r(7, Reg::A),
             // RES 0,r
             0x80 => self.res_n_r(0, Reg::B),
@@ -867,6 +875,7 @@ impl Cpu {
             0x83 => self.res_n_r(0, Reg::E),
             0x84 => self.res_n_r(0, Reg::H),
             0x85 => self.res_n_r(0, Reg::L),
+            0x86 => self.res_hl(0, bus),
             0x87 => self.res_n_r(0, Reg::A),
             // RES 1,r
             0x88 => self.res_n_r(1, Reg::B),
@@ -875,6 +884,7 @@ impl Cpu {
             0x8b => self.res_n_r(1, Reg::E),
             0x8c => self.res_n_r(1, Reg::H),
             0x8d => self.res_n_r(1, Reg::L),
+            0x8e => self.res_hl(1, bus),
             0x8f => self.res_n_r(1, Reg::A),
             // RES 2,r
             0x90 => self.res_n_r(2, Reg::B),
@@ -883,6 +893,7 @@ impl Cpu {
             0x93 => self.res_n_r(2, Reg::E),
             0x94 => self.res_n_r(2, Reg::H),
             0x95 => self.res_n_r(2, Reg::L),
+            0x96 => self.res_hl(2, bus),
             0x97 => self.res_n_r(2, Reg::A),
             // RES 3,r
             0x98 => self.res_n_r(3, Reg::B),
@@ -891,6 +902,7 @@ impl Cpu {
             0x9b => self.res_n_r(3, Reg::E),
             0x9c => self.res_n_r(3, Reg::H),
             0x9d => self.res_n_r(3, Reg::L),
+            0x9e => self.res_hl(3, bus),
             0x9f => self.res_n_r(3, Reg::A),
             // RES 4,r
             0xa0 => self.res_n_r(4, Reg::B),
@@ -899,6 +911,7 @@ impl Cpu {
             0xa3 => self.res_n_r(4, Reg::E),
             0xa4 => self.res_n_r(4, Reg::H),
             0xa5 => self.res_n_r(4, Reg::L),
+            0xa6 => self.res_hl(4, bus),
             0xa7 => self.res_n_r(4, Reg::A),
             // RES 5,r
             0xa8 => self.res_n_r(5, Reg::B),
@@ -907,6 +920,7 @@ impl Cpu {
             0xab => self.res_n_r(5, Reg::E),
             0xac => self.res_n_r(5, Reg::H),
             0xad => self.res_n_r(5, Reg::L),
+            0xae => self.res_hl(5, bus),
             0xaf => self.res_n_r(5, Reg::A),
             // RES 6,r
             0xb0 => self.res_n_r(6, Reg::B),
@@ -915,6 +929,7 @@ impl Cpu {
             0xb3 => self.res_n_r(6, Reg::E),
             0xb4 => self.res_n_r(6, Reg::H),
             0xb5 => self.res_n_r(6, Reg::L),
+            0xb6 => self.res_hl(6, bus),
             0xb7 => self.res_n_r(6, Reg::A),
             // RES 7,r
             0xb8 => self.res_n_r(7, Reg::B),
@@ -923,6 +938,7 @@ impl Cpu {
             0xbb => self.res_n_r(7, Reg::E),
             0xbc => self.res_n_r(7, Reg::H),
             0xbd => self.res_n_r(7, Reg::L),
+            0xbe => self.res_hl(7, bus),
             0xbf => self.res_n_r(7, Reg::A),
 
             // SET 0,r
@@ -932,6 +948,7 @@ impl Cpu {
             0xc3 => self.set_n_r(0, Reg::E),
             0xc4 => self.set_n_r(0, Reg::H),
             0xc5 => self.set_n_r(0, Reg::L),
+            0xc6 => self.set_hl(0, bus),
             0xc7 => self.set_n_r(0, Reg::A),
             // SET 1,r
             0xc8 => self.set_n_r(1, Reg::B),
@@ -940,6 +957,7 @@ impl Cpu {
             0xcb => self.set_n_r(1, Reg::E),
             0xcc => self.set_n_r(1, Reg::H),
             0xcd => self.set_n_r(1, Reg::L),
+            0xce => self.set_hl(1, bus),
             0xcf => self.set_n_r(1, Reg::A),
             // SET 2,r
             0xd0 => self.set_n_r(2, Reg::B),
@@ -948,6 +966,7 @@ impl Cpu {
             0xd3 => self.set_n_r(2, Reg::E),
             0xd4 => self.set_n_r(2, Reg::H),
             0xd5 => self.set_n_r(2, Reg::L),
+            0xd6 => self.set_hl(2, bus),
             0xd7 => self.set_n_r(2, Reg::A),
             // SET 3,r
             0xd8 => self.set_n_r(3, Reg::B),
@@ -956,6 +975,7 @@ impl Cpu {
             0xdb => self.set_n_r(3, Reg::E),
             0xdc => self.set_n_r(3, Reg::H),
             0xdd => self.set_n_r(3, Reg::L),
+            0xde => self.set_hl(3, bus),
             0xdf => self.set_n_r(3, Reg::A),
             // SET 4,r
             0xe0 => self.set_n_r(4, Reg::B),
@@ -964,6 +984,7 @@ impl Cpu {
             0xe3 => self.set_n_r(4, Reg::E),
             0xe4 => self.set_n_r(4, Reg::H),
             0xe5 => self.set_n_r(4, Reg::L),
+            0xe6 => self.set_hl(4, bus),
             0xe7 => self.set_n_r(4, Reg::A),
             // SET 5,r
             0xe8 => self.set_n_r(5, Reg::B),
@@ -972,6 +993,7 @@ impl Cpu {
             0xeb => self.set_n_r(5, Reg::E),
             0xec => self.set_n_r(5, Reg::H),
             0xed => self.set_n_r(5, Reg::L),
+            0xee => self.set_hl(5, bus),
             0xef => self.set_n_r(5, Reg::A),
             // SET 6,r
             0xf0 => self.set_n_r(6, Reg::B),
@@ -980,6 +1002,7 @@ impl Cpu {
             0xf3 => self.set_n_r(6, Reg::E),
             0xf4 => self.set_n_r(6, Reg::H),
             0xf5 => self.set_n_r(6, Reg::L),
+            0xf6 => self.set_hl(6, bus),
             0xf7 => self.set_n_r(6, Reg::A),
             // SET 7,r
             0xf8 => self.set_n_r(7, Reg::B),
@@ -988,6 +1011,7 @@ impl Cpu {
             0xfb => self.set_n_r(7, Reg::E),
             0xfc => self.set_n_r(7, Reg::H),
             0xfd => self.set_n_r(7, Reg::L),
+            0xfe => self.set_hl(7, bus),
             0xff => self.set_n_r(7, Reg::A),
 
             _ => {
@@ -1311,8 +1335,17 @@ impl Cpu {
 
     /// Test bit n of register r
     fn bit_n_r(&mut self, n: u8, reg: Reg) -> u8 {
-        let r = self.regs.get(reg);
-        if r & (1 << n) == 0 {
+        self.bit_n_value(n, self.regs.get(reg))
+    }
+
+    /// Test bit n of register r
+    fn bit_n_hl(&mut self, n: u8, bus: &mut Bus) -> u8 {
+        self.bit_n_value(n, bus.read_byte(*self.regs.hl));
+        16
+    }
+
+    fn bit_n_value(&mut self, n: u8, value: u8) -> u8 {
+        if value & (1 << n) == 0 {
             self.regs.flag_z().set();
         } else {
             self.regs.flag_z().clear();
@@ -1704,12 +1737,26 @@ impl Cpu {
         8
     }
 
+    fn res_hl(&mut self, n: u8, bus: &mut Bus) -> u8 {
+        let mut hl = bus.read_byte(*self.regs.hl);
+        hl.view_bits_mut::<Lsb0>().set(n as usize, false);
+
+        16
+    }
+
     fn set_n_r(&mut self, n: u8, reg: Reg) -> u8 {
         let mut r = self.regs.get(reg);
         r.view_bits_mut::<Lsb0>().set(n as usize, true);
         self.regs.set(reg, r);
 
         8
+    }
+
+    fn set_hl(&mut self, n: u8, bus: &mut Bus) -> u8 {
+        let mut hl = bus.read_byte(*self.regs.hl);
+        hl.view_bits_mut::<Lsb0>().set(n as usize, true);
+
+        16
     }
 
     fn daa(&mut self) -> u8 {
