@@ -1,11 +1,12 @@
-use bitvec::{view::BitView, order::Lsb0, field::BitField};
+use bitvec::{field::BitField, order::Lsb0, view::BitView};
+use log::debug;
 
 pub struct Timer {
     /// FF04 - DIV - Divider Register
     /// This register is incremented at a rate of 16384Hz (~16779Hz on SGB). In other words, it is
     /// incremented every 256 cycles.
-    div_timer: u8,
-    div_timer_ticker: u16,
+    /// This is implemented as the high byte of a 16-bit counter.
+    div_timer: u16,
     /// FF05 - TIMA - Time counter
     tima: u8,
     /// FF06 - TMA - Time Modulo
@@ -13,37 +14,53 @@ pub struct Timer {
     /// FF07 - TAC - Timer Control
     tac_timer_enable: bool,
     tac_input_clock_select: ClockSpeed,
-
-    cycle_counter: u16,
 }
 
 impl Timer {
     pub fn new() -> Self {
         Self {
             div_timer: 0,
-            div_timer_ticker: 0,
             tima: 0,
             tma: 0,
             tac_timer_enable: false,
             tac_input_clock_select: ClockSpeed::Speed0,
-            cycle_counter: 0,
         }
     }
 
     pub fn cycle(&mut self, cycles: u8) -> bool {
         let mut request_interrupt = false;
         for _ in 0..cycles {
-            self.cycle_counter = self.cycle_counter.wrapping_add(1);
+            let old_div_timer = self.div_timer;
             // Update DIV
-            self.div_timer_ticker += 1;
-            if self.div_timer_ticker > 255 {
-                self.div_timer = self.div_timer.wrapping_add(1);
-                self.div_timer_ticker = 0;
-                request_interrupt = true;
+            self.div_timer = self.div_timer.wrapping_add(1);
+
+            // Update TIMA
+            if self.tac_timer_enable {
+                // Bit number of the system clock counter to check for a falling edge
+                let bit_num = match self.tac_input_clock_select {
+                    ClockSpeed::Speed0 => 9,
+                    ClockSpeed::Speed1 => 3,
+                    ClockSpeed::Speed2 => 5,
+                    ClockSpeed::Speed3 => 7,
+                };
+                let old_bit = old_div_timer.view_bits::<Lsb0>()[bit_num];
+                let new_bit = self.div_timer.view_bits::<Lsb0>()[bit_num];
+
+                if old_bit && !new_bit {
+                    // Falling edge detected: update TIMA
+
+                    let (new_tima, overflow) = self.tima.overflowing_add(1);
+                    if overflow {
+                        self.tima = self.tma;
+                        request_interrupt = true;
+                    } else {
+                        self.tima = new_tima;
+                    }
+                }
             }
         }
         request_interrupt
-    } 
+    }
 
     pub fn set_tac(&mut self, tac: u8) {
         let bits = tac.view_bits::<Lsb0>();
@@ -67,7 +84,7 @@ impl Timer {
     }
 
     pub fn div_timer(&self) -> u8 {
-        self.div_timer
+        (self.div_timer >> 8) as u8
     }
 
     pub fn reset_div_timer(&mut self) {
@@ -91,6 +108,7 @@ impl Timer {
 
     /// Set the timer's tma.
     pub fn set_tma(&mut self, tma: u8) {
+        debug!("Writing {:02x} to TMA", tma);
         self.tma = tma;
     }
 }
