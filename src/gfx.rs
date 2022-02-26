@@ -426,8 +426,8 @@ impl Gfx {
             };
             tile_offset += 2 * tile_row as u16;
 
-            let hi_byte = self.read_vram_internal(tile_offset);
-            let lo_byte = self.read_vram_internal(tile_offset + 1);
+            let lo_byte = self.read_vram_internal(tile_offset);
+            let hi_byte = self.read_vram_internal(tile_offset + 1);
 
             let mut color_byte = 0u8;
             let color_bits = color_byte.view_bits_mut::<Lsb0>();
@@ -520,16 +520,16 @@ fn get_palette_as_byte(palette: &[Color; 4]) -> u8 {
 
 fn set_palette_data(palette: &mut [Color; 4], b: u8) {
     debug!("Writing BG Palette with {:b}", b);
-    let bits = b.view_bits::<Lsb0>();
-    let color1 = bits[0..=1].load::<u8>();
+    let bits = b.view_bits::<Msb0>();
+    let color0 = bits[6..=7].load::<u8>();
+    let color1 = bits[4..=5].load::<u8>();
     let color2 = bits[2..=3].load::<u8>();
-    let color3 = bits[4..=5].load::<u8>();
-    let color4 = bits[6..=7].load::<u8>();
+    let color3 = bits[0..=1].load::<u8>();
 
-    palette[0] = Color::from(color1);
-    palette[1] = Color::from(color2);
-    palette[2] = Color::from(color3);
-    palette[3] = Color::from(color4);
+    palette[0] = Color::from(color0);
+    palette[1] = Color::from(color1);
+    palette[2] = Color::from(color2);
+    palette[3] = Color::from(color3);
     debug!("BG Palette is now {:?}", palette);
 }
 
@@ -553,10 +553,10 @@ impl Color {
 
     fn as_rgba(&self) -> (u8, u8, u8) {
         match self {
-            Color::White => (0xe0, 0xf8, 0xd0),
-            Color::LightGray => (0x88, 0xc0, 0x70),
-            Color::DarkGray => (0x30, 0x68, 0x50),
-            Color::Black => (0x08, 0x18, 0x20),
+            Color::White => (0xe0, 0xf8, 0xd0), // #e0f8d0
+            Color::LightGray => (0x88, 0xc0, 0x70), // #88c070
+            Color::DarkGray => (0x30, 0x68, 0x50),  // #306850
+            Color::Black => (0x08, 0x18, 0x20), // #081820
         }
     }
 }
