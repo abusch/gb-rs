@@ -86,7 +86,6 @@ impl Bus {
             self.interrupt_flag |= InterruptFlag::TIMER;
         }
         if self.input_has_changed {
-            info!("XXX Input has changed!");
             self.interrupt_flag |= InterruptFlag::JOYPAD;
             self.input_has_changed = false;
         }

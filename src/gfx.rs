@@ -1,5 +1,5 @@
 use bitvec::prelude::*;
-use log::debug;
+use log::{debug, trace};
 
 use crate::{interrupt::InterruptFlag, FrameSink, SCREEN_HEIGHT, SCREEN_WIDTH};
 
@@ -538,7 +538,7 @@ fn get_palette_as_byte(palette: &[Color; 4]) -> u8 {
 }
 
 fn set_palette_data(palette: &mut [Color; 4], b: u8) {
-    debug!("Writing BG Palette with {:b}", b);
+    trace!("Writing BG Palette with {:b}", b);
     let bits = b.view_bits::<Msb0>();
     let color0 = bits[6..=7].load::<u8>();
     let color1 = bits[4..=5].load::<u8>();
@@ -549,7 +549,7 @@ fn set_palette_data(palette: &mut [Color; 4], b: u8) {
     palette[1] = Color::from(color1);
     palette[2] = Color::from(color2);
     palette[3] = Color::from(color3);
-    debug!("BG Palette is now {:?}", palette);
+    trace!("BG Palette is now {:?}", palette);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
