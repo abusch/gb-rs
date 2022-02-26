@@ -53,7 +53,7 @@ pub struct Gfx {
     /// LCDC.1
     obj_enabled: bool,
     /// LCDC.0
-    bg_and_window_enable_priority: bool,
+    bg_and_window_enable: bool,
 
     /// SCY (Scroll Y)
     scy: u8,
@@ -101,7 +101,7 @@ impl Gfx {
             bg_tile_map_area: false,
             obj_size: false,
             obj_enabled: false,
-            bg_and_window_enable_priority: false,
+            bg_and_window_enable: false,
             scy: 0,
             scx: 0,
             bgp: [Color::White; 4],
@@ -170,7 +170,7 @@ impl Gfx {
             bits.set(3, self.bg_tile_map_area);
             bits.set(2, self.obj_size);
             bits.set(1, self.obj_enabled);
-            bits.set(0, self.bg_and_window_enable_priority);
+            bits.set(0, self.bg_and_window_enable);
 
             lcdc
         } else if addr == STAT_REG {
@@ -220,7 +220,7 @@ impl Gfx {
             self.bg_tile_map_area = bits[3];
             self.obj_size = bits[2];
             self.obj_enabled = bits[1];
-            self.bg_and_window_enable_priority = bits[0];
+            self.bg_and_window_enable = bits[0];
             // debug!("LCDC reg = 0b{:b}", b);
             if orig_lcd_state && !self.lcd_and_ppu_enabled {
                 debug!("LCD turned OFF!");
@@ -391,7 +391,7 @@ impl Gfx {
             // Coordinates in "LCD space" (i.e 160x144)
             let (lcd_x, lcd_y) = (x, self.ly);
             // Coordinates in "Background area" space (i.e 256x256)
-            let (bg_x, bg_y, tilemap_area) = if self.bg_and_window_enable_priority
+            let (bg_x, bg_y, tilemap_area) = if self.bg_and_window_enable
                 && self.window_enable
                 && lcd_x + 7 >= self.wx
                 && lcd_y >= self.wy
@@ -435,7 +435,12 @@ impl Gfx {
             color_bits.set(1, hi_byte.view_bits::<Msb0>()[tile_col as usize]);
             color_bits.set(0, lo_byte.view_bits::<Msb0>()[tile_col as usize]);
             // Background / window pixel
-            let color = self.bgp[color_byte as usize];
+            let color = if self.bg_and_window_enable {
+                self.bgp[color_byte as usize]
+            } else {
+                Color::White
+            };
+                
 
             let sprite_pixel = sprites
                 .iter()
