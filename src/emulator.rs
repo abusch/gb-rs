@@ -61,7 +61,7 @@ impl Emulator {
         let mut emulated_cycles = 0;
         while self.window.is_open() && !self.window.is_key_down(Key::Escape) {
             // if ctrl_c.try_recv().is_ok() {
-            if self.window.is_key_down(Key::D) {
+            if self.window.is_key_pressed(Key::D, minifb::KeyRepeat::No) {
                 info!("Starting debugger...");
                 self.gb.pause();
             }
@@ -90,6 +90,7 @@ impl Emulator {
                     Command::DumpMem(addr) => self.gb.dump_mem(addr),
                     Command::DumpCpu => self.gb.dump_cpu(),
                     Command::DumpOam => self.gb.dump_oam(),
+                    Command::DumpPalettes => self.gb.dump_palettes(),
                     Command::Break(addr) => self.gb.set_breakpoint(addr),
                     Command::Sprite(id) => self.gb.dump_sprite(id),
                     Command::Quit => break,

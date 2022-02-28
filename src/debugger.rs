@@ -46,6 +46,7 @@ impl Debugger {
                         // false
                     }
                     "oam" => Command::DumpOam,
+                    "palettes" => Command::DumpPalettes,
                     s if s.starts_with("mem") => {
                         if let Some(addr_str) = s.split_whitespace().nth(1) {
                             if let Ok(addr) = u16::from_str_radix(addr_str, 16) {
@@ -106,6 +107,7 @@ pub enum Command {
     DumpCpu,
     DumpOam,
     Sprite(u8),
+    DumpPalettes,
     Break(u16),
     Quit,
     Nop,
@@ -195,7 +197,7 @@ impl Default for DebuggerHelper {
     fn default() -> DebuggerHelper {
         DebuggerHelper {
             commands: vec![
-                "mem", "cpu", "oam", "sprite", "br", "next", "continue", "quit",
+                "mem", "cpu", "oam", "sprite", "palettes", "br", "next", "continue", "quit",
             ],
         }
     }

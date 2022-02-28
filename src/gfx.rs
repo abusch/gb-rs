@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, ops::{Deref, DerefMut}};
 
 use bitvec::prelude::*;
 use log::{debug, trace};
@@ -79,11 +79,11 @@ pub struct Gfx {
     stat_hblank_itr_source: bool,
 
     /// BG Palette
-    bgp: [Color; 4],
+    bgp: Palette,
     /// OBJ Palette 0
-    obp0: [Color; 4],
+    obp0: Palette,
     /// OBJ Palette 1
-    obp1: [Color; 4],
+    obp1: Palette,
 }
 
 impl Gfx {
@@ -106,9 +106,9 @@ impl Gfx {
             bg_and_window_enable: false,
             scy: 0,
             scx: 0,
-            bgp: [Color::White; 4],
-            obp0: [Color::White; 4],
-            obp1: [Color::White; 4],
+            bgp: Palette([Color::White; 4]),
+            obp0: Palette([Color::White; 4]),
+            obp1: Palette([Color::White; 4]),
             ly: 0,
             lyc: 0,
             wy: 0,
@@ -225,9 +225,9 @@ impl Gfx {
             self.bg_and_window_enable = bits[0];
             // debug!("LCDC reg = 0b{:b}", b);
             if orig_lcd_state && !self.lcd_and_ppu_enabled {
-                debug!("LCD turned OFF!");
+                trace!("LCD turned OFF!");
             } else if !orig_lcd_state && self.lcd_and_ppu_enabled {
-                debug!("LCD turned ON!");
+                trace!("LCD turned ON!");
             }
         } else if addr == STAT_REG {
             self.set_stat(b);
@@ -246,11 +246,11 @@ impl Gfx {
         } else if addr == WY_REG {
             // FF4A WY
             self.wy = b;
-            debug!("Setting WY={}", self.wy);
+            trace!("Setting WY={}", self.wy);
         } else if addr == WX_REG {
             // FF4B WX
             self.wx = b;
-            debug!("Setting WX={}", self.wx);
+            trace!("Setting WX={}", self.wx);
         } else if addr == BGP_REG {
             // FF47 - BGP (BG Palette Data)
             set_palette_data(&mut self.bgp, b);
@@ -481,7 +481,7 @@ impl Gfx {
             .collect::<Vec<_>>();
 
         // Order the sprites by smallest `x` as they have hight priority
-        (&mut sprites[..]).sort_by(|s1, s2| s1.x.cmp(&s2.x));
+        // (&mut sprites[..]).sort_by(|s1, s2| s1.x.cmp(&s2.x));
         sprites
     }
 
@@ -493,7 +493,9 @@ impl Gfx {
 
     fn get_sprite_color(&self, sprite: &Sprite, tile_x: u8, tile_y: u8) -> Option<Color> {
         let (lo_byte, hi_byte) = if self.obj_size {
+            // upper tile
             let tile_idx_1 = sprite.tile_index & 0xFE;
+            // lower tile
             let tile_idx_2 = sprite.tile_index | 0x01;
 
             if tile_y < 8 {
@@ -508,9 +510,10 @@ impl Gfx {
         let mut color_byte = 0u8;
         let color_bits = color_byte.view_bits_mut::<Lsb0>();
         // Use Msb0 order here as pixel 0 is the leftmost bit (bit 7).
-        color_bits.set(1, hi_byte.view_bits::<Msb0>()[tile_x as usize]);
-        color_bits.set(0, lo_byte.view_bits::<Msb0>()[tile_x as usize]);
+        color_bits.set(1, lo_byte.view_bits::<Msb0>()[tile_x as usize]);
+        color_bits.set(0, hi_byte.view_bits::<Msb0>()[tile_x as usize]);
 
+        // Color index 0 is transparent for sprites
         if color_byte == 0 {
             None
         } else if sprite.obp1_palette() {
@@ -534,9 +537,16 @@ impl Gfx {
     }
 
     pub fn dump_sprite(&self, id: u8) {
-        assert!(id < 40);
+        if id >= 40 {
+            return;
+        }
+
         let offset = id as usize * 4;
         let data = &self.oam_ram[offset..offset + 4];
+        print!("Sprite data: ");
+        data.iter().for_each(|b| print!("{:02x} ", b));
+        println!("\n");
+
         let sprite = Sprite::new(data);
 
         let height = if self.obj_size { 16 } else { 8 };
@@ -547,6 +557,18 @@ impl Gfx {
                 print!("{}", ansi_term::Color::RGB(r, g, b).paint("██"));
             }
             println!();
+        }
+    }
+
+    pub fn dump_palettes(&self) {
+        println!("BGP:  {}", self.bgp.to_debug_str());
+        println!("OBP0: {}", self.obp0.to_debug_str());
+        println!("OBP1: {}", self.obp1.to_debug_str());
+    }
+
+    pub fn dump_tile_data(&self, tile_id: u8) {
+        for row in 0..8 {
+            let data = self.get_block0_tile_data(tile_id, row);
         }
     }
 
@@ -581,7 +603,7 @@ fn get_palette_as_byte(palette: &[Color; 4]) -> u8 {
     bits.load::<u8>()
 }
 
-fn set_palette_data(palette: &mut [Color; 4], b: u8) {
+fn set_palette_data(palette: &mut Palette, b: u8) {
     trace!("Writing BG Palette with {:b}", b);
     let bits = b.view_bits::<Msb0>();
     let color0 = bits[6..=7].load::<u8>();
@@ -716,6 +738,34 @@ impl Debug for Sprite {
             .field("tile_idx", &format_args!("{:02x}", self.tile_index))
             .field("attrs", &format_args!("{:08b}", self.attrs))
             .finish()
+    }
+}
+
+#[derive(Debug)]
+struct Palette([Color; 4]);
+
+impl Palette {
+    fn to_debug_str(&self) -> String {
+        let mut s = String::new();
+        for c in self.0 {
+            let (r,g,b) = c.as_rgba();
+            s.push_str(&format!("{}", ansi_term::Color::RGB(r, g, b).paint("██")));
+        }
+        s
+    }
+}
+
+impl Deref for Palette {
+    type Target=[Color; 4];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Palette {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 

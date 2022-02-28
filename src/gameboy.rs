@@ -47,6 +47,10 @@ impl GameBoy {
     pub fn dump_sprite(&self, id: u8) {
         self.bus.gfx.dump_sprite(id);
     }
+    
+    pub fn dump_palettes(&self) {
+        self.bus.gfx.dump_palettes();
+    }
 
     pub fn is_halted(&self) -> bool {
         self.cpu.halted()
