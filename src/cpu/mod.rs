@@ -1697,7 +1697,7 @@ impl Cpu {
 
     fn sbc(&mut self, value: u8, with_carry: bool) -> u8 {
         let to_sub = if with_carry && self.regs.flag_c().is_set() {
-            value - 1
+            value + 1
         } else {
             value
         };
