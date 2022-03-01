@@ -1,7 +1,7 @@
 mod register;
 
 use bitvec::{order::Lsb0, view::BitView};
-use log::{info, trace, warn};
+use log::{trace, warn};
 
 use self::register::{Reg, RegPair, Registers};
 use crate::{bus::Bus, interrupt::InterruptFlag};
@@ -270,6 +270,11 @@ impl Cpu {
             0x3a => {
                 self.ld_r_addr(bus, Reg::A, RegPair::HL);
                 *self.regs.hl = self.regs.hl.wrapping_sub(1);
+                8
+            }
+            // DEC SP
+            0x3b => {
+                self.sp = self.sp.wrapping_sub(1);
                 8
             }
             // INC A
@@ -688,9 +693,6 @@ impl Cpu {
                 0
             }
         };
-        if self.paused {
-            info!("Done stepping!");
-        }
         cycles
     }
 
@@ -1115,25 +1117,30 @@ impl Cpu {
     }
 
     fn ld_hl_sp_r8(&mut self, bus: &mut Bus) -> u8 {
-        let r8 = self.fetch(bus) as i8;
-        let sum = (self.sp as i16 + r8 as i16) as u16;
+        let r8 = self.fetch(bus) as i8 as i16 as u16;
+        let (sum, carry) = self.sp.overflowing_add(r8);
         *self.regs.hl = sum;
         self.regs.flag_z().clear();
         self.regs.flag_n().clear();
-        self.regs.flag_h().set_value(sum > 8); // TODO probably incorrect!
-        self.regs.flag_c().set_value(sum > 255); // TODO probably incorrect!
+        self.regs
+            .flag_h()
+            .set_value(half_carry((self.sp & 0xff) as u8, (r8 & 0xff) as u8));
+        self.regs.flag_c().set_value(carry);
 
         12
     }
 
     fn add_sp_r8(&mut self, bus: &mut Bus) -> u8 {
-        let r8 = self.fetch(bus) as i8;
-        let sum = (self.sp as i16 + r8 as i16) as u16;
+        let r8 = self.fetch(bus) as i8 as i16 as u16;
+        let sp = self.sp;
+        let (sum, carry) = (sp).overflowing_add(r8);
         self.sp = sum;
         self.regs.flag_z().clear();
         self.regs.flag_n().clear();
-        self.regs.flag_h().set_value(sum > 8); // TODO probably incorrect!
-        self.regs.flag_c().set_value(sum > 255); // TODO probably incorrect!
+        self.regs
+            .flag_h()
+            .set_value(half_carry((sp & 0xff) as u8, (r8 & 0xff) as u8));
+        self.regs.flag_c().set_value(carry);
 
         16
     }
@@ -1159,9 +1166,10 @@ impl Cpu {
     fn xor(&mut self, v: u8) -> u8 {
         let new_a = self.regs.get(Reg::A) ^ v;
         self.regs.set(Reg::A, new_a);
-        if new_a == 0 {
-            self.regs.flag_z().set();
-        }
+        self.regs.flag_z().set_value(new_a == 0);
+        self.regs.flag_n().clear();
+        self.regs.flag_h().clear();
+        self.regs.flag_c().clear();
         4
     }
 
@@ -1277,64 +1285,54 @@ impl Cpu {
         8
     }
 
-    /// INC (HL)
-    fn inc_hl(&mut self, bus: &mut Bus) -> u8 {
-        let mut r = bus.read_byte(*self.regs.hl);
-        r = r.wrapping_add(1);
-        bus.write_byte(*self.regs.hl, r);
-        self.regs.flag_z().set_value(r == 0);
-        self.regs.flag_n().clear();
-        self.regs.flag_h().set_value(r > 0x0F);
-        12
-    }
-
     /// DEC (HL)
     fn dec_hl(&mut self, bus: &mut Bus) -> u8 {
-        let mut r = bus.read_byte(*self.regs.hl);
-        r = r.wrapping_sub(1);
-        bus.write_byte(*self.regs.hl, r);
-        self.regs.flag_z().set_value(r == 0);
-        self.regs.flag_n().set();
-        self.regs.flag_h().set_value(r > 0x0F);
+        let new_r = self.dec_and_set_flags(bus.read_byte(*self.regs.hl));
+        bus.write_byte(*self.regs.hl, new_r);
+
         12
     }
 
     /// DEC r
     fn dec_r(&mut self, reg: Reg) -> u8 {
-        let mut r = self.regs.get(reg);
-        r = r.wrapping_sub(1);
-        self.regs.set(reg, r);
-        if r == 0 {
-            self.regs.flag_z().set();
-        } else {
-            self.regs.flag_z().clear();
-        }
-        self.regs.flag_n().set();
-        if r > 0x0F {
-            self.regs.flag_h().set();
-        } else {
-            self.regs.flag_h().clear();
-        }
+        let new_r = self.dec_and_set_flags(self.regs.get(reg));
+        self.regs.set(reg, new_r);
         4
+    }
+
+    fn dec_and_set_flags(&mut self, v: u8) -> u8 {
+        let new_v = v.wrapping_sub(1);
+        self.regs.flag_z().set_value(new_v == 0);
+        self.regs.flag_n().set();
+        self.regs.flag_h().set_value(((v & 0xf) - 1) & 0x10 == 0x10);
+
+        new_v
+    }
+
+    /// INC (HL)
+    fn inc_hl(&mut self, bus: &mut Bus) -> u8 {
+        let new_r = self.inc_value_and_set_flag(bus.read_byte(*self.regs.hl));
+        bus.write_byte(*self.regs.hl, new_r);
+        12
     }
 
     /// INC r
     fn inc_r(&mut self, reg: Reg) -> u8 {
-        let mut r = self.regs.get(reg);
-        r = r.wrapping_add(1);
-        self.regs.set(reg, r);
-        if r == 0 {
-            self.regs.flag_z().set();
-        } else {
-            self.regs.flag_z().clear();
-        }
-        self.regs.flag_n().clear();
-        if r > 0x0F {
-            self.regs.flag_h().set();
-        } else {
-            self.regs.flag_h().clear();
-        }
+        let new_r = self.inc_value_and_set_flag(self.regs.get(reg));
+        self.regs.set(reg, new_r);
+
         4
+    }
+
+    fn inc_value_and_set_flag(&mut self, v: u8) -> u8 {
+        let new_r = v.wrapping_add(1);
+        self.regs.flag_z().set_value(new_r == 0);
+        self.regs.flag_n().clear();
+        self.regs
+            .flag_h()
+            .set_value(((v & 0x0f) + 1) & 0x10 == 0x10);
+
+        new_r
     }
 
     /// DEC rr
@@ -1488,11 +1486,7 @@ impl Cpu {
             r &= 0xFE;
         }
         self.regs.set(reg, r);
-        if r == 0 {
-            self.regs.flag_z().set();
-        } else {
-            self.regs.flag_z().clear();
-        }
+        self.regs.flag_z().set_value(r == 0);
         self.regs.flag_n().clear();
         self.regs.flag_h().clear();
         self.regs.flag_c().set_value(new_c);
@@ -1505,9 +1499,10 @@ impl Cpu {
         // C -> [7 -> 0] -> C
         let mut r = self.regs.get(reg);
         let c = self.regs.flag_c().is_set();
-        r = r.rotate_right(1);
-        // What used to be the 0th bit (and is now the 7th bit) should be the new carry flag
-        let new_c = r & 0x80;
+        // Save the 0th bit which should be the new carry flag
+        let new_c = r & 0x01;
+        // r = r.rotate_right(1);
+        r >>= 1;
         // What was the carry should now be the 7th bit
         if c {
             // set the bit
@@ -1517,11 +1512,7 @@ impl Cpu {
             r &= 0x7F;
         }
         self.regs.set(reg, r);
-        if r == 0 {
-            self.regs.flag_z().set();
-        } else {
-            self.regs.flag_z().clear();
-        }
+        self.regs.flag_z().set_value(r == 0);
         self.regs.flag_n().clear();
         self.regs.flag_h().clear();
         self.regs.flag_c().set_value(new_c != 0);
@@ -1610,11 +1601,14 @@ impl Cpu {
 
     /// ADD rr,rr
     fn add_rr_rr(&mut self, rt: RegPair, v: u16) -> u8 {
-        let (sum, carry) = self.regs.get_pair(rt).overflowing_add(v);
+        let reg = self.regs.get_pair(rt);
+        let (sum, carry) = reg.overflowing_add(v);
         self.regs.set_pair(rt, sum);
         self.regs.flag_c().set_value(carry);
         self.regs.flag_n().clear();
-        // TODO handle H flag
+        self.regs
+            .flag_h()
+            .set_value(half_carry((reg >> 8) as u8, (v >> 8) as u8));
         8
     }
 
@@ -1784,66 +1778,95 @@ impl Cpu {
     }
 
     fn daa(&mut self) -> u8 {
-        let reg_a = self.regs.get(Reg::A);
-        let hi = (reg_a & 0xf0) >> 4;
-        let lo = reg_a & 0x0f;
-
-        if self.regs.flag_n().is_set() {
-            // Last operation was subtraction
-            match (self.regs.flag_c().is_set(), self.regs.flag_h().is_set()) {
-                (false, false) => (),
-                (false, true) => {
-                    if hi <= 8 && lo >= 6 {
-                        self.add(0xfa);
-                    }
-                }
-                (true, false) => {
-                    if hi >= 7 && lo <= 9 {
-                        self.add(0xa0);
-                    }
-                }
-                (true, true) => {
-                    if hi >= 6 && lo >= 6 {
-                        self.add(0x9a);
-                    }
-                }
-            }
+        let mut a = self.regs.get(Reg::A);
+        let mut adjust = if self.regs.flag_c().is_set() {
+            0x60
         } else {
-            // Last operation was an addition
-            match (self.regs.flag_c().is_set(), self.regs.flag_h().is_set()) {
-                (false, false) => {
-                    if hi <= 8 && lo >= 0x0a {
-                        self.add(0x06);
-                    } else if hi >= 0x0a && lo <= 9 {
-                        self.add(0x60);
-                    } else if hi >= 0x09 && lo >= 0x0a {
-                        self.add(0x66);
-                    }
-                }
-                (false, true) => {
-                    if hi <= 9 && lo <= 3 {
-                        self.add(0x06);
-                    } else if hi >= 0x0a && lo <= 3 {
-                        self.add(0x66);
-                    }
-                }
-                (true, false) => {
-                    if hi <= 2 && lo <= 9 {
-                        self.add(0x60);
-                    } else if hi <= 2 && lo >= 0x0a {
-                        self.add(0x66);
-                    }
-                }
-                (true, true) => {
-                    if hi <= 3 && lo <= 3 {
-                        self.add(0x66);
-                    }
-                }
-            }
+            0x00
+        };
+        if self.regs.flag_h().is_set() {
+            adjust |= 0x06;
+        };
+        if !self.regs.flag_n().is_set() {
+            if a & 0x0f > 0x09 {
+                adjust |= 0x06;
+            };
+            if a > 0x99 {
+                adjust |= 0x60;
+            };
+            a = a.wrapping_add(adjust);
+        } else {
+            a = a.wrapping_sub(adjust);
         }
+        self.regs.flag_c().set_value(adjust >= 0x60);
+        self.regs.flag_h().set_value(false);
+        self.regs.flag_z().set_value(a == 0x00);
+        self.regs.set(Reg::A, a);
 
         4
     }
+
+    // fn daa(&mut self) -> u8 {
+    //     let reg_a = self.regs.get(Reg::A);
+    //     let hi = (reg_a & 0xf0) >> 4;
+    //     let lo = reg_a & 0x0f;
+
+    //     if self.regs.flag_n().is_set() {
+    //         // Last operation was subtraction
+    //         match (self.regs.flag_c().is_set(), self.regs.flag_h().is_set()) {
+    //             (false, false) => (),
+    //             (false, true) => {
+    //                 if hi <= 8 && lo >= 6 {
+    //                     self.add(0xfa);
+    //                 }
+    //             }
+    //             (true, false) => {
+    //                 if hi >= 7 && lo <= 9 {
+    //                     self.add(0xa0);
+    //                 }
+    //             }
+    //             (true, true) => {
+    //                 if hi >= 6 && lo >= 6 {
+    //                     self.add(0x9a);
+    //                 }
+    //             }
+    //         }
+    //     } else {
+    //         // Last operation was an addition
+    //         match (self.regs.flag_c().is_set(), self.regs.flag_h().is_set()) {
+    //             (false, false) => {
+    //                 if hi <= 8 && lo >= 0x0a {
+    //                     self.add(0x06);
+    //                 } else if hi >= 0x0a && lo <= 9 {
+    //                     self.add(0x60);
+    //                 } else if hi >= 0x09 && lo >= 0x0a {
+    //                     self.add(0x66);
+    //                 }
+    //             }
+    //             (false, true) => {
+    //                 if hi <= 9 && lo <= 3 {
+    //                     self.add(0x06);
+    //                 } else if hi >= 0x0a && lo <= 3 {
+    //                     self.add(0x66);
+    //                 }
+    //             }
+    //             (true, false) => {
+    //                 if hi <= 2 && lo <= 9 {
+    //                     self.add(0x60);
+    //                 } else if hi <= 2 && lo >= 0x0a {
+    //                     self.add(0x66);
+    //                 }
+    //             }
+    //             (true, true) => {
+    //                 if hi <= 3 && lo <= 3 {
+    //                     self.add(0x66);
+    //                 }
+    //             }
+    //         }
+    //     }
+
+    //     4
+    // }
 
     pub fn is_paused(&self) -> bool {
         self.paused
@@ -1867,4 +1890,47 @@ impl Cpu {
 #[inline]
 fn half_carry(a: u8, b: u8) -> bool {
     ((a & 0x0f) + (b & 0x0f)) & 0x10 == 0x10
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rl() {
+        let mut cpu = Cpu::default();        
+
+        let mut test = |value, carry, res, new_carry| {
+            cpu.regs.set(Reg::A, value);
+            cpu.regs.flag_c().set_value(carry);
+            cpu.rl_r(Reg::A);
+
+            assert!(cpu.regs.get(Reg::A) == res);
+            assert!(cpu.regs.flag_c().is_set() == new_carry);
+        };
+
+        test(0b01010101, false, 0b10101010, false);
+        test(0b01010101, true, 0b10101011, false);
+        test(0b10101010, false, 0b01010100, true);
+        test(0b10101010, true, 0b01010101, true);
+    }
+
+    #[test]
+    fn test_rr() {
+        let mut cpu = Cpu::default();        
+
+        let mut test = |value, carry, res, new_carry| {
+            cpu.regs.set(Reg::A, value);
+            cpu.regs.flag_c().set_value(carry);
+            cpu.rr_r(Reg::A);
+
+            assert!(cpu.regs.get(Reg::A) == res);
+            assert!(cpu.regs.flag_c().is_set() == new_carry);
+        };
+
+        test(0b01010101, false, 0b00101010, true);
+        test(0b01010101, true, 0b10101010, true);
+        test(0b10101010, false, 0b01010101, false);
+        test(0b10101010, true, 0b11010101, false);
+    }
 }
