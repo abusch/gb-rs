@@ -800,7 +800,7 @@ impl Cpu {
             // SWAP A
             0x37 => self.swap_r(Reg::A),
             // SRL B
-            0x38 => self.sra_r(Reg::B),
+            0x38 => self.srl_r(Reg::B),
             // SRL C
             0x39 => self.srl_r(Reg::C),
             // SRL D
