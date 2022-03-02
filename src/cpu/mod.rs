@@ -1287,7 +1287,7 @@ impl Cpu {
 
     /// DEC (HL)
     fn dec_hl(&mut self, bus: &mut Bus) -> u8 {
-        let new_r = self.dec_and_set_flags(bus.read_byte(*self.regs.hl));
+        let new_r = self.dec_value_and_set_flags(bus.read_byte(*self.regs.hl));
         bus.write_byte(*self.regs.hl, new_r);
 
         12
@@ -1295,36 +1295,36 @@ impl Cpu {
 
     /// DEC r
     fn dec_r(&mut self, reg: Reg) -> u8 {
-        let new_r = self.dec_and_set_flags(self.regs.get(reg));
+        let new_r = self.dec_value_and_set_flags(self.regs.get(reg));
         self.regs.set(reg, new_r);
         4
     }
 
-    fn dec_and_set_flags(&mut self, v: u8) -> u8 {
+    fn dec_value_and_set_flags(&mut self, v: u8) -> u8 {
         let new_v = v.wrapping_sub(1);
         self.regs.flag_z().set_value(new_v == 0);
         self.regs.flag_n().set();
-        self.regs.flag_h().set_value(((v & 0xf) - 1) & 0x10 == 0x10);
+        self.regs.flag_h().set_value(((v & 0xf).wrapping_sub(1)) & 0x10 == 0x10);
 
         new_v
     }
 
     /// INC (HL)
     fn inc_hl(&mut self, bus: &mut Bus) -> u8 {
-        let new_r = self.inc_value_and_set_flag(bus.read_byte(*self.regs.hl));
+        let new_r = self.inc_value_and_set_flags(bus.read_byte(*self.regs.hl));
         bus.write_byte(*self.regs.hl, new_r);
         12
     }
 
     /// INC r
     fn inc_r(&mut self, reg: Reg) -> u8 {
-        let new_r = self.inc_value_and_set_flag(self.regs.get(reg));
+        let new_r = self.inc_value_and_set_flags(self.regs.get(reg));
         self.regs.set(reg, new_r);
 
         4
     }
 
-    fn inc_value_and_set_flag(&mut self, v: u8) -> u8 {
+    fn inc_value_and_set_flags(&mut self, v: u8) -> u8 {
         let new_r = v.wrapping_add(1);
         self.regs.flag_z().set_value(new_r == 0);
         self.regs.flag_n().clear();
@@ -1900,37 +1900,85 @@ mod tests {
     fn test_rl() {
         let mut cpu = Cpu::default();        
 
-        let mut test = |value, carry, res, new_carry| {
+        let mut test = |value, carry, res, new_carry, zero| {
             cpu.regs.set(Reg::A, value);
             cpu.regs.flag_c().set_value(carry);
             cpu.rl_r(Reg::A);
 
             assert!(cpu.regs.get(Reg::A) == res);
             assert!(cpu.regs.flag_c().is_set() == new_carry);
+            assert!(cpu.regs.flag_z().is_set() == zero);
         };
 
-        test(0b01010101, false, 0b10101010, false);
-        test(0b01010101, true, 0b10101011, false);
-        test(0b10101010, false, 0b01010100, true);
-        test(0b10101010, true, 0b01010101, true);
+        test(0b01010101, false, 0b10101010, false, false);
+        test(0b01010101, true, 0b10101011, false, false);
+        test(0b10101010, false, 0b01010100, true, false);
+        test(0b10101010, true, 0b01010101, true, false);
+
+        // Make sure Z flag gets set
+        test(0b10000000, false, 0b00000000, true, true);
     }
 
     #[test]
     fn test_rr() {
         let mut cpu = Cpu::default();        
 
-        let mut test = |value, carry, res, new_carry| {
+        let mut test = |value, carry, res, new_carry, zero| {
             cpu.regs.set(Reg::A, value);
             cpu.regs.flag_c().set_value(carry);
             cpu.rr_r(Reg::A);
 
             assert!(cpu.regs.get(Reg::A) == res);
             assert!(cpu.regs.flag_c().is_set() == new_carry);
+            assert!(cpu.regs.flag_z().is_set() == zero);
         };
 
-        test(0b01010101, false, 0b00101010, true);
-        test(0b01010101, true, 0b10101010, true);
-        test(0b10101010, false, 0b01010101, false);
-        test(0b10101010, true, 0b11010101, false);
+        test(0b01010101, false, 0b00101010, true, false);
+        test(0b01010101, true, 0b10101010, true, false);
+        test(0b10101010, false, 0b01010101, false, false);
+        test(0b10101010, true, 0b11010101, false, false);
+
+        // Make sure Z flag gets set
+        test(0b00000001, false, 0b00000000, true, true);
+    }
+
+    #[test]
+    fn test_inc() {
+        let mut cpu = Cpu::default();
+        let mut test_and_check_flags = |value, res, z, n, h, c| {
+            // reset all flags
+            cpu.regs.set_pair(RegPair::AF, 0x0000);
+            assert_eq!(res, cpu.inc_value_and_set_flags(value));
+            assert_eq!(z, cpu.regs.flag_z().is_set());
+            assert_eq!(n, cpu.regs.flag_n().is_set());
+            assert_eq!(h, cpu.regs.flag_h().is_set());
+            assert_eq!(c, cpu.regs.flag_c().is_set());
+        };
+
+        test_and_check_flags(0x00, 0x01, false, false, false, false);
+        // H is set
+        test_and_check_flags(0x0F, 0x10, false, false, true, false);
+        // Z is set, and C is ignored
+        test_and_check_flags(0xFF, 0x00, true, false, true, false);
+    }
+
+    #[test]
+    fn test_dec() {
+        let mut cpu = Cpu::default();
+        let mut test_and_check_flags = |value, res, z, n, h, c| {
+            // reset all flags
+            cpu.regs.set_pair(RegPair::AF, 0x0000);
+            assert_eq!(res, cpu.dec_value_and_set_flags(value));
+            assert_eq!(z, cpu.regs.flag_z().is_set());
+            assert_eq!(n, cpu.regs.flag_n().is_set());
+            assert_eq!(h, cpu.regs.flag_h().is_set());
+            assert_eq!(c, cpu.regs.flag_c().is_set());
+        };
+
+        test_and_check_flags(0x02, 0x01, false, true, false, false);
+        // H is set
+        test_and_check_flags(0x10, 0x0F, false, true, true, false);
+        // Z is set, and C is ignored
+        test_and_check_flags(0x01, 0x00, true, true, false, false);
     }
 }
