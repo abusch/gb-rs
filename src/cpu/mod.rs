@@ -1736,14 +1736,21 @@ impl Cpu {
         16
     }
 
+    /// CPL -- Complement Accumulator
     fn cpl(&mut self) -> u8 {
         self.regs.set(Reg::A, !self.regs.get(Reg::A));
+        self.regs.flag_n().set();
+        self.regs.flag_h().set();
         8
     }
 
     fn swap_r(&mut self, reg: Reg) -> u8 {
         let r = self.regs.get(reg).rotate_right(4);
         self.regs.set(reg, r);
+        self.regs.flag_z().set_value(r == 0);
+        self.regs.flag_n().clear();
+        self.regs.flag_h().clear();
+        self.regs.flag_c().clear();
         8
     }
 
