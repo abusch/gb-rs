@@ -1116,31 +1116,33 @@ impl Cpu {
         16
     }
 
+    /// LD HL,SP+r8
+    ///
+    /// This is basically the same as `ADD SP,r8` except that the result is stored in `HL` and `SP`
+    /// is not modified.
     fn ld_hl_sp_r8(&mut self, bus: &mut Bus) -> u8 {
-        let r8 = self.fetch(bus) as i8 as i16 as u16;
-        let (sum, carry) = self.sp.overflowing_add(r8);
-        *self.regs.hl = sum;
-        self.regs.flag_z().clear();
-        self.regs.flag_n().clear();
-        self.regs
-            .flag_h()
-            .set_value(half_carry((self.sp & 0xff) as u8, (r8 & 0xff) as u8));
-        self.regs.flag_c().set_value(carry);
+        // save SP
+        let sp = self.sp;
+        self.add_sp_r8(bus);
+        self.regs.set_pair(RegPair::HL, self.sp);
+        // restore SP
+        self.sp = sp;
 
         12
     }
 
     fn add_sp_r8(&mut self, bus: &mut Bus) -> u8 {
+        // sign extend r8 to 16 bits
         let r8 = self.fetch(bus) as i8 as i16 as u16;
         let sp = self.sp;
-        let (sum, carry) = (sp).overflowing_add(r8);
+        let sum = sp.wrapping_add(r8);
         self.sp = sum;
         self.regs.flag_z().clear();
         self.regs.flag_n().clear();
         self.regs
             .flag_h()
-            .set_value(half_carry((sp & 0xff) as u8, (r8 & 0xff) as u8));
-        self.regs.flag_c().set_value(carry);
+            .set_value((sp & 0x000f) + (r8 & 0x000f) > 0x000f);
+        self.regs.flag_c().set_value((sp & 0x00ff) + (r8 & 0x00ff) > 0x00ff);
 
         16
     }
@@ -1608,7 +1610,7 @@ impl Cpu {
         self.regs.flag_n().clear();
         self.regs
             .flag_h()
-            .set_value(half_carry((reg >> 8) as u8, (v >> 8) as u8));
+            .set_value((reg & 0x0fff) + (v & 0x0fff) > 0x0fff);
         8
     }
 
@@ -1632,18 +1634,16 @@ impl Cpu {
     }
 
     fn adc(&mut self, value: u8, with_carry: bool) -> u8 {
-        let to_add = if with_carry && self.regs.flag_c().is_set() {
-            value + 1
-        } else {
-            value
-        };
+        let c = (with_carry && self.regs.flag_c().is_set()) as u8;
+
         let reg_a = self.regs.get(Reg::A);
-        let (sum, carry) = reg_a.overflowing_add(to_add);
-        self.regs.set(Reg::A, sum);
-        self.regs.flag_z().set_value(sum == 0);
+        let (sum1, carry1) = reg_a.overflowing_add(value);
+        let (sum2, carry2) = sum1.overflowing_add(c);
+        self.regs.set(Reg::A, sum2);
+        self.regs.flag_z().set_value(sum2 == 0);
         self.regs.flag_n().clear();
-        self.regs.flag_c().set_value(carry);
-        self.regs.flag_h().set_value(half_carry(reg_a, to_add));
+        self.regs.flag_c().set_value(carry1 | carry2);
+        self.regs.flag_h().set_value((reg_a & 0x0f) + (value & 0x0f) + c > 0x0f);
         8
     }
 
@@ -1690,20 +1690,20 @@ impl Cpu {
     }
 
     fn sbc(&mut self, value: u8, with_carry: bool) -> u8 {
-        let to_sub = if with_carry && self.regs.flag_c().is_set() {
-            value + 1
-        } else {
-            value
-        };
+        let c = (with_carry && self.regs.flag_c().is_set()) as u8;
         let reg_a = self.regs.get(Reg::A);
-        let (sub, carry) = reg_a.overflowing_sub(to_sub);
-        self.regs.set(Reg::A, sub);
-        self.regs.flag_z().set_value(sub == 0);
+
+        let (sub1, carry1) = reg_a.overflowing_sub(value);
+        let (sub2, carry2) = sub1.overflowing_sub(c);
+
+        self.regs.set(Reg::A, sub2);
+        self.regs.flag_z().set_value(sub2 == 0);
         self.regs.flag_n().set();
-        self.regs.flag_c().set_value(carry);
-        self.regs.flag_h().set_value(half_carry(reg_a, !to_sub));
+        self.regs.flag_c().set_value(carry1 | carry2);
+        self.regs.flag_h().set_value((reg_a & 0x0f) < (value & 0x0f) + c);
         8
     }
+
     fn cp_hl(&mut self, bus: &mut Bus) -> u8 {
         let d8 = bus.read_byte(self.regs.get_pair(RegPair::HL));
         self.cp(d8);
