@@ -527,7 +527,7 @@ impl Cpu {
             // ADD d8
             0xc6 => self.add_d8(bus),
             // RST 0x00
-            0xc7 => self.rst(0x00),
+            0xc7 => self.rst(bus, 0x00),
             // RET Z
             0xc8 => {
                 let z = self.regs.flag_z().is_set();
@@ -556,7 +556,7 @@ impl Cpu {
             // ADC A,d8
             0xce => self.adc_d8(bus),
             // RST 0x08
-            0xcf => self.rst(0x08),
+            0xcf => self.rst(bus, 0x08),
             // RET NC
             0xd0 => {
                 let nc = !self.regs.flag_c().is_set();
@@ -579,7 +579,7 @@ impl Cpu {
             // SUB d8
             0xd6 => self.sub_d8(bus),
             // RST 0x10
-            0xd7 => self.rst(0x10),
+            0xd7 => self.rst(bus, 0x10),
             // RET C
             0xd8 => {
                 let c = self.regs.flag_c().is_set();
@@ -606,7 +606,7 @@ impl Cpu {
             // SBC A,d8
             0xde => self.sbc_d8(bus),
             // RST 0x18
-            0xdf => self.rst(0x18),
+            0xdf => self.rst(bus, 0x18),
             // LDH (a8),A
             0xe0 => {
                 let a8 = self.fetch(bus);
@@ -627,7 +627,7 @@ impl Cpu {
             // AND d8
             0xe6 => self.and_d8(bus),
             // RST 0x20
-            0xe7 => self.rst(0x20),
+            0xe7 => self.rst(bus, 0x20),
             // ADD SP,r8
             0xe8 => self.add_sp_r8(bus),
             // JP HL
@@ -637,7 +637,7 @@ impl Cpu {
             // XOR d8
             0xee => self.xor_d8(bus),
             // RST 0x28
-            0xef => self.rst(0x28),
+            0xef => self.rst(bus, 0x28),
             // LDH A,(a8)
             0xf0 => {
                 let a8 = self.fetch(bus);
@@ -664,7 +664,7 @@ impl Cpu {
             // OR d8
             0xf6 => self.or_d8(bus),
             // RST 0x30
-            0xf7 => self.rst(0x30),
+            0xf7 => self.rst(bus, 0x30),
             // LD HL,SP+r8
             0xf8 => self.ld_hl_sp_r8(bus),
             // LD SP,HL
@@ -684,7 +684,7 @@ impl Cpu {
             // CP d8
             0xfe => self.cp_d8(bus),
             // RST 0x38
-            0xff => self.rst(0x38),
+            0xff => self.rst(bus, 0x38),
 
             _ => {
                 // self.dump_cpu();
@@ -1728,11 +1728,11 @@ impl Cpu {
         self.regs.flag_z().set_value(sub == 0);
         self.regs.flag_n().set();
         self.regs.flag_c().set_value(carry);
-        self.regs.flag_h().set_value(half_carry(reg_a, !value));
+        self.regs.flag_h().set_value((reg_a &0x0f) < (value & 0x0f));
     }
 
-    fn rst(&mut self, vec: u8) -> u8 {
-        self.pc = vec as u16;
+    fn rst(&mut self, bus: &mut Bus, vec: u8) -> u8 {
+        self.call(bus, vec as u16);
         16
     }
 
