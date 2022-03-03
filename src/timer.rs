@@ -1,5 +1,5 @@
 use bitvec::{field::BitField, order::Lsb0, view::BitView};
-use log::debug;
+use log::trace;
 
 pub struct Timer {
     /// FF04 - DIV - Divider Register
@@ -108,7 +108,7 @@ impl Timer {
 
     /// Set the timer's tma.
     pub fn set_tma(&mut self, tma: u8) {
-        debug!("Writing {:02x} to TMA", tma);
+        trace!("Writing {:02x} to TMA", tma);
         self.tma = tma;
     }
 }

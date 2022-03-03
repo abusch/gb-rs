@@ -100,7 +100,6 @@ impl Bus {
         } else if VRAM.contains(&addr) {
             self.gfx.read_vram(addr)
         } else if EXT_RAM.contains(&addr) {
-            // unimplemented!("External RAM 0x{:04x}", addr);
             trace!("External RAM 0x{:04x}", addr);
             self.cartridge.read_ram(addr - EXT_RAM.start())
         } else if WRAM.contains(&addr) {
@@ -141,14 +140,16 @@ impl Bus {
         } else if CART_BANK_00.contains(&addr) {
             if (0x0000..=0x1FFF).contains(&addr) {
                 if b & 0x0A == 0x0A {
-                    trace!("Enabling external RAM");
+                    debug!("Enabling external RAM");
                 } else {
-                    trace!("Disabling external RAM");
+                    debug!("Disabling external RAM");
                 }
-                // RAM Enable register
+            } else if (0x2000..0x2FFF).contains(&addr) {
+                self.cartridge.select_rom_bank(b);
             } else {
                 // ROM Bank Number register
-                self.cartridge.select_rom_bank(b);
+                // self.cartridge.select_rom_bank(b);
+                debug!("Not implemented: select 9th bit of ROM bank number");
             }
         } else if CART_BANK_MAPPED.contains(&addr) {
             if (0x4000..=0x5FFF).contains(&addr) {
@@ -177,7 +178,7 @@ impl Bus {
         } else if HRAM.contains(&addr) {
             self.hram[(addr - HRAM.start()) as usize] = b;
         } else if addr == 0xFFFF {
-            debug!("Setting Interrupt Enable Register with 0b{:08b}", b);
+            trace!("Setting Interrupt Enable Register with 0b{:08b}", b);
             self.interrupt_enable = InterruptFlag::from_bits_truncate(b);
         } else {
             unreachable!("How did we get here? addr=0x{:04x}", addr);

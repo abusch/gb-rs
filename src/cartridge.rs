@@ -77,6 +77,10 @@ impl Cartridge {
         matches!(self.data[0x0147], 0x01..=0x03)
     }
 
+    pub fn has_mbc5(&self) -> bool {
+        matches!(self.data[0x0147], 0x19..=0x1E)
+    }
+
     pub fn get_rom_size(&self) -> u8 {
         self.data[0x0148]
     }
@@ -86,7 +90,7 @@ impl Cartridge {
     }
 
     pub fn select_rom_bank(&mut self, bank: u8) {
-        if bank == 0 {
+        if bank == 0 && self.has_mbc1() {
             self.selected_rom_bank = 0x01;
         } else {
             self.selected_rom_bank = bank & 0x1f;
@@ -104,22 +108,12 @@ impl Cartridge {
     ///
     /// The given address should be relative to the selected bank, i.e. in the range 0000-3FFF.
     pub fn read_rom(&self, addr: u16) -> u8 {
-        // assert!(addr < 0x4000);
         let mapped_addr = if addr < 0x4000 {
             addr
         } else {
             0x4000 * self.selected_rom_bank as u16 + (addr - 0x4000)
         };
         self.data[mapped_addr as usize]
-    }
-
-    /// Write a byte into the selected bank of this cartridge's ROM
-    ///
-    /// The given address should be relative to the selected bank, i.e. in the range 0000-3FFF.
-    pub fn write_rom(&mut self, addr: u16, b: u8) {
-        assert!(addr < 0x4000);
-        let addr = 0x4000 * self.selected_rom_bank as u16 + addr;
-        self.ram[addr as usize] = b;
     }
 
     /// Read a byte from the selected bank of this cartridge's external RAM.

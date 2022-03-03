@@ -1894,11 +1894,6 @@ impl Cpu {
     }
 }
 
-#[inline]
-fn half_carry(a: u8, b: u8) -> bool {
-    ((a & 0x0f) + (b & 0x0f)) & 0x10 == 0x10
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

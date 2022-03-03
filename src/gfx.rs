@@ -1,7 +1,7 @@
 use std::{fmt::Debug, ops::{Deref, DerefMut}};
 
 use bitvec::prelude::*;
-use log::{debug, trace};
+use log::trace;
 
 use crate::{interrupt::InterruptFlag, FrameSink, SCREEN_HEIGHT, SCREEN_WIDTH};
 
@@ -476,7 +476,7 @@ impl Gfx {
     }
 
     fn get_sprites_for_scanline(&self, y: u8) -> Vec<Sprite> {
-        let mut sprites = self
+        let sprites = self
             .oam_ram
             .chunks(4)
             .map(Sprite::new)
@@ -568,12 +568,6 @@ impl Gfx {
         println!("BGP:  {}", self.bgp.to_debug_str());
         println!("OBP0: {}", self.obp0.to_debug_str());
         println!("OBP1: {}", self.obp1.to_debug_str());
-    }
-
-    pub fn dump_tile_data(&self, tile_id: u8) {
-        for row in 0..8 {
-            let data = self.get_block0_tile_data(tile_id, row);
-        }
     }
 
     /// Disable the LCD.
