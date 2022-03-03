@@ -450,7 +450,11 @@ impl Gfx {
             });
 
             let final_color = match (self.obj_enabled, sprite_pixel_and_bg_has_priority) {
-                (true, Some((_p, true))) => color,
+                (true, Some((p, true))) => if color != Color::White {
+                    color
+                } else {
+                    p
+                },
                 (true, Some((p, false))) => p,
                 (true, None) => color,
                 (false, _) => color,
