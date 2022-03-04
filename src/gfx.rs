@@ -711,8 +711,12 @@ impl Sprite {
         let left_x = self.x.wrapping_sub(8);
         let right_x = self.x.wrapping_sub(1);
         if (x >= left_x) && (x <= right_x) {
-            let tile_x = x.wrapping_add(8).wrapping_sub(self.x);
+            let mut tile_x = x.wrapping_add(8).wrapping_sub(self.x);
             let tile_y = y.wrapping_add(16).wrapping_sub(self.y);
+
+            if self.is_x_flip() {
+                tile_x = 7 - tile_x;
+            }
 
             Some((tile_x, tile_y))
         } else {
@@ -726,6 +730,14 @@ impl Sprite {
 
     pub fn bg_has_priority(&self) -> bool {
         self.attrs.view_bits::<Lsb0>()[7]
+    }
+
+    pub fn is_y_flip(&self) -> bool {
+        self.attrs.view_bits::<Lsb0>()[6]
+    }
+
+    pub fn is_x_flip(&self) -> bool {
+        self.attrs.view_bits::<Lsb0>()[5]
     }
 }
 
