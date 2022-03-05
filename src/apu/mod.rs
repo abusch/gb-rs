@@ -156,6 +156,7 @@ struct Channel {
     length_counter: u8,
 
     start_volume: u8,
+    volume: u8,
 
     freq_hi: u8,
     freq_lo: u8,
@@ -171,6 +172,7 @@ impl Channel {
             length_enabled: false,
             length_counter: 0,
             start_volume: 0,
+            volume: 0,
             freq_hi: 0,
             freq_lo: 0,
             freq_timer: Timer::new(8192),
@@ -232,7 +234,20 @@ impl Channel {
             if self.length_counter == 0 {
                 self.length_counter = 64;
             }
-            // TODO freq, sweep, etc..
+            let freq = ((self.freq_hi as u16) << 8) + self.freq_lo as u16;
+            self.freq_timer.period = (2048 - freq) * 4;
+            self.volume = self.start_volume;
+            // TODO  sweep, etc..
+        }
+    }
+
+    pub fn dac_out(&self) -> f32 {
+        if self.volume != 0 && self.wave_generator.output() {
+            // Volume is between 0 and 15, and we want to convert it to a number between 1.0 and
+            // -1.0.
+            (self.volume as f32) * -2.0 / 15.0 + 1.0
+        } else {
+            0.0
         }
     }
 
@@ -265,11 +280,15 @@ impl Timer {
     pub fn tick(&mut self) -> bool {
         self.counter -= 1;
         if self.counter == 0 {
-            self.counter = self.period;
+            self.reset();
             true
         } else {
             false
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.counter = self.period;
     }
 }
 
