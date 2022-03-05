@@ -1,3 +1,4 @@
+mod apu;
 mod bus;
 pub mod joypad;
 pub mod cartridge;

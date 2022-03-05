@@ -3,8 +3,8 @@ use std::ops::RangeInclusive;
 use log::{debug, info, trace};
 
 use crate::{
-    cartridge::Cartridge, gfx::Gfx, interrupt::InterruptFlag, joypad::Joypad, timer::Timer,
-    FrameSink,
+    apu::Apu, cartridge::Cartridge, gfx::Gfx, interrupt::InterruptFlag, joypad::Joypad,
+    timer::Timer, FrameSink,
 };
 
 const BOOT_ROM_DATA: &[u8] = include_bytes!("../assets/dmg_boot.bin");
@@ -45,6 +45,7 @@ const IO_RANGE_DBR: RangeInclusive<u16> = 0xFF50..=0xFF50;
 pub struct Bus {
     ram: Box<[u8]>,
     hram: Box<[u8]>,
+    apu: Apu,
     pub(crate) gfx: Gfx,
     pub(crate) cartridge: Cartridge,
     /// P1/JOYP Joypad contoller
@@ -68,6 +69,7 @@ impl Bus {
         Self {
             ram: ram.into_boxed_slice(),
             hram: vec![0; 0x80].into_boxed_slice(),
+            apu: Apu::new(),
             gfx: Gfx::new(),
             cartridge,
             joypad: Joypad::default(),
@@ -82,6 +84,7 @@ impl Bus {
     /// Run the different peripherals for the given number of clock cycles
     pub fn cycle(&mut self, cycles: u8, frame_sync: &mut dyn FrameSink) {
         self.interrupt_flag |= self.gfx.dots(cycles, frame_sync);
+        self.apu.step(cycles);
         if self.timer.cycle(cycles) {
             self.interrupt_flag |= InterruptFlag::TIMER;
         }
@@ -238,7 +241,7 @@ impl Bus {
         } else if IO_RANGE_APU.contains(&addr) {
             // Sound
             trace!("Read sound register 0x{:04x} (NOT IMPLEMENTED)", addr);
-            0
+            self.apu.read_io(addr)
         } else if IO_RANGE_WAV.contains(&addr) {
             // Waveform ram
             trace!("Read waveform RAM 0x{:04x} (NOT IMPLEMENTED)", addr);
@@ -288,11 +291,8 @@ impl Bus {
             self.interrupt_flag = InterruptFlag::from_bits_truncate(b);
         } else if IO_RANGE_APU.contains(&addr) {
             // Sound
-            trace!(
-                "Write sound register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
-                addr,
-                b
-            );
+            debug!("Write sound register 0x{:04x}<-0x{:02X}", addr, b);
+            self.apu.write_io(addr, b);
         } else if IO_RANGE_WAV.contains(&addr) {
             // Waveform ram
             trace!(
