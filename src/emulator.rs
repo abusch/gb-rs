@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Result, Context};
 use log::info;
 use minifb::{Key, Window};
 
@@ -25,7 +25,8 @@ impl Emulator {
     pub fn new() -> Result<Self> {
         let file = std::env::args()
             .nth(1)
-            .unwrap_or_else(|| "assets/Tetris (World).gb".into());
+            .context("Unable to find ROM file")?;
+
         let cartridge = Cartridge::load(file)?;
         if cartridge.is_cgb() {
             info!("CGB flag is set");

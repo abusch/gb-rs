@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use log::{debug, info};
+use log::{debug, info, trace};
 
 pub struct Cartridge {
     data: Box<[u8]>,
@@ -101,7 +101,7 @@ impl Cartridge {
 
     pub fn select_ram_bank(&mut self, bank: u8) {
         self.selected_ram_bank = bank & 0x03;
-        debug!("Selected RAM bank {}", self.selected_ram_bank);
+        trace!("Selected RAM bank {}", self.selected_ram_bank);
     }
 
     /// Read a byte from the selected bank of this cartridge's ROM.

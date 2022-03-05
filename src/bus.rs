@@ -119,7 +119,7 @@ impl Bus {
         } else if HRAM.contains(&addr) {
             self.hram[(addr - HRAM.start()) as usize]
         } else if addr == 0xFFFF {
-            debug!("Reading IE register: {:?}", self.interrupt_enable);
+            trace!("Reading IE register: {:?}", self.interrupt_enable);
             self.interrupt_enable.bits()
         } else {
             unreachable!("How did we get here?");
@@ -140,9 +140,9 @@ impl Bus {
         } else if CART_BANK_00.contains(&addr) {
             if (0x0000..=0x1FFF).contains(&addr) {
                 if b & 0x0A == 0x0A {
-                    debug!("Enabling external RAM");
+                    trace!("Enabling external RAM");
                 } else {
-                    debug!("Disabling external RAM");
+                    trace!("Disabling external RAM");
                 }
             } else if (0x2000..0x2FFF).contains(&addr) {
                 self.cartridge.select_rom_bank(b);
