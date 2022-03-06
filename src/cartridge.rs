@@ -7,7 +7,8 @@ pub struct Cartridge {
     data: Box<[u8]>,
     ram: Box<[u8]>,
     selected_rom_bank: u8,
-    selected_ram_bank: u8,
+    secondary_bank_register: u8,
+    banking_mode_1: bool,
 }
 
 impl Cartridge {
@@ -20,7 +21,8 @@ impl Cartridge {
             // Allocate the most RAM a cart can have
             ram: vec![0; 64 * 1024].into_boxed_slice(),
             selected_rom_bank: 0x01,
-            selected_ram_bank: 0x00,
+            secondary_bank_register: 0x00,
+            banking_mode_1: false,
         })
     }
 
@@ -99,9 +101,19 @@ impl Cartridge {
         debug!("Selected ROM bank {}", self.selected_rom_bank);
     }
 
-    pub fn select_ram_bank(&mut self, bank: u8) {
-        self.selected_ram_bank = bank & 0x03;
-        trace!("Selected RAM bank {}", self.selected_ram_bank);
+    pub fn set_secondary_bank_register(&mut self, bank: u8) {
+        self.secondary_bank_register = bank & 0x03;
+        trace!("Selected RAM bank {}", self.secondary_bank_register);
+    }
+
+    pub fn select_banking_mode(&mut self, b: u8) {
+        if b == 0 {
+            self.banking_mode_1 = false;
+            debug!("Banking mode select 0");
+        } else if b == 1 {
+            self.banking_mode_1 = true;
+            debug!("Banking mode select 1");
+        }
     }
 
     /// Read a byte from the selected bank of this cartridge's ROM.
@@ -109,9 +121,19 @@ impl Cartridge {
     /// The given address should be relative to the selected bank, i.e. in the range 0000-3FFF.
     pub fn read_rom(&self, addr: u16) -> u8 {
         let mapped_addr = if addr < 0x4000 {
-            addr
+            if self.banking_mode_1 && self.get_rom_size() >= 0x05 {
+                (self.secondary_bank_register << 5) as u32 * 0x4000 + addr as u32
+            } else {
+                addr as u32
+            }
         } else {
-            0x4000 * self.selected_rom_bank as u16 + (addr - 0x4000)
+            let bank_num = if self.get_rom_size() >= 0x05 {
+                // If ROM size > 1MB
+                (self.secondary_bank_register << 5) + self.selected_rom_bank
+            } else {
+                self.selected_rom_bank
+            };
+            0x4000 * bank_num as u32 + (addr - 0x4000) as u32
         };
         self.data[mapped_addr as usize]
     }
@@ -121,7 +143,11 @@ impl Cartridge {
     /// The given address should be relative to the selected bank, i.e. in the range 0000-1FFF.
     pub fn read_ram(&self, addr: u16) -> u8 {
         assert!(addr < 0x2000, "addr=0x{:04x}", addr);
-        let addr = 0x2000 * self.selected_ram_bank as u16 + addr;
+        let addr = if self.banking_mode_1 && self.get_ram_size() >= 0x03 {
+            0x2000 * self.secondary_bank_register as u16 + addr
+        } else {
+            addr
+        };
         self.ram[addr as usize]
     }
 
@@ -130,7 +156,7 @@ impl Cartridge {
     /// The given address should be relative to the selected bank, i.e. in the range 0000-1FFF.
     pub fn write_ram(&mut self, addr: u16, b: u8) {
         assert!(addr < 0x2000);
-        let addr = 0x2000 * self.selected_ram_bank as u16 + addr;
+        let addr = 0x2000 * self.secondary_bank_register as u16 + addr;
         self.ram[addr as usize] = b;
     }
 

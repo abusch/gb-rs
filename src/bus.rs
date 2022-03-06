@@ -154,9 +154,10 @@ impl Bus {
         } else if CART_BANK_MAPPED.contains(&addr) {
             if (0x4000..=0x5FFF).contains(&addr) {
                 trace!("Selecting external RAM bank {:02X}", b);
-                self.cartridge.select_ram_bank(b);
+                self.cartridge.set_secondary_bank_register(b);
             } else {
-                // unimplemented
+                // Select banking mode
+                self.cartridge.select_banking_mode(b);
             }
         } else if VRAM.contains(&addr) {
             self.gfx.write_vram(addr, b);
