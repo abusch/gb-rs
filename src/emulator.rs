@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use log::info;
 use minifb::{Key, Window};
 
@@ -23,9 +23,7 @@ pub struct Emulator {
 
 impl Emulator {
     pub fn new() -> Result<Self> {
-        let file = std::env::args()
-            .nth(1)
-            .context("Unable to find ROM file")?;
+        let file = std::env::args().nth(1).context("Unable to find ROM file")?;
 
         let cartridge = Cartridge::load(file)?;
         if cartridge.is_cgb() {
@@ -78,8 +76,10 @@ impl Emulator {
 
             if self.gb.is_paused() {
                 match debugger.debug() {
-                    Command::Next => {
-                        emulated_cycles += self.gb.step(&mut sink);
+                    Command::Next(n) => {
+                        for _ in 0..n {
+                            emulated_cycles += self.gb.step(&mut sink);
+                        }
                         self.gb.dump_cpu();
                     }
                     Command::Continue => {

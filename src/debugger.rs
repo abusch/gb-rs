@@ -29,8 +29,13 @@ impl Debugger {
             Ok(line) => {
                 self.editor.add_history_entry(line.as_str());
                 match line.as_str() {
-                    "next" => {
-                        Command::Next
+                    s if s.starts_with("next") => {
+                        let num = s
+                            .split_whitespace()
+                            .nth(1)
+                            .and_then(|n| u16::from_str_radix(n, 16).ok())
+                            .unwrap_or(1);
+                        Command::Next(num)
                         // gb.step(sink);
                         // gb.dump_cpu();
                         // false
@@ -101,7 +106,7 @@ impl Debugger {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
-    Next,
+    Next(u16),
     Continue,
     DumpMem(u16),
     DumpCpu,
