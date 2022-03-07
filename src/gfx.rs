@@ -373,7 +373,12 @@ impl Gfx {
                 }
             }
         }
-        interrupts
+        // Only raise interrupts requests if the LCD is on
+        if self.lcd_and_ppu_enabled {
+            interrupts
+        } else {
+            InterruptFlag::empty()
+        }
     }
 
     fn draw_scan_line(&mut self) {
