@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use log::{debug, info, trace};
+use log::{debug, info, trace, warn};
 
 pub struct Cartridge {
     data: Box<[u8]>,
@@ -26,8 +26,12 @@ impl Cartridge {
         })
     }
 
-    pub fn is_cgb(&self) -> bool {
+    pub fn cgb_flag(&self) -> bool {
         self.data[0x143] >> 7 != 0
+    }
+
+    pub fn sgb_flag(&self) -> bool {
+        self.data[0x146] == 0x03
     }
 
     pub fn title(&self) -> String {
@@ -38,7 +42,14 @@ impl Cartridge {
     }
 
     pub fn licensee_code(&self) -> String {
-        String::from_utf8_lossy(&self.data[0x0144..=0x0145]).to_string()
+        let code = self.data[0x014B];
+        if code == 33 {
+            // Uses New Licensee code instead
+            String::from_utf8_lossy(&self.data[0x0144..=0x0145]).to_string()
+        } else {
+            // Old licensee code
+            format!("{:02x} (OLD)", code)
+        }
     }
 
     pub fn cartridge_type(&self) -> &'static str {
@@ -103,7 +114,7 @@ impl Cartridge {
 
     pub fn set_secondary_bank_register(&mut self, bank: u8) {
         self.secondary_bank_register = bank & 0x03;
-        trace!("Selected RAM bank {}", self.secondary_bank_register);
+        debug!("Secondary bank register: {:02x}", self.secondary_bank_register);
     }
 
     pub fn select_banking_mode(&mut self, b: u8) {
@@ -113,6 +124,8 @@ impl Cartridge {
         } else if b == 1 {
             self.banking_mode_1 = true;
             debug!("Banking mode select 1");
+        } else {
+            warn!("Banking mode select set to unknown value: {:02x}", b);
         }
     }
 
@@ -133,7 +146,7 @@ impl Cartridge {
             } else {
                 self.selected_rom_bank
             };
-            0x4000 * bank_num as u32 + (addr - 0x4000) as u32
+            0x4000 * (bank_num as u32) + (addr as u32 - 0x4000)
         };
         self.data[mapped_addr as usize]
     }
@@ -143,12 +156,12 @@ impl Cartridge {
     /// The given address should be relative to the selected bank, i.e. in the range 0000-1FFF.
     pub fn read_ram(&self, addr: u16) -> u8 {
         assert!(addr < 0x2000, "addr=0x{:04x}", addr);
-        let addr = if self.banking_mode_1 && self.get_ram_size() >= 0x03 {
+        let mapped_addr = if self.banking_mode_1 && self.get_ram_size() >= 0x03 {
             0x2000 * self.secondary_bank_register as u16 + addr
         } else {
             addr
         };
-        self.ram[addr as usize]
+        self.ram[mapped_addr as usize]
     }
 
     /// Write a byte into the selected bank of this cartridge's external RAM

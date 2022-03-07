@@ -26,14 +26,13 @@ impl Emulator {
         let file = std::env::args().nth(1).context("Unable to find ROM file")?;
 
         let cartridge = Cartridge::load(file)?;
-        if cartridge.is_cgb() {
-            info!("CGB flag is set");
-        }
         info!("Title is {}", cartridge.title());
         info!("Licensee code is {}", cartridge.licensee_code());
         info!("Cartridge type is {}", cartridge.cartridge_type());
         info!("ROM size is ${:02x}", cartridge.get_rom_size());
         info!("RAM size is ${:02x}", cartridge.get_ram_size());
+        info!("CGB flag: {}", cartridge.cgb_flag());
+        info!("SGB flag: {}", cartridge.sgb_flag());
         let gb = GameBoy::new(cartridge);
         let window = Window::new(
             "gb-rs",
