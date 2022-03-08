@@ -713,6 +713,8 @@ impl Cpu {
             0x04 => self.rlc_r(Reg::H),
             // RLC L
             0x05 => self.rlc_r(Reg::L),
+            // RLC (HL)
+            0x06 => self.rlc_hl(bus),
             // RLC A
             0x07 => self.rlc_r(Reg::A),
             // RRC B
@@ -727,6 +729,8 @@ impl Cpu {
             0x0c => self.rrc_r(Reg::H),
             // RRC L
             0x0d => self.rrc_r(Reg::L),
+            // RRC (HL)
+            0x0e => self.rrc_hl(bus),
             // RRC A
             0x0f => self.rrc_r(Reg::A),
             // RL B
@@ -801,6 +805,8 @@ impl Cpu {
             0x34 => self.swap_r(Reg::H),
             // SWAP L
             0x35 => self.swap_r(Reg::L),
+            // SWAP (HL)
+            0x36 => self.swap_hl(bus),
             // SWAP A
             0x37 => self.swap_r(Reg::A),
             // SRL B
@@ -1577,14 +1583,27 @@ impl Cpu {
     /// RLC r -- Rotate Left
     fn rlc_r(&mut self, reg: Reg) -> u8 {
         let r = self.regs.get(reg);
+        let rotated = self.rlc(r);
+        self.regs.set(reg, rotated);
+        8
+    }
+
+    fn rlc_hl(&mut self, bus: &mut Bus) -> u8 {
+        let r = bus.read_byte(*self.regs.hl);
+        let rotated = self.rlc(r);
+        bus.write_byte(*self.regs.hl, rotated);
+        16
+    }
+
+    fn rlc(&mut self, r: u8) -> u8 {
         let c = r & 0x80 != 0;
         let rotated = r.rotate_left(1);
-        self.regs.set(reg, rotated);
         self.regs.flag_z().set_value(rotated == 0);
         self.regs.flag_n().clear();
         self.regs.flag_h().clear();
         self.regs.flag_c().set_value(c);
-        8
+
+        rotated
     }
 
     /// RLCA -- Rotate register A left (same as RLC A but z is always cleared)
@@ -1597,14 +1616,27 @@ impl Cpu {
     /// RRC r -- Rotate Right
     fn rrc_r(&mut self, reg: Reg) -> u8 {
         let r = self.regs.get(reg);
+        let rotated = self.rrc(r);
+        self.regs.set(reg, rotated);
+        8
+    }
+
+    fn rrc_hl(&mut self, bus: &mut Bus) -> u8 {
+        let r = bus.read_byte(*self.regs.hl);
+        let rotated = self.rrc(r);
+        bus.write_byte(*self.regs.hl, rotated);
+        16
+    }
+
+    fn rrc(&mut self, r: u8) -> u8 {
         let c = r & 0x01 != 0;
         let rotated = r.rotate_right(1);
-        self.regs.set(reg, rotated);
         self.regs.flag_z().set_value(rotated == 0);
         self.regs.flag_n().clear();
         self.regs.flag_h().clear();
         self.regs.flag_c().set_value(c);
-        8
+
+        rotated
     }
 
     /// RRCA -- Rotate register A Right (same as RRC A but z is always cleared)
@@ -1786,14 +1818,28 @@ impl Cpu {
         8
     }
 
+    fn swap_hl(&mut self, bus: &mut Bus) -> u8 {
+        let r = bus.read_byte(*self.regs.hl);
+        let new_r = self.swap(r);
+        bus.write_byte(*self.regs.hl, new_r);
+
+        16
+    }
     fn swap_r(&mut self, reg: Reg) -> u8 {
-        let r = self.regs.get(reg).rotate_right(4);
-        self.regs.set(reg, r);
+        let r = self.regs.get(reg);
+        let new_r = self.swap(r);
+        self.regs.set(reg, new_r);
+
+        8
+    }
+
+    fn swap(&mut self, v: u8) -> u8 {
+        let r = v.rotate_right(4);
         self.regs.flag_z().set_value(r == 0);
         self.regs.flag_n().clear();
         self.regs.flag_h().clear();
         self.regs.flag_c().clear();
-        8
+        r
     }
 
     fn res_n_r(&mut self, n: u8, reg: Reg) -> u8 {
