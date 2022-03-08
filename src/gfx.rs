@@ -426,10 +426,13 @@ impl Gfx {
                 // treat tile id as unsigned
                 base + 16 * tile_id as u16
             } else {
-                let base = VRAM_TILE_DATA_BLOCK_2_ADDR as i16;
-                // treat tile id as *signed*
-                let signed_id = tile_id as i8;
-                (base + 16 * signed_id as i16) as u16
+                let base = VRAM_TILE_DATA_BLOCK_2_ADDR;
+                // treat tile id as *signed*, so sign-extend it to 16 bits
+                let signed_id = tile_id as i8 as i16;
+                let offset = (16 * signed_id) as u16;
+                
+                base.wrapping_add(offset)
+                // (base + 16 * signed_id as i16) as u16
             };
             tile_offset += 2 * tile_row as u16;
 
@@ -717,10 +720,13 @@ impl Sprite {
         let right_x = self.x.wrapping_sub(1);
         if (x >= left_x) && (x <= right_x) {
             let mut tile_x = x.wrapping_add(8).wrapping_sub(self.x);
-            let tile_y = y.wrapping_add(16).wrapping_sub(self.y);
+            let mut tile_y = y.wrapping_add(16).wrapping_sub(self.y);
 
             if self.is_x_flip() {
                 tile_x = 7 - tile_x;
+            }
+            if self.is_y_flip() {
+                tile_y = 7 - tile_y;
             }
 
             Some((tile_x, tile_y))
