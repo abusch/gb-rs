@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use log::{debug, info, trace, warn};
@@ -9,21 +9,42 @@ pub struct Cartridge {
     selected_rom_bank: u8,
     secondary_bank_register: u8,
     banking_mode_1: bool,
+    save_file: PathBuf,
 }
 
 impl Cartridge {
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let content = std::fs::read(path).context("Failed to open rom file")?;
+        let content = std::fs::read(path.as_ref()).context("Failed to open rom file")?;
         info!("Loaded {} bytes from rom file", content.len());
 
-        Ok(Self {
+        let mut save_file_path = PathBuf::from(path.as_ref());
+        save_file_path.set_extension("sav");
+
+        let mut cart = Self {
             data: content.into_boxed_slice(),
             // Allocate the most RAM a cart can have
             ram: vec![0; 64 * 1024].into_boxed_slice(),
             selected_rom_bank: 0x01,
             secondary_bank_register: 0x00,
             banking_mode_1: false,
-        })
+            save_file: save_file_path,
+        };
+
+        if cart.save_file.exists() {
+            let ram = std::fs::read(&cart.save_file).context("Failed to load RAM file")?;
+            let expected_size = cart.get_num_ram_banks() as usize * 8192;
+            if ram.len() != expected_size {
+                warn!("RAM file {} has size {}, expected {}. Ignoring...", cart.save_file.display(), ram.len(), expected_size);
+            } else {
+                info!("Loading RAM file {}...", cart.save_file.display());
+                cart.ram[..expected_size].copy_from_slice(&ram[..]);
+            }
+
+        } else {
+            info!("No RAM file found.");
+        }
+
+        Ok(cart)
     }
 
     pub fn cgb_flag(&self) -> bool {
@@ -109,12 +130,12 @@ impl Cartridge {
             self.selected_rom_bank = bank & 0x1f;
         }
         // assert!(bank <= self.get_num_rom_banks());
-        debug!("Selected ROM bank {}", self.selected_rom_bank);
+        trace!("Selected ROM bank {}", self.selected_rom_bank);
     }
 
     pub fn set_secondary_bank_register(&mut self, bank: u8) {
         self.secondary_bank_register = bank & 0x03;
-        debug!("Secondary bank register: {:02x}", self.secondary_bank_register);
+        trace!("Secondary bank register: {:02x}", self.secondary_bank_register);
     }
 
     pub fn select_banking_mode(&mut self, b: u8) {
@@ -173,6 +194,13 @@ impl Cartridge {
         self.ram[addr as usize] = b;
     }
 
+    pub fn save(&self) {
+        let ram_size = self.get_num_ram_banks() as usize * 8192;
+        if let Err(e) = std::fs::write(&self.save_file, &self.ram[..ram_size]) {
+            warn!("Failed to save RAM file {}: {}", &self.save_file.display(), e);
+        }
+    }
+
     #[allow(dead_code)]
     fn get_num_rom_banks(&self) -> u16 {
         match self.get_rom_size() {
@@ -185,6 +213,17 @@ impl Cartridge {
             0x06 => 128,
             0x07 => 256,
             0x08 => 512,
+            s => panic!("Invalid ROM size {}", s),
+        }
+    }
+
+    fn get_num_ram_banks(&self) -> u16 {
+        match self.get_ram_size() {
+            0x00 => 0,
+            0x02 => 1,
+            0x03 => 4,
+            0x04 => 16,
+            0x05 => 8,
             s => panic!("Invalid ROM size {}", s),
         }
     }

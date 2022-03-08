@@ -46,7 +46,7 @@ pub struct Bus {
     ram: Box<[u8]>,
     hram: Box<[u8]>,
     pub(crate) gfx: Gfx,
-    cartridge: Cartridge,
+    pub(crate) cartridge: Cartridge,
     /// P1/JOYP Joypad contoller
     joypad: Joypad,
     input_has_changed: bool,
@@ -144,12 +144,12 @@ impl Bus {
                 } else {
                     trace!("Disabling external RAM");
                 }
-            } else if (0x2000..0x2FFF).contains(&addr) {
+            } else if (0x2000..0x3FFF).contains(&addr) {
                 self.cartridge.select_rom_bank(b);
-            } else {
-                // ROM Bank Number register
-                // self.cartridge.select_rom_bank(b);
-                debug!("Not implemented: select 9th bit of ROM bank number");
+            // } else {
+            //     // ROM Bank Number register
+            //     // self.cartridge.select_rom_bank(b);
+            //     debug!("Not implemented: select 9th bit of ROM bank number");
             }
         } else if CART_BANK_MAPPED.contains(&addr) {
             if (0x4000..=0x5FFF).contains(&addr) {
@@ -329,8 +329,7 @@ impl Bus {
         } else if (0xff68..=0xff69).contains(&addr) {
             // CGB-only registers, just ignore for now
         } else {
-            // unimplemented!("I/O Registers: 0x{:04x}", addr);
-            debug!(
+            trace!(
                 "Write I/O Register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
                 addr, b
             );

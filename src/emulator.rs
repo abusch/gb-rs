@@ -50,7 +50,7 @@ impl Emulator {
 
     pub fn run(&mut self) {
         let mut sink = MinifbFrameSink::default();
-        // Draw an empty frame to  show the window
+        // Draw an empty frame to show the window
         sink.draw_current_frame(&mut self.window);
 
         let mut debugger = Debugger::new();
@@ -58,7 +58,6 @@ impl Emulator {
         let mut start_time_ns = Instant::now();
         let mut emulated_cycles = 0;
         while self.window.is_open() && !self.window.is_key_down(Key::Escape) {
-            // if ctrl_c.try_recv().is_ok() {
             if self.window.is_key_pressed(Key::D, minifb::KeyRepeat::No) {
                 info!("Starting debugger...");
                 self.gb.pause();
@@ -102,6 +101,9 @@ impl Emulator {
                 }
             }
         }
+
+        // Try to save the RAM before we exit
+        self.gb.save();
     }
 
     fn read_input_keys(&mut self) {

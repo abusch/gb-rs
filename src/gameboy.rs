@@ -77,4 +77,8 @@ impl GameBoy {
     pub fn set_button_pressed(&mut self, button: Button, is_pressed: bool) {
         self.bus.set_button_pressed(button, is_pressed);
     }
+
+    pub fn save(&self) {
+        self.bus.cartridge.save();
+    }
 }
