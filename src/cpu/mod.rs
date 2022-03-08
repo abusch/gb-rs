@@ -741,6 +741,8 @@ impl Cpu {
             0x14 => self.rl_r(Reg::H),
             // RL L
             0x15 => self.rl_r(Reg::L),
+            // RL (HL)
+            0x16 => self.rl_hl(bus),
             // RL A
             0x17 => self.rl_r(Reg::A),
             // RR B
@@ -755,6 +757,8 @@ impl Cpu {
             0x1c => self.rr_r(Reg::H),
             // RR L
             0x1d => self.rr_r(Reg::L),
+            // RR (HL)
+            0x1e => self.rr_hl(bus),
             // RR A
             0x1f => self.rr_r(Reg::A),
             // SLA B
@@ -1142,7 +1146,9 @@ impl Cpu {
         self.regs
             .flag_h()
             .set_value((sp & 0x000f) + (r8 & 0x000f) > 0x000f);
-        self.regs.flag_c().set_value((sp & 0x00ff) + (r8 & 0x00ff) > 0x00ff);
+        self.regs
+            .flag_c()
+            .set_value((sp & 0x00ff) + (r8 & 0x00ff) > 0x00ff);
 
         16
     }
@@ -1306,7 +1312,9 @@ impl Cpu {
         let new_v = v.wrapping_sub(1);
         self.regs.flag_z().set_value(new_v == 0);
         self.regs.flag_n().set();
-        self.regs.flag_h().set_value(((v & 0xf).wrapping_sub(1)) & 0x10 == 0x10);
+        self.regs
+            .flag_h()
+            .set_value(((v & 0xf).wrapping_sub(1)) & 0x10 == 0x10);
 
         new_v
     }
@@ -1473,34 +1481,63 @@ impl Cpu {
 
     /// RL r ;rotate left through carry
     fn rl_r(&mut self, reg: Reg) -> u8 {
+        let r = self.regs.get(reg);
+        let new_r = self.rl(r);
+        self.regs.set(reg, new_r);
+        8
+    }
+
+    /// RL r ;rotate left through carry
+    fn rl_hl(&mut self, bus: &mut Bus) -> u8 {
+        let v = bus.read_byte(*self.regs.hl);
+        let res = self.rl(v);
+        bus.write_byte(*self.regs.hl, res);
+        16
+    }
+
+    fn rl(&mut self, v: u8) -> u8 {
         // C <- [7 <- 0] <- C
-        let mut r = self.regs.get(reg);
         let c = self.regs.flag_c().is_set() as u8;
         // What used to be the 7th bit (and is now the 0th bit) should be the new carry flag
-        let new_c = (r & 0x80) != 0;
-        r = r.rotate_left(1);
+        let new_c = (v & 0x80) != 0;
+        let mut res = v.rotate_left(1);
         // What was the carry should now be the 0th bit
         if c != 0 {
             // set the bit
-            r |= 0x01;
+            res |= 0x01;
         } else {
             // clear the bit
-            r &= 0xFE;
+            res &= 0xFE;
         }
-        self.regs.set(reg, r);
-        self.regs.flag_z().set_value(r == 0);
+        self.regs.flag_z().set_value(res == 0);
         self.regs.flag_n().clear();
         self.regs.flag_h().clear();
         self.regs.flag_c().set_value(new_c);
 
-        8
+        res
     }
 
     /// RR r ;rotate right through carry
     fn rr_r(&mut self, reg: Reg) -> u8 {
+        let r = self.regs.get(reg);
+        let new_r = self.rr(r);
+        self.regs.set(reg, new_r);
+
+        8
+    }
+
+    fn rr_hl(&mut self, bus: &mut Bus) -> u8 {
+        let r = bus.read_byte(*self.regs.hl);
+        let new_r = self.rr(r);
+        bus.write_byte(*self.regs.hl, new_r);
+
+        16 
+    }
+
+    fn rr(&mut self, mut r: u8) -> u8 {
         // C -> [7 -> 0] -> C
-        let mut r = self.regs.get(reg);
         let c = self.regs.flag_c().is_set();
+
         // Save the 0th bit which should be the new carry flag
         let new_c = r & 0x01;
         // r = r.rotate_right(1);
@@ -1513,13 +1550,12 @@ impl Cpu {
             // clear the bit
             r &= 0x7F;
         }
-        self.regs.set(reg, r);
         self.regs.flag_z().set_value(r == 0);
         self.regs.flag_n().clear();
         self.regs.flag_h().clear();
         self.regs.flag_c().set_value(new_c != 0);
 
-        8
+        r
     }
 
     /// RLA
@@ -1643,7 +1679,9 @@ impl Cpu {
         self.regs.flag_z().set_value(sum2 == 0);
         self.regs.flag_n().clear();
         self.regs.flag_c().set_value(carry1 | carry2);
-        self.regs.flag_h().set_value((reg_a & 0x0f) + (value & 0x0f) + c > 0x0f);
+        self.regs
+            .flag_h()
+            .set_value((reg_a & 0x0f) + (value & 0x0f) + c > 0x0f);
         8
     }
 
@@ -1700,7 +1738,9 @@ impl Cpu {
         self.regs.flag_z().set_value(sub2 == 0);
         self.regs.flag_n().set();
         self.regs.flag_c().set_value(carry1 | carry2);
-        self.regs.flag_h().set_value((reg_a & 0x0f) < (value & 0x0f) + c);
+        self.regs
+            .flag_h()
+            .set_value((reg_a & 0x0f) < (value & 0x0f) + c);
         8
     }
 
@@ -1728,7 +1768,9 @@ impl Cpu {
         self.regs.flag_z().set_value(sub == 0);
         self.regs.flag_n().set();
         self.regs.flag_c().set_value(carry);
-        self.regs.flag_h().set_value((reg_a &0x0f) < (value & 0x0f));
+        self.regs
+            .flag_h()
+            .set_value((reg_a & 0x0f) < (value & 0x0f));
     }
 
     fn rst(&mut self, bus: &mut Bus, vec: u8) -> u8 {
@@ -1900,7 +1942,7 @@ mod tests {
 
     #[test]
     fn test_rl() {
-        let mut cpu = Cpu::default();        
+        let mut cpu = Cpu::default();
 
         let mut test = |value, carry, res, new_carry, zero| {
             cpu.regs.set(Reg::A, value);
@@ -1923,7 +1965,7 @@ mod tests {
 
     #[test]
     fn test_rr() {
-        let mut cpu = Cpu::default();        
+        let mut cpu = Cpu::default();
 
         let mut test = |value, carry, res, new_carry, zero| {
             cpu.regs.set(Reg::A, value);
