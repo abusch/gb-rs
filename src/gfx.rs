@@ -499,7 +499,7 @@ impl Gfx {
 
     fn get_sprite_pixel(&self, sprite: &Sprite, x: u8, y: u8) -> Option<Color> {
         sprite
-            .get_tile_coordinates(x, y)
+            .get_tile_coordinates(x, y, self.obj_size)
             .and_then(|(tile_x, tile_y)| self.get_sprite_color(sprite, tile_x, tile_y))
     }
 
@@ -716,7 +716,8 @@ impl Sprite {
     }
 
     /// Convert the given coordinates (in LCD space) into tile-space coordinates.
-    pub fn get_tile_coordinates(&self, x: u8, y: u8) -> Option<(u8, u8)> {
+    pub fn get_tile_coordinates(&self, x: u8, y: u8, double_size: bool) -> Option<(u8, u8)> {
+        let y_size = if double_size { 16 } else { 8 };
         let effective_x = x + 8;
         let effective_y = y + 16;
         let left_x = self.x;
@@ -729,7 +730,7 @@ impl Sprite {
                 tile_x = 7 - tile_x;
             }
             if self.is_y_flip() {
-                tile_y = 7 - tile_y;
+                tile_y = y_size - 1 - tile_y;
             }
 
             Some((tile_x, tile_y))
