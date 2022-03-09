@@ -704,23 +704,26 @@ impl Sprite {
     }
 
     pub fn matches_scanline(&self, y: u8, double_size: bool) -> bool {
-        let top_y = self.y.wrapping_sub(16);
+        let effective_y = y + 16;
+        let top_y = self.y;
         let bottom_y = if double_size {
             top_y.wrapping_add(15)
         } else {
             top_y.wrapping_add(7)
         };
 
-        (y >= top_y) && (y <= bottom_y)
+        (effective_y >= top_y) && (effective_y <= bottom_y)
     }
 
     /// Convert the given coordinates (in LCD space) into tile-space coordinates.
     pub fn get_tile_coordinates(&self, x: u8, y: u8) -> Option<(u8, u8)> {
-        let left_x = self.x.wrapping_sub(8);
-        let right_x = self.x.wrapping_sub(1);
-        if (x >= left_x) && (x <= right_x) {
-            let mut tile_x = x.wrapping_add(8).wrapping_sub(self.x);
-            let mut tile_y = y.wrapping_add(16).wrapping_sub(self.y);
+        let effective_x = x + 8;
+        let effective_y = y + 16;
+        let left_x = self.x;
+        let right_x = self.x + 7;
+        if (effective_x >= left_x) && (effective_x <= right_x) {
+            let mut tile_x = effective_x - self.x;
+            let mut tile_y = effective_y - self.y;
 
             if self.is_x_flip() {
                 tile_x = 7 - tile_x;
