@@ -46,9 +46,15 @@ impl Cpu {
     pub fn handle_interrupt(&mut self, bus: &mut Bus) {
         let interrupt_flag = bus.interrupt_flag();
         let interrupt_enable = bus.interrupt_enable();
+        let pending_interrupts = !(interrupt_enable & interrupt_flag).is_empty();
 
-        if !self.ime || interrupt_flag.is_empty() || interrupt_enable.is_empty() {
-            // If interrupts are disabled, return
+        // if there are pending interrupts, we need to wake the cpu (even if IME=0)
+        if pending_interrupts && self.halted {
+            self.halted = false;
+        }
+
+        if !self.ime || !pending_interrupts {
+            // If interrupts are disabled, or no pending interrupts, just return
             // debug!("interrupts are disabled, ignoring");
             return;
         }
@@ -1437,9 +1443,6 @@ impl Cpu {
         // disable interrupts
         self.ime = false;
         bus.ack_interrupt(itr_flag);
-        if self.halted {
-            self.halted = false;
-        }
         self.push_word(bus, self.pc);
         self.pc = addr;
     }
@@ -1537,7 +1540,7 @@ impl Cpu {
         let new_r = self.rr(r);
         bus.write_byte(*self.regs.hl, new_r);
 
-        16 
+        16
     }
 
     fn rr(&mut self, mut r: u8) -> u8 {

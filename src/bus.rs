@@ -291,6 +291,7 @@ impl Bus {
             }
         } else if IO_RANGE_INT.contains(&addr) {
             // IF - interrupt flag
+            trace!("Setting IF with {:08b}", b);
             self.interrupt_flag = InterruptFlag::from_bits_truncate(b);
         } else if IO_RANGE_APU.contains(&addr) {
             // Sound
