@@ -2,11 +2,12 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use log::info;
-use minifb::{Key, Window};
 
 use gb_rs::{
     cartridge::Cartridge, gameboy::GameBoy, joypad::Button, FrameSink, SCREEN_HEIGHT, SCREEN_WIDTH,
 };
+use winit::event::VirtualKeyCode;
+use winit_input_helper::WinitInputHelper;
 
 use crate::debugger::{Command, Debugger};
 
@@ -14,11 +15,15 @@ use crate::debugger::{Command, Debugger};
 // const CPU_CYCLE_PER_SEC: u64 = 4194304;
 // 1/4194304 seconds per cycle -> 238 nanoseconds per cycle
 const CPU_CYCLE_TIME_NS: u64 = 238;
+
 /// The object that pulls everything together and drives the emulation engine while interfacing
 /// with actual input/outputs.
 pub struct Emulator {
-    window: Window,
     gb: GameBoy,
+    start_time_ns: Instant,
+    emulated_cycles: u64,
+    debugger: Debugger,
+    sink: MostRecentFrameSink,
 }
 
 impl Emulator {
@@ -34,134 +39,121 @@ impl Emulator {
         info!("CGB flag: {}", cartridge.cgb_flag());
         info!("SGB flag: {}", cartridge.sgb_flag());
         let gb = GameBoy::new(cartridge);
-        let window = Window::new(
-            "gb-rs",
-            160,
-            144,
-            minifb::WindowOptions {
-                resize: false,
-                topmost: true,
-                scale: minifb::Scale::X2,
-                ..Default::default()
-            },
-        )?;
-        Ok(Self { window, gb })
+
+        Ok(Self {
+            gb,
+            start_time_ns: Instant::now(),
+            emulated_cycles: 0,
+            debugger: Debugger::new(),
+            sink: MostRecentFrameSink::default(),
+        })
     }
 
-    pub fn run(&mut self) {
-        let mut sink = MinifbFrameSink::default();
-        // Draw an empty frame to show the window
-        sink.draw_current_frame(&mut self.window);
+    pub fn start_debugger(&mut self) {
+        self.gb.pause();
+    }
 
-        let mut debugger = Debugger::new();
+    pub fn render(&mut self, buf: &mut [u8]) {
+        self.sink.draw_current_frame(buf);
+    }
 
-        let mut start_time_ns = Instant::now();
-        let mut emulated_cycles = 0;
-        while self.window.is_open() && !self.window.is_key_down(Key::Escape) {
-            if self.window.is_key_pressed(Key::D, minifb::KeyRepeat::No) {
-                info!("Starting debugger...");
-                self.gb.pause();
-            }
-            if sink.new_frame {
-                sink.draw_current_frame(&mut self.window);
-                self.read_input_keys();
-            } else {
-                self.window.update();
-            }
+    pub fn update(&mut self) -> bool {
+        let target_time_ns = self.start_time_ns.elapsed();
+        let target_cycles = target_time_ns.as_nanos() as u64 / CPU_CYCLE_TIME_NS;
 
-            let target_time_ns = start_time_ns.elapsed();
-            let target_cycles = target_time_ns.as_nanos() as u64 / CPU_CYCLE_TIME_NS;
-
-            if self.gb.is_paused() {
-                match debugger.debug() {
-                    Command::Next(n) => {
-                        for _ in 0..n {
-                            emulated_cycles += self.gb.step(&mut sink);
-                        }
-                        self.gb.dump_cpu();
+        if self.gb.is_paused() {
+            match self.debugger.debug() {
+                Command::Next(n) => {
+                    for _ in 0..n {
+                        self.emulated_cycles += self.gb.step(&mut self.sink);
                     }
-                    Command::Continue => {
-                        // Reset start time
-                        start_time_ns = Instant::now()
-                            - Duration::from_nanos(emulated_cycles * CPU_CYCLE_TIME_NS);
-                        self.gb.resume();
-                    }
-                    Command::DumpMem(addr) => self.gb.dump_mem(addr),
-                    Command::DumpCpu => self.gb.dump_cpu(),
-                    Command::DumpOam => self.gb.dump_oam(),
-                    Command::DumpPalettes => self.gb.dump_palettes(),
-                    Command::Break(addr) => self.gb.set_breakpoint(addr),
-                    Command::Sprite(id) => self.gb.dump_sprite(id),
-                    Command::Quit => break,
-                    Command::Nop => (),
+                    self.gb.dump_cpu();
                 }
-            } else {
-                while emulated_cycles < target_cycles && !self.gb.is_paused() {
-                    emulated_cycles += self.gb.step(&mut sink);
+                Command::Continue => {
+                    // Reset start time
+                    self.start_time_ns = Instant::now()
+                        - Duration::from_nanos(self.emulated_cycles * CPU_CYCLE_TIME_NS);
+                    self.gb.resume();
                 }
+                Command::DumpMem(addr) => self.gb.dump_mem(addr),
+                Command::DumpCpu => self.gb.dump_cpu(),
+                Command::DumpOam => self.gb.dump_oam(),
+                Command::DumpPalettes => self.gb.dump_palettes(),
+                Command::Break(addr) => self.gb.set_breakpoint(addr),
+                Command::Sprite(id) => self.gb.dump_sprite(id),
+                Command::Quit => return true,
+                Command::Nop => (),
+            }
+        } else {
+            while self.emulated_cycles < target_cycles && !self.gb.is_paused() {
+                self.emulated_cycles += self.gb.step(&mut self.sink);
             }
         }
 
-        // Try to save the RAM before we exit
+        false
+    }
+
+    pub fn finish(&mut self) {
         self.gb.save();
     }
 
-    fn read_input_keys(&mut self) {
+    pub fn handle_input(&mut self, input: &WinitInputHelper) {
         self.gb
-            .set_button_pressed(Button::Start, self.window.is_key_down(Key::Enter));
+            .set_button_pressed(Button::Start, input.key_held(VirtualKeyCode::Return));
         self.gb
-            .set_button_pressed(Button::Select, self.window.is_key_down(Key::Space));
+            .set_button_pressed(Button::Select, input.key_held(VirtualKeyCode::Space));
         self.gb
-            .set_button_pressed(Button::A, self.window.is_key_down(Key::A));
+            .set_button_pressed(Button::A, input.key_held(VirtualKeyCode::A));
         self.gb
-            .set_button_pressed(Button::B, self.window.is_key_down(Key::B));
+            .set_button_pressed(Button::B, input.key_held(VirtualKeyCode::B));
         self.gb
-            .set_button_pressed(Button::Up, self.window.is_key_down(Key::Up));
+            .set_button_pressed(Button::Up, input.key_held(VirtualKeyCode::Up));
         self.gb
-            .set_button_pressed(Button::Down, self.window.is_key_down(Key::Down));
+            .set_button_pressed(Button::Down, input.key_held(VirtualKeyCode::Down));
         self.gb
-            .set_button_pressed(Button::Left, self.window.is_key_down(Key::Left));
+            .set_button_pressed(Button::Left, input.key_held(VirtualKeyCode::Left));
         self.gb
-            .set_button_pressed(Button::Right, self.window.is_key_down(Key::Right));
+            .set_button_pressed(Button::Right, input.key_held(VirtualKeyCode::Right));
     }
 }
 
-struct MinifbFrameSink {
-    buf: [u32; SCREEN_WIDTH * SCREEN_HEIGHT],
+/// Frame sink that only keeps the most recent frame
+struct MostRecentFrameSink {
+    buf: [(u8, u8, u8); SCREEN_WIDTH * SCREEN_HEIGHT],
     new_frame: bool,
 }
 
-impl MinifbFrameSink {
+impl MostRecentFrameSink {
     pub fn new() -> Self {
         Self {
-            buf: [0u32; SCREEN_WIDTH * SCREEN_HEIGHT],
+            buf: [(0, 0, 0); SCREEN_WIDTH * SCREEN_HEIGHT],
             new_frame: true,
         }
     }
 
-    fn draw_current_frame(&mut self, window: &mut Window) {
-        // debug!("Updating minifb buffer");
-        window
-            .update_with_buffer(&self.buf, SCREEN_WIDTH, SCREEN_HEIGHT)
-            .expect("Failed to update window buffer");
+    fn draw_current_frame(&mut self, frame: &mut [u8]) {
+        self.buf
+            .iter()
+            .zip(frame.chunks_mut(4))
+            .for_each(|((r, g, b), p)| {
+                p[0] = *r;
+                p[1] = *g;
+                p[2] = *b;
+                p[3] = 255;
+            });
         self.new_frame = false;
-        // debug!("done minifb buffer");
     }
 }
 
-impl Default for MinifbFrameSink {
+impl Default for MostRecentFrameSink {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl FrameSink for MinifbFrameSink {
+impl FrameSink for MostRecentFrameSink {
     fn push_frame(&mut self, frame: &[(u8, u8, u8)]) {
-        // debug!("Framed pushed");
-        self.buf.iter_mut().zip(frame).for_each(|(buf_p, lcd_p)| {
-            let (r, g, b) = *lcd_p;
-            *buf_p = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
-        });
+        self.buf.copy_from_slice(frame);
         self.new_frame = true;
     }
 }
