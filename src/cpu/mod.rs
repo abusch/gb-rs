@@ -704,7 +704,6 @@ impl Cpu {
 
     /// CB-prefixed instruction
     fn step_cb(&mut self, bus: &mut Bus) -> u8 {
-        let orig_pc = self.pc;
         let cb_op = self.fetch(bus);
         match cb_op {
             // RLC B
@@ -783,6 +782,8 @@ impl Cpu {
             0x24 => self.sla_r(Reg::H),
             // SLA L
             0x25 => self.sla_r(Reg::L),
+            // SLA (HL)
+            0x26 => self.sla_hl(bus),
             // SLA A
             0x27 => self.sla_r(Reg::A),
             // SRA B
@@ -797,6 +798,8 @@ impl Cpu {
             0x2c => self.sra_r(Reg::H),
             // SRA L
             0x2d => self.sra_r(Reg::L),
+            // SRA (HL)
+            0x2e => self.sra_hl(bus),
             // SRA A
             0x2f => self.sra_r(Reg::A),
             // SWAP B
@@ -1048,14 +1051,6 @@ impl Cpu {
             0xfd => self.set_n_r(7, Reg::L),
             0xfe => self.set_hl(7, bus),
             0xff => self.set_n_r(7, Reg::A),
-
-            _ => {
-                warn!(
-                    "Unimplemented CB prefix op=0x{:02x}, PC=0x{:04x}",
-                    cb_op, orig_pc
-                );
-                0
-            }
         }
     }
 
@@ -1278,31 +1273,54 @@ impl Cpu {
     }
 
     // SRA r (Shift Right Arithmetically)
+    fn sra_hl(&mut self, bus: &mut Bus) -> u8 {
+        let r = bus.read_byte(*self.regs.hl);
+        let new_r = self.sra(r);
+        bus.write_byte(*self.regs.hl, new_r);
+        16
+    }
+
     fn sra_r(&mut self, reg: Reg) -> u8 {
+        let r = self.regs.get(reg);
+        let new_r = self.sra(r);
+        self.regs.set(reg, new_r);
+        8
+    }
+    fn sra(&mut self, mut r: u8) -> u8 {
         // [7] -> [7 -> 0] -> C
-        let mut r = self.regs.get(reg);
         let c = (r & 0x01) != 0;
         r = ((r as i8) >> 1) as u8;
-        self.regs.set(reg, r);
         self.regs.flag_z().set_value(r == 0);
         self.regs.flag_n().clear();
         self.regs.flag_h().clear();
         self.regs.flag_c().set_value(c);
-        8
+        r
     }
 
     // SLA r (Shift Left Arithmetically)
+    fn sla_hl(&mut self, bus: &mut Bus) -> u8 {
+        let r = bus.read_byte(*self.regs.hl);
+        let new_r = self.sla(r);
+        bus.write_byte(*self.regs.hl, new_r);
+        16
+    }
+
     fn sla_r(&mut self, reg: Reg) -> u8 {
+        let r = self.regs.get(reg);
+        let new_r = self.sla(r);
+        self.regs.set(reg, new_r);
+        8
+    }
+
+    fn sla(&mut self, mut r: u8) -> u8 {
         // C <- [7 <- 0] <- 0
-        let mut r = self.regs.get(reg);
         let c = (r & 0x80) != 0;
         r <<= 1;
-        self.regs.set(reg, r);
         self.regs.flag_z().set_value(r == 0);
         self.regs.flag_n().clear();
         self.regs.flag_h().clear();
         self.regs.flag_c().set_value(c);
-        8
+        r
     }
 
     /// DEC (HL)
@@ -1856,6 +1874,7 @@ impl Cpu {
     fn res_hl(&mut self, n: u8, bus: &mut Bus) -> u8 {
         let mut hl = bus.read_byte(*self.regs.hl);
         hl.view_bits_mut::<Lsb0>().set(n as usize, false);
+        bus.write_byte(*self.regs.hl, hl);
 
         16
     }
@@ -1871,6 +1890,7 @@ impl Cpu {
     fn set_hl(&mut self, n: u8, bus: &mut Bus) -> u8 {
         let mut hl = bus.read_byte(*self.regs.hl);
         hl.view_bits_mut::<Lsb0>().set(n as usize, true);
+        bus.write_byte(*self.regs.hl, hl);
 
         16
     }
