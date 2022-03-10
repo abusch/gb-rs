@@ -392,7 +392,9 @@ impl Gfx {
         } else {
             0x9800
         };
+        // Get the first 10 sprites that match the current line
         let sprites = self.get_sprites_for_scanline(self.ly);
+
         // Render a line of pixels
         for x in 0..SCREEN_WIDTH as u8 {
             // Coordinates in "LCD space" (i.e 160x144)
@@ -404,7 +406,7 @@ impl Gfx {
                 && lcd_y >= self.wy
             {
                 // We're in the window
-                (lcd_x - self.wx, lcd_y - self.wy, win_tilemap_area)
+                (lcd_x + 7 - self.wx, lcd_y - self.wy, win_tilemap_area)
             } else {
                 // we're in the background
 
@@ -440,16 +442,18 @@ impl Gfx {
             let hi_byte = self.read_vram_internal(tile_offset + 1);
 
             let mut color_byte = 0u8;
-            let color_bits = color_byte.view_bits_mut::<Lsb0>();
-            // Use Msb0 order here as pixel 0 is the leftmost bit (bit 7).
-            color_bits.set(1, hi_byte.view_bits::<Msb0>()[tile_col as usize]);
-            color_bits.set(0, lo_byte.view_bits::<Msb0>()[tile_col as usize]);
+            if self.bg_and_window_enable {
+                let color_bits = color_byte.view_bits_mut::<Lsb0>();
+                // Use Msb0 order here as pixel 0 is the leftmost bit (bit 7).
+                color_bits.set(1, hi_byte.view_bits::<Msb0>()[tile_col as usize]);
+                color_bits.set(0, lo_byte.view_bits::<Msb0>()[tile_col as usize]);
+            }
             // Background / window pixel
-            let color = if self.bg_and_window_enable {
-                self.bgp[color_byte as usize]
-            } else {
-                Color::White
-            };
+            // let color = if self.bg_and_window_enable {
+            //     self.bgp[color_byte as usize]
+            // } else {
+            //     Color::White
+            // };
 
             // Potential sprite pixel
             let sprite_pixel_and_bg_has_priority = sprites.iter().find_map(|s| {
@@ -458,14 +462,14 @@ impl Gfx {
             });
 
             let final_color = match (self.obj_enabled, sprite_pixel_and_bg_has_priority) {
-                (true, Some((p, true))) => if color != Color::White {
-                    color
+                (true, Some((p, true))) => if color_byte != 0 {
+                    self.bgp[color_byte as usize]
                 } else {
                     p
                 },
                 (true, Some((p, false))) => p,
-                (true, None) => color,
-                (false, _) => color,
+                (true, None) => self.bgp[color_byte as usize],
+                (false, _) => self.bgp[color_byte as usize],
             };
 
             self.write_pixel(x, self.ly, final_color);
