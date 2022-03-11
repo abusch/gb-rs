@@ -230,25 +230,18 @@ impl Bus {
                 0xff05 => self.timer.tima(),
                 0xff06 => self.timer.tma(),
                 0xff07 => self.timer.tac(),
-                _ => {
-                    // Divider and timer
-                    debug!(
-                        "Read divider and timer register 0x{:04x} (NOT IMPLEMENTED)",
-                        addr
-                    );
-                    0
-                }
+                _ => unreachable!(),
             }
         } else if IO_RANGE_INT.contains(&addr) {
             // IF - interrupt flag
             self.interrupt_flag.bits()
         } else if IO_RANGE_APU.contains(&addr) {
             // Sound
-            debug!("Read sound register 0x{:04x} (NOT IMPLEMENTED)", addr);
+            trace!("Read sound register 0x{:04x} (NOT IMPLEMENTED)", addr);
             0
         } else if IO_RANGE_WAV.contains(&addr) {
             // Waveform ram
-            debug!("Read waveform RAM 0x{:04x} (NOT IMPLEMENTED)", addr);
+            trace!("Read waveform RAM 0x{:04x} (NOT IMPLEMENTED)", addr);
             0
         } else if IO_RANGE_LCD.contains(&addr) {
             // LCD
@@ -259,7 +252,7 @@ impl Bus {
             debug!("Read disable boot rom 0x{:04x} (NOT IMPLEMENTED)", addr);
             0
         } else {
-            debug!("Read unknown I/O Register 0x{:04x} (NOT IMPLEMENTED)", addr);
+            // some games access unknown registers for some reason, so just ignore
             0
         }
     }
