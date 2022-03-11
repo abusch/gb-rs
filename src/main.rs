@@ -1,7 +1,7 @@
 use anyhow::Result;
 use emulator::Emulator;
 use gb_rs::{SCREEN_HEIGHT, SCREEN_WIDTH};
-use log::error;
+use log::{error, warn};
 use pixels::{Pixels, SurfaceTexture};
 use winit::{
     dpi::LogicalSize,
@@ -62,6 +62,12 @@ fn main() -> Result<()> {
 
             if input.key_pressed(VirtualKeyCode::D) {
                 emulator.start_debugger();
+            }
+
+            if input.key_pressed(VirtualKeyCode::S) {
+                if let Err(e) = emulator.screenshot() {
+                    warn!("Failed to save screenshot: {}", e);
+                }
             }
 
             emulator.handle_input(&input);

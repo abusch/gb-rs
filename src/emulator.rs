@@ -1,4 +1,9 @@
-use std::time::{Duration, Instant};
+use std::{
+    fs::File,
+    io::BufWriter,
+    path::Path,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::{Context, Result};
 use log::info;
@@ -95,6 +100,27 @@ impl Emulator {
 
     pub fn finish(&mut self) {
         self.gb.save();
+    }
+
+    pub fn screenshot(&mut self) -> Result<()> {
+        let filename = format!(
+            "gb-rs-screenshot_{}.png",
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs()
+        );
+        let path = Path::new(&filename);
+        let file = File::create(path)?;
+        let mut w = BufWriter::new(file);
+
+        let mut encoder = png::Encoder::new(&mut w, SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header()?;
+
+        let mut data = [0u8; SCREEN_WIDTH * SCREEN_HEIGHT * 4];
+        self.sink.draw_current_frame(&mut data);
+        writer.write_image_data(&data)?;
+        println!("Saved screenshot to {}", filename);
+        Ok(())
     }
 
     pub fn handle_input(&mut self, input: &WinitInputHelper) {
