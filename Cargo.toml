@@ -2,6 +2,12 @@
 name = "gb-rs"
 version = "0.1.0"
 edition = "2021"
+authors = ["Antoine Büsch <antoine.busch@gmail.com>"]
+description = "A Gameboy emulator"
+repository = "https://github.com/abusch/gb-rs"
+homepage = "https://github.com/abusch/gb-rs"
+keywords = ["emulator", "gameboy"]
+readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
