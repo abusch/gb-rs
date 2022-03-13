@@ -37,6 +37,15 @@ const TARGET_SAMPLE_RATE: u32 = 44100;
 
 #[derive(Debug)]
 pub struct Apu {
+    /// Main on/off switch for the whole APU. Comes from NR52 (bit 7).
+    apu_enabled: bool,
+    /// NR51
+    sound_output_selection: u8,
+    /// Left volume. Comes from NR50.
+    left_volume: u8,
+    /// Right volume. Comes from NR50.
+    right_volume: u8,
+
     sample_rate: u32,
     sample_period: f32,
     sample_counter: f32,
@@ -50,6 +59,10 @@ pub struct Apu {
 impl Apu {
     pub fn new() -> Self {
         Self {
+            apu_enabled: true,
+            sound_output_selection: 0,
+            left_volume: 0,
+            right_volume: 0,
             sample_rate: TARGET_SAMPLE_RATE,
             sample_period: CPU_CYCLES_PER_SECOND as f32 / TARGET_SAMPLE_RATE as f32,
             sample_counter: 0.0,
@@ -63,24 +76,57 @@ impl Apu {
     pub fn step(&mut self, cycles: u8, sink: &mut dyn AudioSink) {
         for _ in 0..cycles {
             self.channel1.tick();
+            self.channel2.tick();
+
             if self.timer.tick() {
                 self.frame_sequencer.tick();
                 self.channel1.tick_frame(&self.frame_sequencer);
+                self.channel2.tick_frame(&self.frame_sequencer);
             }
             // TODO
 
             self.sample_counter += 1.0;
             if self.sample_counter >= self.sample_period {
                 self.sample_counter -= self.sample_period;
-                let out = self.channel1.dac_out();
-                sink.push_sample((out, out));
+                sink.push_sample(self.output());
             }
         }
     }
 
     // Outputs a pair of left/right samples
     fn output(&self) -> (f32, f32) {
-        (self.channel1.dac_out(), self.channel1.dac_out())
+        let mut left = 0.0;
+        let mut right = 0.0;
+        let nr51 = self.sound_output_selection.view_bits::<Lsb0>();
+
+        // if nr51[7] {
+        //     left += self.channel4.dac_out();
+        // }
+        // if nr51[6] {
+        //     left += self.channel3.dac_out();
+        // }
+        if nr51[5] {
+            left += self.channel2.dac_out();
+        }
+        if nr51[4] {
+            left += self.channel1.dac_out();
+        }
+        // if nr51[3] {
+        //     right += self.channel4.dac_out();
+        // }
+        // if nr51[2] {
+        //     right += self.channel3.dac_out();
+        // }
+        if nr51[1] {
+            right += self.channel2.dac_out();
+        }
+        if nr51[0] {
+            right += self.channel1.dac_out();
+        }
+
+        left *= (self.left_volume + 1) as f32;
+        right += (self.right_volume + 1) as f32;
+        (left, right)
     }
 
     pub fn read_io(&self, addr: u16) -> u8 {
@@ -110,7 +156,17 @@ impl Apu {
             // sound control
             REG_NR50 => 0,
             REG_NR51 => 0,
-            REG_NR52 => 0,
+            REG_NR52 => {
+                let mut byte = 0u8;
+                let bits = byte.view_bits_mut::<Lsb0>();
+                bits.set(7, self.apu_enabled);
+                // TODO
+                // bits[3] = self.channel4.enabled;
+                // bits[2] = self.channel3.enabled;
+                bits.set(1, self.channel2.enabled);
+                bits.set(0, self.channel1.enabled);
+                byte
+            },
             _ => panic!("Invalid sound register {:04x}", addr),
         }
     }
@@ -140,9 +196,16 @@ impl Apu {
             REG_NR43 => (),
             REG_NR44 => (),
             // sound control
-            REG_NR50 => (),
-            REG_NR51 => (),
-            REG_NR52 => (),
+            REG_NR50 => {
+                let bits = b.view_bits::<Lsb0>();
+                self.left_volume = bits[4..=6].load::<u8>();
+                self.right_volume = bits[0..=2].load::<u8>();
+            },
+            REG_NR51 => self.sound_output_selection = b,
+            REG_NR52 => {
+                self.apu_enabled = b.view_bits::<Lsb0>()[7];
+                // TODO reset all registers if we disable sound
+            },
             _ => panic!("Invalid sound register {:04x}", addr),
         };
     }
