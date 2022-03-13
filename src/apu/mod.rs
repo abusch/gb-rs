@@ -240,6 +240,9 @@ struct Channel {
 
     start_volume: u8,
     volume: u8,
+    volume_increase: bool,
+    envelope_period: u8,
+    envelope_timer: u8,
 
     freq_hi: u8,
     freq_lo: u8,
@@ -256,6 +259,9 @@ impl Channel {
             length_counter: 0,
             start_volume: 0,
             volume: 0,
+            volume_increase: false,
+            envelope_period: 0,
+            envelope_timer: 0,
             freq_hi: 0,
             freq_lo: 0,
             freq_timer: Timer::new(8192),
@@ -273,7 +279,7 @@ impl Channel {
             self.length_tick();
         }
         if frame_sequencer.vol_envelope_trigged() {
-            // TODO
+            self.volume_tick();
         }
         if frame_sequencer.sweep_triggered() {
             // TODO
@@ -298,7 +304,8 @@ impl Channel {
     pub fn set_nrx2(&mut self, b: u8) {
         let bits = b.view_bits::<Lsb0>();
         self.start_volume = bits[4..=7].load::<u8>();
-        // TODO enveloppe add mode, period
+        self.volume_increase = bits[3];
+        self.envelope_period = bits[0..=2].load::<u8>();
     }
 
     pub fn set_nrx3(&mut self, b: u8) {
@@ -319,7 +326,9 @@ impl Channel {
             }
             let freq = ((self.freq_hi as u16) << 8) + self.freq_lo as u16;
             self.freq_timer.period = (2048 - freq) * 4;
+            // Reset volume envelope
             self.volume = self.start_volume;
+            self.envelope_timer = self.envelope_period;
             // TODO  sweep, etc..
         }
     }
@@ -342,6 +351,17 @@ impl Channel {
                 // If we reach 0, disable the channel
                 self.enabled = false;
             }
+        }
+    }
+
+    fn volume_tick(&mut self) {
+        if self.envelope_timer > 0 {
+            if self.volume_increase && self.volume < 15 {
+                self.volume += 1;
+            } else if !self.volume_increase && self.volume > 0 {
+                self.volume -= 1;
+            }
+            self.envelope_timer -= 1;
         }
     }
 }
