@@ -1,5 +1,7 @@
 use bitvec::{field::BitField, order::Lsb0, view::BitView};
 
+use crate::AudioSink;
+
 // Channel 1
 const REG_NR10: u16 = 0xFF10;
 const REG_NR11: u16 = 0xFF11;
@@ -27,13 +29,17 @@ const REG_NR50: u16 = 0xFF24;
 const REG_NR51: u16 = 0xFF25;
 const REG_NR52: u16 = 0xFF26;
 
-// const CPU_CYCLES_PER_SECOND: u32 = 4194304;
+const CPU_CYCLES_PER_SECOND: u32 = 4194304;
 // Period for the main 512Hz timer
 const TIMER_PERIOD: u16 = 8192;
+const TARGET_SAMPLE_RATE: u32 = 44100;
+// const SAMPLE_CYCLES: f32 = CPU_CYCLES_PER_SECOND as f32 / 44100.0;
 
 #[derive(Debug)]
 pub struct Apu {
     sample_rate: u32,
+    sample_period: f32,
+    sample_counter: f32,
     timer: Timer,
     frame_sequencer: FrameSequencer,
 
@@ -44,7 +50,9 @@ pub struct Apu {
 impl Apu {
     pub fn new() -> Self {
         Self {
-            sample_rate: 44100,
+            sample_rate: TARGET_SAMPLE_RATE,
+            sample_period: CPU_CYCLES_PER_SECOND as f32 / TARGET_SAMPLE_RATE as f32,
+            sample_counter: 0.0,
             timer: Timer::new(TIMER_PERIOD),
             frame_sequencer: FrameSequencer::default(),
             channel1: Channel::new(),
@@ -52,7 +60,7 @@ impl Apu {
         }
     }
 
-    pub fn step(&mut self, cycles: u8) {
+    pub fn step(&mut self, cycles: u8, sink: &mut dyn AudioSink) {
         for _ in 0..cycles {
             self.channel1.tick();
             if self.timer.tick() {
@@ -60,7 +68,19 @@ impl Apu {
                 self.channel1.tick_frame(&self.frame_sequencer);
             }
             // TODO
+
+            self.sample_counter += 1.0;
+            if self.sample_counter >= self.sample_period {
+                self.sample_counter -= self.sample_period;
+                let out = self.channel1.dac_out();
+                sink.push_sample((out, out));
+            }
         }
+    }
+
+    // Outputs a pair of left/right samples
+    fn output(&self) -> (f32, f32) {
+        (self.channel1.dac_out(), self.channel1.dac_out())
     }
 
     pub fn read_io(&self, addr: u16) -> u8 {

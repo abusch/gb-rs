@@ -4,7 +4,7 @@ use log::{debug, info, trace};
 
 use crate::{
     apu::Apu, cartridge::Cartridge, gfx::Gfx, interrupt::InterruptFlag, joypad::Joypad,
-    timer::Timer, FrameSink,
+    timer::Timer, FrameSink, AudioSink,
 };
 
 const BOOT_ROM_DATA: &[u8] = include_bytes!("../assets/dmg_boot.bin");
@@ -82,9 +82,9 @@ impl Bus {
     }
 
     /// Run the different peripherals for the given number of clock cycles
-    pub fn cycle(&mut self, cycles: u8, frame_sync: &mut dyn FrameSink) {
-        self.interrupt_flag |= self.gfx.dots(cycles, frame_sync);
-        self.apu.step(cycles);
+    pub fn cycle(&mut self, cycles: u8, frame_sink: &mut dyn FrameSink, audio_sink: &mut dyn AudioSink) {
+        self.interrupt_flag |= self.gfx.dots(cycles, frame_sink);
+        self.apu.step(cycles, audio_sink);
         if self.timer.cycle(cycles) {
             self.interrupt_flag |= InterruptFlag::TIMER;
         }

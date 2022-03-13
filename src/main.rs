@@ -1,8 +1,11 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::{BufferSize, SampleRate, Stream, StreamConfig};
 use emulator::Emulator;
 use gb_rs::{SCREEN_HEIGHT, SCREEN_WIDTH};
-use log::{error, warn};
+use log::{debug, error, info, warn, trace};
 use pixels::{Pixels, SurfaceTexture};
+use ringbuf::{Consumer, RingBuffer};
 use winit::{
     dpi::LogicalSize,
     event::{Event, VirtualKeyCode},
@@ -36,7 +39,11 @@ fn main() -> Result<()> {
         Pixels::new(SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32, surface_texture)?
     };
 
-    let mut emulator = Emulator::new()?;
+    // Buffer can hold 1s of samples (assuming 2 channels)
+    let ringbuf = RingBuffer::new(44100 * 2);
+    let (producer, consumer) = ringbuf.split();
+    let mut emulator = Emulator::new(producer)?;
+    let _stream = init_audio(consumer)?;
 
     event_loop.run(move |event, _, control_flow| {
         if let Event::RedrawRequested(_) = event {
@@ -79,4 +86,55 @@ fn main() -> Result<()> {
             window.request_redraw();
         }
     });
+}
+
+fn init_audio(mut consumer: Consumer<f32>) -> Result<Stream> {
+    let host = cpal::default_host();
+    let device = host
+        .default_output_device()
+        .context("error while querying config")?;
+    debug!("Audio device: {:?}", device.name());
+    // let mut supported_configs_range = device.supported_output_configs()?;
+    // let supported_config = supported_configs_range
+    //     .next()
+    //     .context("no supported audio config")?
+    //     .with_sample_rate(SampleRate(44100));
+    // let supported_format = supported_config.sample_format();
+    // info!("Supported config: {supported_config:?}");
+    // info!("Audio format: {supported_format:?}");
+    // let config = supported_config.into();
+    let config = StreamConfig {
+        channels: 2,
+        sample_rate: SampleRate(44100),
+        buffer_size: BufferSize::Default,
+    };
+    let err_fn = |err| {
+        error!("Error writing to audio stream: {}", err);
+    };
+    let stream = device
+        .build_output_stream(
+            &config,
+            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                let mut fell_behind = false;
+                trace!("Writing {} audio samples", data.len());
+                for sample in data {
+                    *sample = match consumer.pop() {
+                        Some(s) => s,
+                        None => {
+                            fell_behind = true;
+                            0.0
+                        }
+                    }
+                }
+                if fell_behind {
+                    debug!("Buffer underrun!");
+                }
+            },
+            err_fn,
+        )
+        .context("Failed to build output stream")?;
+    stream.play().context("Failed to start stream")?;
+    info!("Audio stream started!");
+
+    Ok(stream)
 }

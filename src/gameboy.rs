@@ -2,7 +2,7 @@ use crate::bus::Bus;
 use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
 use crate::joypad::Button;
-use crate::FrameSink;
+use crate::{FrameSink, AudioSink};
 
 pub struct GameBoy {
     cpu: Cpu,
@@ -17,9 +17,9 @@ impl GameBoy {
         }
     }
 
-    pub fn step(&mut self, frame_sink: &mut dyn FrameSink) -> u64 {
+    pub fn step(&mut self, frame_sink: &mut dyn FrameSink, audio_sink: &mut dyn AudioSink) -> u64 {
         let cycles = self.cpu.step(&mut self.bus);
-        self.bus.cycle(cycles, frame_sink);
+        self.bus.cycle(cycles, frame_sink, audio_sink);
         self.cpu.handle_interrupt(&mut self.bus);
 
         cycles as u64

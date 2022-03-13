@@ -6,11 +6,13 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use log::info;
+use log::{debug, info};
 
 use gb_rs::{
-    cartridge::Cartridge, gameboy::GameBoy, joypad::Button, FrameSink, SCREEN_HEIGHT, SCREEN_WIDTH,
+    cartridge::Cartridge, gameboy::GameBoy, joypad::Button, AudioSink, FrameSink, SCREEN_HEIGHT,
+    SCREEN_WIDTH,
 };
+use ringbuf::Producer;
 use winit::event::VirtualKeyCode;
 use winit_input_helper::WinitInputHelper;
 
@@ -29,10 +31,11 @@ pub struct Emulator {
     emulated_cycles: u64,
     debugger: Debugger,
     sink: MostRecentFrameSink,
+    audio_sink: CpalAudioSink,
 }
 
 impl Emulator {
-    pub fn new() -> Result<Self> {
+    pub fn new(producer: Producer<f32>) -> Result<Self> {
         let file = std::env::args().nth(1).context("Unable to find ROM file")?;
 
         let cartridge = Cartridge::load(file)?;
@@ -51,6 +54,7 @@ impl Emulator {
             emulated_cycles: 0,
             debugger: Debugger::new(),
             sink: MostRecentFrameSink::default(),
+            audio_sink: CpalAudioSink::new(producer),
         })
     }
 
@@ -70,7 +74,7 @@ impl Emulator {
             match self.debugger.debug() {
                 Command::Next(n) => {
                     for _ in 0..n {
-                        self.emulated_cycles += self.gb.step(&mut self.sink);
+                        self.emulated_cycles += self.gb.step(&mut self.sink, &mut self.audio_sink);
                     }
                     self.gb.dump_cpu();
                 }
@@ -91,7 +95,7 @@ impl Emulator {
             }
         } else {
             while self.emulated_cycles < target_cycles && !self.gb.is_paused() {
-                self.emulated_cycles += self.gb.step(&mut self.sink);
+                self.emulated_cycles += self.gb.step(&mut self.sink, &mut self.audio_sink);
             }
         }
 
@@ -181,5 +185,23 @@ impl FrameSink for MostRecentFrameSink {
     fn push_frame(&mut self, frame: &[(u8, u8, u8)]) {
         self.buf.copy_from_slice(frame);
         self.new_frame = true;
+    }
+}
+
+struct CpalAudioSink {
+    buffer: Producer<f32>,
+}
+
+impl CpalAudioSink {
+    fn new(buffer: Producer<f32>) -> Self {
+        Self { buffer }
+    }
+}
+
+impl AudioSink for CpalAudioSink {
+    fn push_sample(&mut self, sample: (f32, f32)) {
+        if self.buffer.push(sample.0).is_err() || self.buffer.push(sample.1).is_err() {
+            debug!("Buffer overrun!");
+        }
     }
 }
