@@ -1,8 +1,9 @@
 use std::{
+    collections::VecDeque,
     fs::File,
     io::BufWriter,
     path::Path,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH}, collections::VecDeque,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
@@ -197,7 +198,7 @@ impl CpalAudioSink {
     fn new(buffer: Producer<i16>) -> Self {
         Self {
             buffer,
-            master_volume: 8,
+            master_volume: 16,
         }
     }
 }
@@ -215,6 +216,7 @@ impl AudioSink for CpalAudioSink {
     }
 
     fn push_samples(&mut self, samples: &mut VecDeque<i16>) {
-        self.buffer.push_each(|| samples.pop_front());
+        self.buffer
+            .push_each(|| samples.pop_front().map(|v| v * self.master_volume));
     }
 }

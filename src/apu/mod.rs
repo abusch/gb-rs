@@ -1,4 +1,4 @@
-use std::{time::Duration, collections::VecDeque};
+use std::{time::Duration, collections::VecDeque, ops::ShrAssign};
 
 use bitvec::{field::BitField, order::Lsb0, view::BitView};
 use log::{debug, trace};
@@ -58,6 +58,7 @@ pub struct Apu {
     channel1: Channel,
     channel2: Channel,
     channel3: WaveChannel,
+    channel4: NoiseChannel,
 
     buf: VecDeque<i16>,
 }
@@ -77,6 +78,7 @@ impl Apu {
             channel1: Channel::new(),
             channel2: Channel::new(),
             channel3: WaveChannel::new(),
+            channel4: NoiseChannel::new(),
             buf: VecDeque::new(),
         }
     }
@@ -86,12 +88,14 @@ impl Apu {
             self.channel1.tick();
             self.channel2.tick();
             self.channel3.tick();
+            self.channel4.tick();
 
             if self.timer.tick() {
                 self.frame_sequencer.tick();
                 self.channel1.tick_frame(&self.frame_sequencer);
                 self.channel2.tick_frame(&self.frame_sequencer);
                 self.channel3.tick_frame(&self.frame_sequencer);
+                self.channel4.tick_frame(&self.frame_sequencer);
             }
             // TODO
 
@@ -127,21 +131,21 @@ impl Apu {
 
         let nr51 = self.sound_output_selection.view_bits::<Lsb0>();
 
-        // if nr51[7] {
-        //     left += self.channel4.dac_out();
-        // }
-        // if nr51[6] {
-        //     left += self.channel3.output();
-        // }
+        if nr51[7] {
+            left += self.channel4.output();
+        }
+        if nr51[6] {
+            left += self.channel3.output();
+        }
         if nr51[5] {
             left += self.channel2.output();
         }
         if nr51[4] {
             left += self.channel1.output();
         }
-        // if nr51[3] {
-        //     right += self.channel4.dac_out();
-        // }
+        if nr51[3] {
+            right += self.channel4.output();
+        }
         if nr51[2] {
             right += self.channel3.output();
         }
@@ -190,7 +194,7 @@ impl Apu {
                 let bits = byte.view_bits_mut::<Lsb0>();
                 bits.set(7, self.apu_enabled);
                 // TODO
-                // bits[3] = self.channel4.enabled;
+                bits.set(3, self.channel4.enabled);
                 bits.set(2, self.channel3.enabled);
                 bits.set(1, self.channel2.enabled);
                 bits.set(0, self.channel1.enabled);
@@ -220,10 +224,10 @@ impl Apu {
             REG_NR33 => self.channel3.set_nr33(b),
             REG_NR34 => self.channel3.set_nr34(b),
             // Channel 4()
-            REG_NR41 => (),
-            REG_NR42 => (),
-            REG_NR43 => (),
-            REG_NR44 => (),
+            REG_NR41 => self.channel4.set_nr41(b),
+            REG_NR42 => self.channel4.set_nr42(b),
+            REG_NR43 => self.channel4.set_nr43(b),
+            REG_NR44 => self.channel4.set_nr44(b),
             // sound control
             REG_NR50 => {
                 let bits = b.view_bits::<Lsb0>();
@@ -252,7 +256,7 @@ impl Apu {
                     self.channel1.reset();
                     self.channel2.reset();
                     self.channel3.reset();
-                    // self.channel4.reset();
+                    self.channel4.reset();
                 }
                 // TODO reset all registers if we disable sound
             }
@@ -701,9 +705,183 @@ impl OutputLevel {
     }
 }
 
-/// Convert a digital value between 0 and 15 into an analog voltage between 1.0 and -1.0
-fn dac(value: u8) -> f32 {
-    // Volume is between 0 and 15, and we want to convert it to a number between 1.0 and
-    // -1.0.
-    (value as f32) * -2.0 / 15.0 + 1.0
+/// Linear Feedback Shift Register
+#[derive(Debug)]
+struct LSFR {
+    reg: u16,
+    width_mode: bool,
+}
+
+impl LSFR {
+    fn new() -> Self {
+        Self {
+            reg: 0xffff,
+            width_mode: false,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.reg = 0xffff;
+        self.width_mode = false;
+    }
+
+    fn tick(&mut self) {
+        let bits = self.reg.view_bits::<Lsb0>();
+        let b = bits[0] ^ bits[1];
+        self.reg.shr_assign(1);
+
+        let bits = self.reg.view_bits_mut::<Lsb0>(); 
+        bits.set(14, b);
+        if self.width_mode {
+            bits.set(6, b);
+        }
+    }
+
+    fn output(&self) -> bool {
+        // output is bit 0 *inverted*
+        self.reg & 0x0001 == 0
+    }
+}
+
+#[derive(Debug)]
+struct NoiseChannel {
+    enabled: bool,
+    lsfr: LSFR,
+    timer: Timer,
+    length_enabled: bool,
+    length_counter: u8,
+    start_volume: u8,
+    volume: u8,
+    volume_increase: bool,
+    envelope_timer: Timer,
+}
+
+impl NoiseChannel {
+    fn new() -> Self {
+        Self {
+            enabled: false,
+            lsfr: LSFR::new(),
+            timer: Timer::new(4096),
+            length_enabled: false,
+            length_counter: 0,
+            start_volume: 0,
+            volume: 0,
+            volume_increase: false,
+            envelope_timer: Timer::new(0),
+        }
+    }
+
+    fn tick(&mut self) {
+        if self.timer.tick() {
+            self.lsfr.tick();
+        }
+    }
+
+    fn tick_frame(&mut self, frame_sequencer: &FrameSequencer) {
+        if frame_sequencer.length_triggered() {
+            self.length_tick();
+        }
+        if frame_sequencer.vol_envelope_trigged() {
+            self.volume_tick();
+        }
+    }
+
+    fn length_tick(&mut self) {
+        if self.length_enabled && self.length_counter > 0 {
+            self.length_counter -= 1;
+            if self.length_counter == 0 {
+                trace!("Length expired: disabling noise channel");
+                self.enabled = false;
+            }
+        }
+    }
+
+    fn volume_tick(&mut self) {
+        if self.envelope_timer.tick()  {
+            if self.volume_increase && self.volume < 15 {
+                self.volume += 1;
+                trace!("increasing volume {}", self.volume);
+            } else if !self.volume_increase && self.volume > 0 {
+                self.volume -= 1;
+                trace!("decreasing volume {}", self.volume);
+            }
+            // self.envelope_timer -= 1;
+        }
+        if !self.is_dac_on() {
+            self.enabled = false;
+        }
+    }
+
+    fn set_nr41(&mut self, b: u8) {
+        self.length_counter = 64 - (b & 0x3F);
+    }
+
+    fn set_nr42(&mut self, b: u8) {
+        let bits = b.view_bits::<Lsb0>();
+        self.start_volume = bits[4..=7].load::<u8>();
+        self.volume_increase = bits[3];
+        // todo envelope sweep
+        self.envelope_timer.period = bits[0..=2].load::<u8>() as u16;
+        self.envelope_timer.reset();
+        trace!(
+            "start_volume={}, volume_increase={}, envelope_period={}",
+            self.start_volume, self.volume_increase, self.envelope_timer.period
+        );
+        if self.envelope_timer.period == 0 {
+            self.envelope_timer.period = 8;
+        }
+    }
+
+    fn set_nr43(&mut self, b: u8) {
+        let bits = b.view_bits::<Lsb0>();
+        let base_divisor = match bits[0..=2].load::<u8>() {
+            0 => 8,
+            n@1..=7 => n * 16,
+            _ => unreachable!(),
+        };
+        let shift = bits[4..=7].load::<u8>();
+        let width = bits[3];
+        let period = (base_divisor as u16) << (shift as u16);
+        self.timer.period = period;
+        self.timer.reset();
+        self.lsfr.width_mode = width;
+    }
+
+    fn set_nr44(&mut self, b: u8) {
+        let bits = b.view_bits::<Lsb0>();
+        self.length_enabled = bits[6];
+
+        if bits[7] {
+            // trigger
+            trace!("Noise channel triggered");
+            self.enabled = true;
+            self.lsfr.reset();
+            self.volume = self.start_volume;
+            self.envelope_timer.reset();
+            if self.length_counter == 0 {
+                self.length_counter = 64;
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        self.enabled = false;
+        self.length_counter = 0;
+        self.length_enabled = false;
+        self.volume = self.start_volume;
+        self.volume_increase = false;
+    }
+
+    fn output(&self) -> i16 {
+        if self.enabled && self.is_dac_on() && self.lsfr.output() {
+            self.volume as i16
+        } else {
+            0
+        }
+    }
+
+    fn is_dac_on(&self) -> bool {
+        self.start_volume != 0 || self.volume_increase
+    }
+
 }
