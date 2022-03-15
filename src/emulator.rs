@@ -2,7 +2,7 @@ use std::{
     fs::File,
     io::BufWriter,
     path::Path,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH}, collections::VecDeque,
 };
 
 use anyhow::{Context, Result};
@@ -35,7 +35,7 @@ pub struct Emulator {
 }
 
 impl Emulator {
-    pub fn new(producer: Producer<f32>) -> Result<Self> {
+    pub fn new(producer: Producer<i16>) -> Result<Self> {
         let file = std::env::args().nth(1).context("Unable to find ROM file")?;
 
         let cartridge = Cartridge::load(file)?;
@@ -189,19 +189,32 @@ impl FrameSink for MostRecentFrameSink {
 }
 
 struct CpalAudioSink {
-    buffer: Producer<f32>,
+    buffer: Producer<i16>,
+    master_volume: i16,
 }
 
 impl CpalAudioSink {
-    fn new(buffer: Producer<f32>) -> Self {
-        Self { buffer }
+    fn new(buffer: Producer<i16>) -> Self {
+        Self {
+            buffer,
+            master_volume: 8,
+        }
     }
 }
 
 impl AudioSink for CpalAudioSink {
-    fn push_sample(&mut self, sample: (f32, f32)) {
-        if self.buffer.push(sample.0).is_err() || self.buffer.push(sample.1).is_err() {
+    fn push_sample(&mut self, sample: (i16, i16)) -> bool {
+        if self.buffer.push(sample.0 * self.master_volume).is_err()
+            || self.buffer.push(sample.1 * self.master_volume).is_err()
+        {
             debug!("Buffer overrun!");
+            return true;
         }
+
+        false
+    }
+
+    fn push_samples(&mut self, samples: &mut VecDeque<i16>) {
+        self.buffer.push_each(|| samples.pop_front());
     }
 }

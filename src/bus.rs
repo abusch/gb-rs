@@ -291,15 +291,16 @@ impl Bus {
             self.interrupt_flag = InterruptFlag::from_bits_truncate(b);
         } else if IO_RANGE_APU.contains(&addr) {
             // Sound
-            debug!("Write sound register 0x{:04x}<-0x{:02X}", addr, b);
+            trace!("Write sound register 0x{:04x}<-0x{:02X}", addr, b);
             self.apu.write_io(addr, b);
         } else if IO_RANGE_WAV.contains(&addr) {
             // Waveform ram
             trace!(
-                "Write waveform RAM 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
+                "Write waveform RAM 0x{:04x}<-0x{:02X}",
                 addr,
                 b
             );
+            self.apu.write_wav(addr, b);
         } else if IO_RANGE_LCD.contains(&addr) {
             // LCD
             // debug!("Write LCD controller 0x{:04x}<-0x{:02X}", addr, b);

@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 mod apu;
 mod bus;
 pub mod joypad;
@@ -16,5 +18,6 @@ pub trait FrameSink {
 }
 
 pub trait AudioSink {
-    fn push_sample(&mut self, sample: (f32, f32));
+    fn push_sample(&mut self, sample: (i16, i16)) -> bool;
+    fn push_samples(&mut self, samples: &mut VecDeque<i16>);
 }

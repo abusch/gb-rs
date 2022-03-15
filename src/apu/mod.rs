@@ -1,4 +1,7 @@
+use std::{time::Duration, collections::VecDeque};
+
 use bitvec::{field::BitField, order::Lsb0, view::BitView};
+use log::{debug, trace};
 
 use crate::AudioSink;
 
@@ -54,6 +57,9 @@ pub struct Apu {
 
     channel1: Channel,
     channel2: Channel,
+    channel3: WaveChannel,
+
+    buf: VecDeque<i16>,
 }
 
 impl Apu {
@@ -70,6 +76,8 @@ impl Apu {
             frame_sequencer: FrameSequencer::default(),
             channel1: Channel::new(),
             channel2: Channel::new(),
+            channel3: WaveChannel::new(),
+            buf: VecDeque::new(),
         }
     }
 
@@ -77,55 +85,76 @@ impl Apu {
         for _ in 0..cycles {
             self.channel1.tick();
             self.channel2.tick();
+            self.channel3.tick();
 
             if self.timer.tick() {
                 self.frame_sequencer.tick();
                 self.channel1.tick_frame(&self.frame_sequencer);
                 self.channel2.tick_frame(&self.frame_sequencer);
+                self.channel3.tick_frame(&self.frame_sequencer);
             }
             // TODO
 
             self.sample_counter += 1.0;
             if self.sample_counter >= self.sample_period {
                 self.sample_counter -= self.sample_period;
-                sink.push_sample(self.output());
+                let (left, right) = self.output();
+                if self.buf.len() < 400 {
+                    self.buf.push_back(left);
+                    self.buf.push_back(right);
+                }
+
+                if self.buf.len() > 200 {
+                    sink.push_samples(&mut self.buf);
+                }
+                // if sink.push_sample(self.output()) {
+                //     // Buffer is full, wait a little bit
+                //     // TODO this is a pretty ugly hack....
+                //     std::thread::sleep(Duration::from_millis(40));
+                // }
             }
         }
     }
 
     // Outputs a pair of left/right samples
-    fn output(&self) -> (f32, f32) {
-        let mut left = 0.0;
-        let mut right = 0.0;
+    fn output(&self) -> (i16, i16) {
+        let mut left = 0;
+        let mut right = 0;
+
+        if !self.apu_enabled {
+            return (left, right);
+        }
+
         let nr51 = self.sound_output_selection.view_bits::<Lsb0>();
 
         // if nr51[7] {
         //     left += self.channel4.dac_out();
         // }
         // if nr51[6] {
-        //     left += self.channel3.dac_out();
+        //     left += self.channel3.output();
         // }
         if nr51[5] {
-            left += self.channel2.dac_out();
+            left += self.channel2.output();
         }
         if nr51[4] {
-            left += self.channel1.dac_out();
+            left += self.channel1.output();
         }
         // if nr51[3] {
         //     right += self.channel4.dac_out();
         // }
-        // if nr51[2] {
-        //     right += self.channel3.dac_out();
-        // }
+        if nr51[2] {
+            right += self.channel3.output();
+        }
         if nr51[1] {
-            right += self.channel2.dac_out();
+            right += self.channel2.output();
         }
         if nr51[0] {
-            right += self.channel1.dac_out();
+            right += self.channel1.output();
         }
 
-        left *= (self.left_volume + 1) as f32;
-        right += (self.right_volume + 1) as f32;
+        left *= self.left_volume as i16 + 1;
+        right *= self.right_volume as i16 + 1;
+
         (left, right)
     }
 
@@ -162,11 +191,11 @@ impl Apu {
                 bits.set(7, self.apu_enabled);
                 // TODO
                 // bits[3] = self.channel4.enabled;
-                // bits[2] = self.channel3.enabled;
+                bits.set(2, self.channel3.enabled);
                 bits.set(1, self.channel2.enabled);
                 bits.set(0, self.channel1.enabled);
                 byte
-            },
+            }
             _ => panic!("Invalid sound register {:04x}", addr),
         }
     }
@@ -185,11 +214,11 @@ impl Apu {
             REG_NR23 => self.channel2.set_nrx3(b),
             REG_NR24 => self.channel2.set_nrx4(b),
             // Channel 3()
-            REG_NR30 => (),
-            REG_NR31 => (),
-            REG_NR32 => (),
-            REG_NR33 => (),
-            REG_NR34 => (),
+            REG_NR30 => self.channel3.set_nr30(b),
+            REG_NR31 => self.channel3.set_nr31(b),
+            REG_NR32 => self.channel3.set_nr32(b),
+            REG_NR33 => self.channel3.set_nr33(b),
+            REG_NR34 => self.channel3.set_nr34(b),
             // Channel 4()
             REG_NR41 => (),
             REG_NR42 => (),
@@ -200,14 +229,41 @@ impl Apu {
                 let bits = b.view_bits::<Lsb0>();
                 self.left_volume = bits[4..=6].load::<u8>();
                 self.right_volume = bits[0..=2].load::<u8>();
-            },
-            REG_NR51 => self.sound_output_selection = b,
+                trace!(
+                    "Setting volumes left={}, right={}",
+                    self.left_volume, self.right_volume
+                );
+            }
+            REG_NR51 => {
+                self.sound_output_selection = b;
+                trace!(
+                    "Setting output selection {:08b}",
+                    self.sound_output_selection
+                );
+            }
             REG_NR52 => {
                 self.apu_enabled = b.view_bits::<Lsb0>()[7];
+                if self.apu_enabled {
+                    debug!("Turning APU ON!");
+                    self.channel1.reset();
+                } else {
+                    debug!("Turning APU OFF!");
+                    self.buf.clear();
+                    self.channel1.reset();
+                    self.channel2.reset();
+                    self.channel3.reset();
+                    // self.channel4.reset();
+                }
                 // TODO reset all registers if we disable sound
-            },
+            }
             _ => panic!("Invalid sound register {:04x}", addr),
         };
+    }
+
+    pub fn write_wav(&mut self, addr: u16, value: u8) {
+        let index = addr - 0xFF30;
+        assert!(index <= 0x0F);
+        self.channel3.wav[index as usize] = value;
     }
 }
 
@@ -241,8 +297,9 @@ struct Channel {
     start_volume: u8,
     volume: u8,
     volume_increase: bool,
-    envelope_period: u8,
-    envelope_timer: u8,
+    // envelope_period: u8,
+    // envelope_timer: u8,
+    envelope_timer: Timer,
 
     freq_hi: u8,
     freq_lo: u8,
@@ -260,8 +317,9 @@ impl Channel {
             start_volume: 0,
             volume: 0,
             volume_increase: false,
-            envelope_period: 0,
-            envelope_timer: 0,
+            // envelope_period: 0,
+            // envelope_timer: 0,
+            envelope_timer: Timer::new(0),
             freq_hi: 0,
             freq_lo: 0,
             freq_timer: Timer::new(8192),
@@ -292,27 +350,45 @@ impl Channel {
     }
 
     pub fn set_nrx1(&mut self, b: u8) {
+        trace!("setting NRx1 to {:08b}", b);
         let bits = b.view_bits::<Lsb0>();
 
         let duty = bits[6..=7].load::<u8>().into();
         self.wave_generator.set_duty(duty);
+        trace!("duty = {:?}", duty);
 
         let length = bits[0..=5].load::<u8>();
+        trace!("length = {}", length);
         self.length_counter = 64 - length;
     }
 
     pub fn set_nrx2(&mut self, b: u8) {
+        trace!("setting NRx2 to {:08b}", b);
         let bits = b.view_bits::<Lsb0>();
         self.start_volume = bits[4..=7].load::<u8>();
         self.volume_increase = bits[3];
-        self.envelope_period = bits[0..=2].load::<u8>();
+        self.envelope_timer.period = bits[0..=2].load::<u8>() as u16;
+        self.envelope_timer.reset();
+        trace!(
+            "start_volume={}, volume_increase={}, envelope_period={}",
+            self.start_volume, self.volume_increase, self.envelope_timer.period
+        );
+        if self.envelope_timer.period == 0 {
+            self.envelope_timer.period = 8;
+        }
+        if !self.is_dac_on() {
+            trace!("DAC is off, disabling channel");
+            self.enabled = false;
+        }
     }
 
     pub fn set_nrx3(&mut self, b: u8) {
+        trace!("setting NRx3 to {:08b}", b);
         self.freq_lo = b;
     }
 
     pub fn set_nrx4(&mut self, b: u8) {
+        trace!("setting NRx4 to {:08b}", b);
         let bits = b.view_bits::<Lsb0>();
 
         self.length_enabled = bits[6];
@@ -325,21 +401,34 @@ impl Channel {
                 self.length_counter = 64;
             }
             let freq = ((self.freq_hi as u16) << 8) + self.freq_lo as u16;
+            if freq == 0 {
+                // should we do this?
+                self.enabled = false;
+            }
             self.freq_timer.period = (2048 - freq) * 4;
+            self.freq_timer.reset();
             // Reset volume envelope
             self.volume = self.start_volume;
-            self.envelope_timer = self.envelope_period;
+            // self.envelope_timer.period = self.envelope_period;
+            self.envelope_timer.reset();
+            trace!(
+                "Triggering channel with freq={}, period={}, length={}, length_enabled={}",
+                freq, self.freq_timer.period, self.length_counter, self.length_enabled
+            );
+            if !self.is_dac_on() {
+                // If DAC is off, disable the channel
+                trace!("DAC is off, disabling channel");
+                self.enabled = false;
+            }
             // TODO  sweep, etc..
         }
     }
 
-    pub fn dac_out(&self) -> f32 {
-        if self.volume != 0 && self.wave_generator.output() {
-            // Volume is between 0 and 15, and we want to convert it to a number between 1.0 and
-            // -1.0.
-            (self.volume as f32) * -2.0 / 15.0 + 1.0
+    pub fn output(&self) -> i16 {
+        if self.enabled && self.is_dac_on() && self.wave_generator.output() {
+            self.volume as i16
         } else {
-            0.0
+            0
         }
     }
 
@@ -349,20 +438,44 @@ impl Channel {
             self.length_counter -= 1;
             if self.length_counter == 0 {
                 // If we reach 0, disable the channel
+                trace!("length expired, disabling channel");
                 self.enabled = false;
             }
         }
     }
 
     fn volume_tick(&mut self) {
-        if self.envelope_timer > 0 {
+        if self.envelope_timer.tick()  {
             if self.volume_increase && self.volume < 15 {
                 self.volume += 1;
+                trace!("increasing volume {}", self.volume);
             } else if !self.volume_increase && self.volume > 0 {
                 self.volume -= 1;
+                trace!("decreasing volume {}", self.volume);
             }
-            self.envelope_timer -= 1;
+            // self.envelope_timer -= 1;
         }
+    }
+
+    fn is_dac_on(&self) -> bool {
+        self.start_volume != 0 || self.volume_increase
+    }
+
+    pub(crate) fn reset(&mut self) {
+        trace!("Resetting square channel");
+        self.enabled = false;
+        self.start_volume = 0;
+        self.volume = 0;
+        self.length_counter = 0;
+        self.length_enabled = false;
+        // self.envelope_period = 0;
+        // self.envelope_timer = 0;
+        self.envelope_timer.period = 0;
+        self.envelope_timer.reset();
+        self.volume_increase = false;
+        self.freq_hi = 0;
+        self.freq_lo = 0;
+        self.freq_timer.reset();
     }
 }
 
@@ -446,4 +559,151 @@ impl WaveGenerator {
             Duty::Duty3 => self.step != 0 && self.step != 7,
         }
     }
+}
+
+#[derive(Debug)]
+struct WaveChannel {
+    // Wave table containing 32 4-bit samples
+    wav: [u8; 16],
+    enabled: bool,
+    length_enabled: bool,
+    length_counter: u16,
+    output_level: OutputLevel,
+    freq: u16,
+    position: u8,
+    freq_timer: Timer,
+}
+
+impl WaveChannel {
+    fn new() -> Self {
+        Self {
+            wav: [0; 16],
+            enabled: false,
+            length_enabled: false,
+            length_counter: 0,
+            output_level: OutputLevel::Mute,
+            freq: 0,
+            position: 0,
+            freq_timer: Timer::new(4096),
+        }
+    }
+
+    fn tick(&mut self) {
+        if self.freq_timer.tick() {
+            self.position += 1;
+            if self.position == 32 {
+                self.position = 0;
+            }
+        }
+    }
+
+    pub fn tick_frame(&mut self, frame_sequencer: &FrameSequencer) {
+        // we only care about the length here
+        if frame_sequencer.length_triggered() {
+            self.length_tick();
+        }
+    }
+
+    fn length_tick(&mut self) {
+        if self.enabled && self.length_enabled {
+            // Only decrement the length counter if the channel is active
+            self.length_counter -= 1;
+            if self.length_counter == 0 {
+                // If we reach 0, disable the channel
+                self.enabled = false;
+            }
+        }
+    }
+
+    fn set_nr30(&mut self, b: u8) {
+        if b.view_bits::<Lsb0>()[7] {
+            self.enabled = true;
+            self.position = 0;
+        } else {
+            self.enabled = false;
+        }
+    }
+
+    fn set_nr31(&mut self, b: u8) {
+        self.length_counter = 256 - b as u16;
+    }
+
+    fn set_nr32(&mut self, b: u8) {
+        self.output_level = match b.view_bits::<Lsb0>()[5..=6].load::<u8>() {
+            0 => OutputLevel::Mute,
+            1 => OutputLevel::Full,
+            2 => OutputLevel::Half,
+            3 => OutputLevel::Quarter,
+            _ => unreachable!(),
+        };
+    }
+
+    fn set_nr33(&mut self, b: u8) {
+        self.freq.view_bits_mut::<Lsb0>()[0..=7].store(b);
+    }
+
+    fn set_nr34(&mut self, b: u8) {
+        let bits = b.view_bits::<Lsb0>();
+        self.freq.view_bits_mut::<Lsb0>()[8..=10].store::<u8>(bits[0..=2].load::<u8>());
+
+        if bits[7] {
+            // trigger
+            self.position = 0;
+            self.freq_timer.period = (2048 - self.freq) * 2;
+            self.length_counter = 256;
+        }
+    }
+
+    fn output(&self) -> i16 {
+        if !self.enabled {
+            return 0;
+        }
+
+        let byte = self.wav[self.position as usize / 2];
+        let value = if self.position % 2 == 0 {
+            // lower nibble
+            byte & 0x0F
+        } else {
+            // upper nibble
+            byte >> 4
+        };
+        let adjusted_value = self.output_level.apply(value);
+
+        adjusted_value as i16
+        // dac(adjusted_value)
+    }
+
+    fn reset(&mut self) {
+        self.enabled = false;
+        self.length_enabled = false;
+        self.length_counter = 0;
+        self.position = 0;
+        self.output_level = OutputLevel::Mute;
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutputLevel {
+    Mute,
+    Full,
+    Half,
+    Quarter,
+}
+
+impl OutputLevel {
+    fn apply(&self, value: u8) -> u8 {
+        match self {
+            OutputLevel::Mute => 0,
+            OutputLevel::Full => value,
+            OutputLevel::Half => value >> 1,
+            OutputLevel::Quarter => value >> 2,
+        }
+    }
+}
+
+/// Convert a digital value between 0 and 15 into an analog voltage between 1.0 and -1.0
+fn dac(value: u8) -> f32 {
+    // Volume is between 0 and 15, and we want to convert it to a number between 1.0 and
+    // -1.0.
+    (value as f32) * -2.0 / 15.0 + 1.0
 }

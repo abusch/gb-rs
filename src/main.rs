@@ -39,8 +39,8 @@ fn main() -> Result<()> {
         Pixels::new(SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32, surface_texture)?
     };
 
-    // Buffer can hold 1s of samples (assuming 2 channels)
-    let ringbuf = RingBuffer::new(44100 * 2);
+    // Buffer can hold 0.5s of samples (assuming 2 channels)
+    let ringbuf = RingBuffer::new(8102);
     let (producer, consumer) = ringbuf.split();
     let mut emulator = Emulator::new(producer)?;
     let _stream = init_audio(consumer)?;
@@ -88,25 +88,20 @@ fn main() -> Result<()> {
     });
 }
 
-fn init_audio(mut consumer: Consumer<f32>) -> Result<Stream> {
+fn init_audio(mut consumer: Consumer<i16>) -> Result<Stream> {
     let host = cpal::default_host();
     let device = host
         .default_output_device()
         .context("error while querying config")?;
     debug!("Audio device: {:?}", device.name());
-    // let mut supported_configs_range = device.supported_output_configs()?;
-    // let supported_config = supported_configs_range
-    //     .next()
-    //     .context("no supported audio config")?
-    //     .with_sample_rate(SampleRate(44100));
-    // let supported_format = supported_config.sample_format();
-    // info!("Supported config: {supported_config:?}");
-    // info!("Audio format: {supported_format:?}");
-    // let config = supported_config.into();
+    // let supported_configs_range = device.supported_output_configs()?;
+    // for conf in supported_configs_range {
+    //     info!("Supported config: {conf:?}");
+    // }
     let config = StreamConfig {
         channels: 2,
         sample_rate: SampleRate(44100),
-        buffer_size: BufferSize::Default,
+        buffer_size: BufferSize::Fixed(2048),
     };
     let err_fn = |err| {
         error!("Error writing to audio stream: {}", err);
@@ -114,7 +109,7 @@ fn init_audio(mut consumer: Consumer<f32>) -> Result<Stream> {
     let stream = device
         .build_output_stream(
             &config,
-            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+            move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
                 let mut fell_behind = false;
                 trace!("Writing {} audio samples", data.len());
                 for sample in data {
@@ -122,7 +117,7 @@ fn init_audio(mut consumer: Consumer<f32>) -> Result<Stream> {
                         Some(s) => s,
                         None => {
                             fell_behind = true;
-                            0.0
+                            0
                         }
                     }
                 }
