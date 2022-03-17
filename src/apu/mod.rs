@@ -377,9 +377,10 @@ impl Channel {
             "start_volume={}, volume_increase={}, envelope_period={}",
             self.start_volume, self.volume_increase, self.envelope_timer.period
         );
-        if self.envelope_timer.period == 0 {
-            self.envelope_timer.period = 8;
-        }
+        // Not sure why the docs said to do this? This is wrong...
+        // if self.envelope_timer.period == 0 {
+        //     self.envelope_timer.period = 8;
+        // }
         if !self.is_dac_on() {
             trace!("DAC is off, disabling channel");
             self.enabled = false;
@@ -827,8 +828,11 @@ impl NoiseChannel {
             "start_volume={}, volume_increase={}, envelope_period={}",
             self.start_volume, self.volume_increase, self.envelope_timer.period
         );
-        if self.envelope_timer.period == 0 {
-            self.envelope_timer.period = 8;
+        // if self.envelope_timer.period == 0 {
+        //     self.envelope_timer.period = 8;
+        // }
+        if !self.is_dac_on() {
+            self.enabled = false;
         }
     }
 
@@ -860,6 +864,9 @@ impl NoiseChannel {
             self.envelope_timer.reset();
             if self.length_counter == 0 {
                 self.length_counter = 64;
+            }
+            if !self.is_dac_on() {
+                self.enabled = false;
             }
         }
     }
