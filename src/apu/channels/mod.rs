@@ -2,9 +2,12 @@ mod tone;
 mod wave;
 mod noise;
 
+use log::trace;
 pub(crate) use tone::ToneChannel;
 pub(crate) use wave::WaveChannel;
 pub(crate) use noise::NoiseChannel;
+
+use super::Timer;
 
 #[derive(Debug)]
 struct LengthCounter {
@@ -50,3 +53,63 @@ impl LengthCounter {
         }
     }
 }
+
+#[derive(Debug)]
+struct VolumeEnvelope {
+    start_volume: u8,
+    volume: u8,
+    volume_increase: bool,
+    timer: Timer,
+}
+
+impl VolumeEnvelope {
+    fn new() -> Self {
+        Self {
+            start_volume: 0,
+            volume: 0,
+            volume_increase: false,
+            timer: Timer::new(0),
+        }
+    }
+
+    fn reload(&mut self, start_volume: u8, volume_increase: bool, envelope_period: u16) {
+        self.start_volume = start_volume;
+        self.volume_increase = volume_increase;
+        self.timer.period = envelope_period;
+        self.timer.reset();
+    }
+
+    fn tick(&mut self) {
+        if self.timer.tick() {
+            if self.volume_increase && self.volume < 15 {
+                self.volume += 1;
+                trace!("increasing volume {}", self.volume);
+            } else if !self.volume_increase && self.volume > 0 {
+                self.volume -= 1;
+                trace!("decreasing volume {}", self.volume);
+            }
+        }
+    }
+
+    fn volume(&self) -> u8 {
+        self.volume
+    }
+
+    fn trigger(&mut self) {
+        self.volume = self.start_volume;
+        self.timer.reset();
+    }
+
+    fn is_dac_on(&self) -> bool {
+        self.start_volume != 0 || self.volume_increase
+    }
+
+    fn reset(&mut self) {
+        self.start_volume = 0;
+        self.volume = 0;
+        self.volume_increase = false;
+        self.timer.period = 0;
+        self.timer.reset();
+    }
+}
+

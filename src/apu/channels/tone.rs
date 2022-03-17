@@ -3,19 +3,13 @@ use log::trace;
 
 use crate::apu::{Timer, frame_sequencer::FrameSequencer};
 
-use super::LengthCounter;
-
+use super::{LengthCounter, VolumeEnvelope};
 #[derive(Debug)]
 pub(crate) struct ToneChannel {
     enabled: bool,
     length_counter: LengthCounter,
 
-    start_volume: u8,
-    volume: u8,
-    volume_increase: bool,
-    // envelope_period: u8,
-    // envelope_timer: u8,
-    envelope_timer: Timer,
+    volume_envelope: VolumeEnvelope,
 
     freq_hi: u8,
     freq_lo: u8,
@@ -29,12 +23,7 @@ impl ToneChannel {
         Self {
             enabled: false,
             length_counter: LengthCounter::new(64),
-            start_volume: 0,
-            volume: 0,
-            volume_increase: false,
-            // envelope_period: 0,
-            // envelope_timer: 0,
-            envelope_timer: Timer::new(0),
+            volume_envelope: VolumeEnvelope::new(),
             freq_hi: 0,
             freq_lo: 0,
             freq_timer: Timer::new(8192),
@@ -54,7 +43,7 @@ impl ToneChannel {
             self.enabled = false;
         }
         if frame_sequencer.vol_envelope_trigged() {
-            self.volume_tick();
+            self.volume_envelope.tick();
         }
         if frame_sequencer.sweep_triggered() {
             // TODO
@@ -82,16 +71,10 @@ impl ToneChannel {
     pub(crate) fn set_nrx2(&mut self, b: u8) {
         trace!("setting NRx2 to {:08b}", b);
         let bits = b.view_bits::<Lsb0>();
-        self.start_volume = bits[4..=7].load::<u8>();
-        self.volume_increase = bits[3];
-        self.envelope_timer.period = bits[0..=2].load::<u8>() as u16;
-        self.envelope_timer.reset();
-        trace!(
-            "start_volume={}, volume_increase={}, envelope_period={}",
-            self.start_volume,
-            self.volume_increase,
-            self.envelope_timer.period
-        );
+        let start_volume = bits[4..=7].load::<u8>();
+        let volume_increase = bits[3];
+        let envelope_period = bits[0..=2].load::<u8>() as u16;
+        self.volume_envelope.reload(start_volume, volume_increase, envelope_period);
         // Not sure why the docs said to do this? This is wrong...
         // if self.envelope_timer.period == 0 {
         //     self.envelope_timer.period = 8;
@@ -128,8 +111,7 @@ impl ToneChannel {
             self.freq_timer.period = (2048 - freq) * 4;
             self.freq_timer.reset();
             // Reset volume envelope
-            self.volume = self.start_volume;
-            self.envelope_timer.reset();
+            self.volume_envelope.trigger();
             if !self.is_dac_on() {
                 // If DAC is off, disable the channel
                 trace!("DAC is off, disabling channel");
@@ -141,40 +123,22 @@ impl ToneChannel {
 
     pub(crate) fn output(&self) -> i16 {
         if self.enabled && self.is_dac_on() && self.wave_generator.output() {
-            self.volume as i16
+            self.volume_envelope.volume() as i16
         } else {
             0
         }
     }
 
-    fn volume_tick(&mut self) {
-        if self.envelope_timer.tick() {
-            if self.volume_increase && self.volume < 15 {
-                self.volume += 1;
-                trace!("increasing volume {}", self.volume);
-            } else if !self.volume_increase && self.volume > 0 {
-                self.volume -= 1;
-                trace!("decreasing volume {}", self.volume);
-            }
-            // self.envelope_timer -= 1;
-        }
-    }
 
     fn is_dac_on(&self) -> bool {
-        self.start_volume != 0 || self.volume_increase
+        self.volume_envelope.is_dac_on()
     }
 
     pub(crate) fn reset(&mut self) {
         trace!("Resetting square channel");
         self.enabled = false;
-        self.start_volume = 0;
-        self.volume = 0;
+        self.volume_envelope.reset();
         self.length_counter.reset();
-        // self.envelope_period = 0;
-        // self.envelope_timer = 0;
-        self.envelope_timer.period = 0;
-        self.envelope_timer.reset();
-        self.volume_increase = false;
         self.freq_hi = 0;
         self.freq_lo = 0;
         self.freq_timer.reset();

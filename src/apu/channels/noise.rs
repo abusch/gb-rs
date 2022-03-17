@@ -5,7 +5,7 @@ use log::trace;
 
 use crate::apu::{Timer, frame_sequencer::FrameSequencer};
 
-use super::LengthCounter;
+use super::{LengthCounter, VolumeEnvelope};
 
 /// Linear Feedback Shift Register
 #[derive(Debug)]
@@ -51,10 +51,7 @@ pub(crate) struct NoiseChannel {
     lsfr: Lsfr,
     timer: Timer,
     length_counter: LengthCounter,
-    start_volume: u8,
-    volume: u8,
-    volume_increase: bool,
-    envelope_timer: Timer,
+    volume_envelope: VolumeEnvelope,
 }
 
 impl NoiseChannel {
@@ -64,10 +61,7 @@ impl NoiseChannel {
             lsfr: Lsfr::new(),
             timer: Timer::new(4096),
             length_counter: LengthCounter::new(64),
-            start_volume: 0,
-            volume: 0,
-            volume_increase: false,
-            envelope_timer: Timer::new(0),
+            volume_envelope: VolumeEnvelope::new(),
         }
     }
 
@@ -82,23 +76,10 @@ impl NoiseChannel {
             self.enabled = false;
         }
         if frame_sequencer.vol_envelope_trigged() {
-            self.volume_tick();
-        }
-    }
-
-    fn volume_tick(&mut self) {
-        if self.envelope_timer.tick() {
-            if self.volume_increase && self.volume < 15 {
-                self.volume += 1;
-                trace!("increasing volume {}", self.volume);
-            } else if !self.volume_increase && self.volume > 0 {
-                self.volume -= 1;
-                trace!("decreasing volume {}", self.volume);
+            self.volume_envelope.tick();
+            if !self.volume_envelope.is_dac_on() {
+                self.enabled = false;
             }
-            // self.envelope_timer -= 1;
-        }
-        if !self.is_dac_on() {
-            self.enabled = false;
         }
     }
 
@@ -108,17 +89,11 @@ impl NoiseChannel {
 
     pub(crate) fn set_nr42(&mut self, b: u8) {
         let bits = b.view_bits::<Lsb0>();
-        self.start_volume = bits[4..=7].load::<u8>();
-        self.volume_increase = bits[3];
+        let start_volume = bits[4..=7].load::<u8>();
+        let volume_increase = bits[3];
         // todo envelope sweep
-        self.envelope_timer.period = bits[0..=2].load::<u8>() as u16;
-        self.envelope_timer.reset();
-        trace!(
-            "start_volume={}, volume_increase={}, envelope_period={}",
-            self.start_volume,
-            self.volume_increase,
-            self.envelope_timer.period
-        );
+        let envelope_period = bits[0..=2].load::<u8>() as u16;
+        self.volume_envelope.reload(start_volume, volume_increase, envelope_period);
         if !self.is_dac_on() {
             self.enabled = false;
         }
@@ -150,8 +125,7 @@ impl NoiseChannel {
             trace!("Noise channel triggered");
             self.enabled = true;
             self.lsfr.reset();
-            self.volume = self.start_volume;
-            self.envelope_timer.reset();
+            self.volume_envelope.trigger();
             self.length_counter.trigger();
             if !self.is_dac_on() {
                 self.enabled = false;
@@ -162,20 +136,19 @@ impl NoiseChannel {
     pub(crate) fn reset(&mut self) {
         self.enabled = false;
         self.length_counter.reset();
-        self.volume = self.start_volume;
-        self.volume_increase = false;
+        self.volume_envelope.reset();
     }
 
     pub(crate) fn output(&self) -> i16 {
         if self.enabled && self.is_dac_on() && self.lsfr.output() {
-            self.volume as i16
+            self.volume_envelope.volume() as i16
         } else {
             0
         }
     }
 
     fn is_dac_on(&self) -> bool {
-        self.start_volume != 0 || self.volume_increase
+        self.volume_envelope.is_dac_on()
     }
 
     pub(crate) fn enabled(&self) -> bool {
