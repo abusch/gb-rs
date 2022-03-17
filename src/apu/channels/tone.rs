@@ -6,7 +6,7 @@ use crate::apu::{Timer, frame_sequencer::FrameSequencer};
 use super::LengthCounter;
 
 #[derive(Debug)]
-pub(crate) struct Channel {
+pub(crate) struct ToneChannel {
     enabled: bool,
     length_counter: LengthCounter,
 
@@ -24,7 +24,7 @@ pub(crate) struct Channel {
     wave_generator: SquareWaveGenerator,
 }
 
-impl Channel {
+impl ToneChannel {
     pub(crate) fn new() -> Self {
         Self {
             enabled: false,

@@ -2,7 +2,7 @@ mod tone;
 mod wave;
 mod noise;
 
-pub(crate) use tone::Channel;
+pub(crate) use tone::ToneChannel;
 pub(crate) use wave::WaveChannel;
 pub(crate) use noise::NoiseChannel;
 

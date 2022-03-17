@@ -10,7 +10,7 @@ mod frame_sequencer;
 
 use frame_sequencer::FrameSequencer;
 
-use self::channels::{Channel, NoiseChannel, WaveChannel};
+use self::channels::{ToneChannel, NoiseChannel, WaveChannel};
 
 // Channel 1
 const REG_NR10: u16 = 0xFF10;
@@ -62,8 +62,8 @@ pub struct Apu {
     timer: Timer,
     frame_sequencer: FrameSequencer,
 
-    channel1: Channel,
-    channel2: Channel,
+    channel1: ToneChannel,
+    channel2: ToneChannel,
     channel3: WaveChannel,
     channel4: NoiseChannel,
 
@@ -82,8 +82,8 @@ impl Apu {
             sample_counter: 0.0,
             timer: Timer::new(TIMER_PERIOD),
             frame_sequencer: FrameSequencer::default(),
-            channel1: Channel::new(),
-            channel2: Channel::new(),
+            channel1: ToneChannel::new(),
+            channel2: ToneChannel::new(),
             channel3: WaveChannel::new(),
             channel4: NoiseChannel::new(),
             buf: VecDeque::new(),
