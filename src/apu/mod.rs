@@ -1,4 +1,4 @@
-use std::{time::Duration, collections::VecDeque, ops::ShrAssign};
+use std::{collections::VecDeque, ops::ShrAssign};
 
 use bitvec::{field::BitField, order::Lsb0, view::BitView};
 use log::{debug, trace};
@@ -111,11 +111,6 @@ impl Apu {
                 if self.buf.len() > 200 {
                     sink.push_samples(&mut self.buf);
                 }
-                // if sink.push_sample(self.output()) {
-                //     // Buffer is full, wait a little bit
-                //     // TODO this is a pretty ugly hack....
-                //     std::thread::sleep(Duration::from_millis(40));
-                // }
             }
         }
     }
@@ -193,7 +188,6 @@ impl Apu {
                 let mut byte = 0u8;
                 let bits = byte.view_bits_mut::<Lsb0>();
                 bits.set(7, self.apu_enabled);
-                // TODO
                 bits.set(3, self.channel4.enabled);
                 bits.set(2, self.channel3.enabled);
                 bits.set(1, self.channel2.enabled);
@@ -212,18 +206,18 @@ impl Apu {
             REG_NR12 => self.channel1.set_nrx2(b),
             REG_NR13 => self.channel1.set_nrx3(b),
             REG_NR14 => self.channel1.set_nrx4(b),
-            // Channel 2()
+            // Channel 2
             REG_NR21 => self.channel2.set_nrx1(b),
             REG_NR22 => self.channel2.set_nrx2(b),
             REG_NR23 => self.channel2.set_nrx3(b),
             REG_NR24 => self.channel2.set_nrx4(b),
-            // Channel 3()
+            // Channel 3
             REG_NR30 => self.channel3.set_nr30(b),
             REG_NR31 => self.channel3.set_nr31(b),
             REG_NR32 => self.channel3.set_nr32(b),
             REG_NR33 => self.channel3.set_nr33(b),
             REG_NR34 => self.channel3.set_nr34(b),
-            // Channel 4()
+            // Channel 4
             REG_NR41 => self.channel4.set_nr41(b),
             REG_NR42 => self.channel4.set_nr42(b),
             REG_NR43 => self.channel4.set_nr43(b),
@@ -233,18 +227,8 @@ impl Apu {
                 let bits = b.view_bits::<Lsb0>();
                 self.left_volume = bits[4..=6].load::<u8>();
                 self.right_volume = bits[0..=2].load::<u8>();
-                trace!(
-                    "Setting volumes left={}, right={}",
-                    self.left_volume, self.right_volume
-                );
             }
-            REG_NR51 => {
-                self.sound_output_selection = b;
-                trace!(
-                    "Setting output selection {:08b}",
-                    self.sound_output_selection
-                );
-            }
+            REG_NR51 => self.sound_output_selection = b,
             REG_NR52 => {
                 self.apu_enabled = b.view_bits::<Lsb0>()[7];
                 if self.apu_enabled {
@@ -293,10 +277,54 @@ impl FrameSequencer {
 }
 
 #[derive(Debug)]
+struct LengthCounter {
+    length_enabled: bool,
+    length_counter: u16,
+    default_length: u16,
+}
+
+impl LengthCounter {
+    pub fn new(default_length: u16) -> Self {
+        Self {
+            length_enabled: false,
+            length_counter: 0,
+            default_length,
+        }
+    }
+
+    fn tick(&mut self) -> bool {
+        if self.length_enabled && self.length_counter > 0 {
+            self.length_counter -= 1;
+        }
+
+        // Return true if the length counter is enabled and the counter has reached 0
+        self.length_enabled && self.length_counter == 0
+    }
+
+    fn load(&mut self, length: u16) {
+        self.length_counter = length;
+    }
+
+    fn enable(&mut self) {
+        self.length_enabled = true;
+    }
+
+    fn reset(&mut self) {
+        self.length_enabled = false;
+        self.length_counter = 0;
+    }
+
+    fn trigger(&mut self) {
+        if self.length_counter == 0 {
+            self.length_counter = self.default_length;
+        }
+    }
+}
+
+#[derive(Debug)]
 struct Channel {
     enabled: bool,
-    length_enabled: bool,
-    length_counter: u8,
+    length_counter: LengthCounter,
 
     start_volume: u8,
     volume: u8,
@@ -316,8 +344,7 @@ impl Channel {
     pub fn new() -> Self {
         Self {
             enabled: false,
-            length_enabled: false,
-            length_counter: 0,
+            length_counter: LengthCounter::new(64),
             start_volume: 0,
             volume: 0,
             volume_increase: false,
@@ -330,6 +357,7 @@ impl Channel {
             wave_generator: WaveGenerator::new(),
         }
     }
+
     pub fn tick(&mut self) {
         if self.freq_timer.tick() {
             self.wave_generator.tick();
@@ -337,8 +365,9 @@ impl Channel {
     }
 
     pub fn tick_frame(&mut self, frame_sequencer: &FrameSequencer) {
-        if frame_sequencer.length_triggered() {
-            self.length_tick();
+        if frame_sequencer.length_triggered() && self.length_counter.tick() {
+            // The length counter expired: disable the channel
+            self.enabled = false;
         }
         if frame_sequencer.vol_envelope_trigged() {
             self.volume_tick();
@@ -363,7 +392,7 @@ impl Channel {
 
         let length = bits[0..=5].load::<u8>();
         trace!("length = {}", length);
-        self.length_counter = 64 - length;
+        self.length_counter.load(64 - length as u16);
     }
 
     pub fn set_nrx2(&mut self, b: u8) {
@@ -375,7 +404,9 @@ impl Channel {
         self.envelope_timer.reset();
         trace!(
             "start_volume={}, volume_increase={}, envelope_period={}",
-            self.start_volume, self.volume_increase, self.envelope_timer.period
+            self.start_volume,
+            self.volume_increase,
+            self.envelope_timer.period
         );
         // Not sure why the docs said to do this? This is wrong...
         // if self.envelope_timer.period == 0 {
@@ -396,15 +427,15 @@ impl Channel {
         trace!("setting NRx4 to {:08b}", b);
         let bits = b.view_bits::<Lsb0>();
 
-        self.length_enabled = bits[6];
+        if bits[6] {
+            self.length_counter.enable();
+        }
         self.freq_hi = bits[0..=2].load::<u8>();
 
         if bits[7] {
             // Trigger
             self.enabled = true;
-            if self.length_counter == 0 {
-                self.length_counter = 64;
-            }
+            self.length_counter.trigger();
             let freq = ((self.freq_hi as u16) << 8) + self.freq_lo as u16;
             if freq == 0 {
                 // should we do this?
@@ -414,12 +445,7 @@ impl Channel {
             self.freq_timer.reset();
             // Reset volume envelope
             self.volume = self.start_volume;
-            // self.envelope_timer.period = self.envelope_period;
             self.envelope_timer.reset();
-            trace!(
-                "Triggering channel with freq={}, period={}, length={}, length_enabled={}",
-                freq, self.freq_timer.period, self.length_counter, self.length_enabled
-            );
             if !self.is_dac_on() {
                 // If DAC is off, disable the channel
                 trace!("DAC is off, disabling channel");
@@ -437,20 +463,8 @@ impl Channel {
         }
     }
 
-    fn length_tick(&mut self) {
-        if self.enabled && self.length_enabled {
-            // Only decrement the length counter if the channel is active
-            self.length_counter -= 1;
-            if self.length_counter == 0 {
-                // If we reach 0, disable the channel
-                trace!("length expired, disabling channel");
-                self.enabled = false;
-            }
-        }
-    }
-
     fn volume_tick(&mut self) {
-        if self.envelope_timer.tick()  {
+        if self.envelope_timer.tick() {
             if self.volume_increase && self.volume < 15 {
                 self.volume += 1;
                 trace!("increasing volume {}", self.volume);
@@ -471,8 +485,7 @@ impl Channel {
         self.enabled = false;
         self.start_volume = 0;
         self.volume = 0;
-        self.length_counter = 0;
-        self.length_enabled = false;
+        self.length_counter.reset();
         // self.envelope_period = 0;
         // self.envelope_timer = 0;
         self.envelope_timer.period = 0;
@@ -571,8 +584,7 @@ struct WaveChannel {
     // Wave table containing 32 4-bit samples
     wav: [u8; 16],
     enabled: bool,
-    length_enabled: bool,
-    length_counter: u16,
+    length_counter: LengthCounter,
     output_level: OutputLevel,
     freq: u16,
     position: u8,
@@ -584,8 +596,7 @@ impl WaveChannel {
         Self {
             wav: [0; 16],
             enabled: false,
-            length_enabled: false,
-            length_counter: 0,
+            length_counter: LengthCounter::new(256),
             output_level: OutputLevel::Mute,
             freq: 0,
             position: 0,
@@ -604,19 +615,8 @@ impl WaveChannel {
 
     pub fn tick_frame(&mut self, frame_sequencer: &FrameSequencer) {
         // we only care about the length here
-        if frame_sequencer.length_triggered() {
-            self.length_tick();
-        }
-    }
-
-    fn length_tick(&mut self) {
-        if self.enabled && self.length_enabled {
-            // Only decrement the length counter if the channel is active
-            self.length_counter -= 1;
-            if self.length_counter == 0 {
-                // If we reach 0, disable the channel
-                self.enabled = false;
-            }
+        if frame_sequencer.length_triggered() && self.length_counter.tick() {
+            self.enabled = false;
         }
     }
 
@@ -630,7 +630,7 @@ impl WaveChannel {
     }
 
     fn set_nr31(&mut self, b: u8) {
-        self.length_counter = 256 - b as u16;
+        self.length_counter.load(256 - b as u16);
     }
 
     fn set_nr32(&mut self, b: u8) {
@@ -651,11 +651,15 @@ impl WaveChannel {
         let bits = b.view_bits::<Lsb0>();
         self.freq.view_bits_mut::<Lsb0>()[8..=10].store::<u8>(bits[0..=2].load::<u8>());
 
+        if bits[6] {
+            self.length_counter.enable();
+        }
+
         if bits[7] {
             // trigger
             self.position = 0;
             self.freq_timer.period = (2048 - self.freq) * 2;
-            self.length_counter = 256;
+            self.length_counter.trigger();
         }
     }
 
@@ -680,8 +684,7 @@ impl WaveChannel {
 
     fn reset(&mut self) {
         self.enabled = false;
-        self.length_enabled = false;
-        self.length_counter = 0;
+        self.length_counter.reset();
         self.position = 0;
         self.output_level = OutputLevel::Mute;
     }
@@ -731,7 +734,7 @@ impl LSFR {
         let b = bits[0] ^ bits[1];
         self.reg.shr_assign(1);
 
-        let bits = self.reg.view_bits_mut::<Lsb0>(); 
+        let bits = self.reg.view_bits_mut::<Lsb0>();
         bits.set(14, b);
         if self.width_mode {
             bits.set(6, b);
@@ -749,8 +752,7 @@ struct NoiseChannel {
     enabled: bool,
     lsfr: LSFR,
     timer: Timer,
-    length_enabled: bool,
-    length_counter: u8,
+    length_counter: LengthCounter,
     start_volume: u8,
     volume: u8,
     volume_increase: bool,
@@ -763,8 +765,7 @@ impl NoiseChannel {
             enabled: false,
             lsfr: LSFR::new(),
             timer: Timer::new(4096),
-            length_enabled: false,
-            length_counter: 0,
+            length_counter: LengthCounter::new(64),
             start_volume: 0,
             volume: 0,
             volume_increase: false,
@@ -779,26 +780,16 @@ impl NoiseChannel {
     }
 
     fn tick_frame(&mut self, frame_sequencer: &FrameSequencer) {
-        if frame_sequencer.length_triggered() {
-            self.length_tick();
+        if frame_sequencer.length_triggered() && self.length_counter.tick() {
+            self.enabled = false;
         }
         if frame_sequencer.vol_envelope_trigged() {
             self.volume_tick();
         }
     }
 
-    fn length_tick(&mut self) {
-        if self.length_enabled && self.length_counter > 0 {
-            self.length_counter -= 1;
-            if self.length_counter == 0 {
-                trace!("Length expired: disabling noise channel");
-                self.enabled = false;
-            }
-        }
-    }
-
     fn volume_tick(&mut self) {
-        if self.envelope_timer.tick()  {
+        if self.envelope_timer.tick() {
             if self.volume_increase && self.volume < 15 {
                 self.volume += 1;
                 trace!("increasing volume {}", self.volume);
@@ -814,7 +805,7 @@ impl NoiseChannel {
     }
 
     fn set_nr41(&mut self, b: u8) {
-        self.length_counter = 64 - (b & 0x3F);
+        self.length_counter.load(64 - (b & 0x3F) as u16);
     }
 
     fn set_nr42(&mut self, b: u8) {
@@ -826,11 +817,10 @@ impl NoiseChannel {
         self.envelope_timer.reset();
         trace!(
             "start_volume={}, volume_increase={}, envelope_period={}",
-            self.start_volume, self.volume_increase, self.envelope_timer.period
+            self.start_volume,
+            self.volume_increase,
+            self.envelope_timer.period
         );
-        // if self.envelope_timer.period == 0 {
-        //     self.envelope_timer.period = 8;
-        // }
         if !self.is_dac_on() {
             self.enabled = false;
         }
@@ -840,7 +830,7 @@ impl NoiseChannel {
         let bits = b.view_bits::<Lsb0>();
         let base_divisor = match bits[0..=2].load::<u8>() {
             0 => 8,
-            n@1..=7 => n * 16,
+            n @ 1..=7 => n * 16,
             _ => unreachable!(),
         };
         let shift = bits[4..=7].load::<u8>();
@@ -853,7 +843,9 @@ impl NoiseChannel {
 
     fn set_nr44(&mut self, b: u8) {
         let bits = b.view_bits::<Lsb0>();
-        self.length_enabled = bits[6];
+        if bits[6] {
+            self.length_counter.enable();
+        };
 
         if bits[7] {
             // trigger
@@ -862,9 +854,7 @@ impl NoiseChannel {
             self.lsfr.reset();
             self.volume = self.start_volume;
             self.envelope_timer.reset();
-            if self.length_counter == 0 {
-                self.length_counter = 64;
-            }
+            self.length_counter.trigger();
             if !self.is_dac_on() {
                 self.enabled = false;
             }
@@ -873,8 +863,7 @@ impl NoiseChannel {
 
     fn reset(&mut self) {
         self.enabled = false;
-        self.length_counter = 0;
-        self.length_enabled = false;
+        self.length_counter.reset();
         self.volume = self.start_volume;
         self.volume_increase = false;
     }
@@ -890,5 +879,4 @@ impl NoiseChannel {
     fn is_dac_on(&self) -> bool {
         self.start_volume != 0 || self.volume_increase
     }
-
 }
