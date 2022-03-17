@@ -24,7 +24,7 @@ Seems to work fine with most MBC1+RAM games that I've tried.
 ## Still to do
 - [ ] Allow building/running without the boot rom
 - [ ] Support other MBCs
-- [ ] Sound
+- [x] Sound
 - [ ] Maybe compile to WASM?
 
 ## Screenshots

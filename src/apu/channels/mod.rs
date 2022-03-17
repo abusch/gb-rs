@@ -112,4 +112,3 @@ impl VolumeEnvelope {
         self.timer.reset();
     }
 }
-

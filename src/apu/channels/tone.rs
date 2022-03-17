@@ -1,7 +1,7 @@
-use bitvec::{view::BitView, order::Lsb0, field::BitField};
+use bitvec::{field::BitField, order::Lsb0, view::BitView};
 use log::trace;
 
-use crate::apu::{Timer, frame_sequencer::FrameSequencer};
+use crate::apu::{frame_sequencer::FrameSequencer, Timer};
 
 use super::{LengthCounter, VolumeEnvelope};
 #[derive(Debug)]
@@ -15,11 +15,12 @@ pub(crate) struct ToneChannel {
     freq_lo: u8,
 
     freq_timer: Timer,
+    frequency_sweep: Option<FrequencySweep>,
     wave_generator: SquareWaveGenerator,
 }
 
 impl ToneChannel {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(with_frequency_sweep: bool) -> Self {
         Self {
             enabled: false,
             length_counter: LengthCounter::new(64),
@@ -27,6 +28,11 @@ impl ToneChannel {
             freq_hi: 0,
             freq_lo: 0,
             freq_timer: Timer::new(8192),
+            frequency_sweep: if with_frequency_sweep {
+                Some(FrequencySweep::new())
+            } else {
+                None
+            },
             wave_generator: SquareWaveGenerator::new(),
         }
     }
@@ -46,13 +52,24 @@ impl ToneChannel {
             self.volume_envelope.tick();
         }
         if frame_sequencer.sweep_triggered() {
-            // TODO
+            if let Some(ref mut sweep) = self.frequency_sweep {
+                match sweep.tick() {
+                    FrequencySweepResult::NewFreq(f) => self.freq_timer.period = (2048 - f) * 4,
+                    FrequencySweepResult::Disable => self.enabled = false,
+                    FrequencySweepResult::Nop => (),
+                }
+            }
         }
     }
 
     pub(crate) fn set_nrx0(&mut self, b: u8) {
-        // let bits = b.view_bits::<Lsb0>();
-        // TODO
+        if let Some(ref mut sweep) = self.frequency_sweep {
+            let bits = b.view_bits::<Lsb0>();
+            let sweep_time = bits[4..=6].load::<u8>();
+            let negate = bits[3];
+            let shift = bits[0..=2].load::<u8>();
+            sweep.load(sweep_time as u16, negate, shift);
+        }
     }
 
     pub(crate) fn set_nrx1(&mut self, b: u8) {
@@ -74,7 +91,8 @@ impl ToneChannel {
         let start_volume = bits[4..=7].load::<u8>();
         let volume_increase = bits[3];
         let envelope_period = bits[0..=2].load::<u8>() as u16;
-        self.volume_envelope.reload(start_volume, volume_increase, envelope_period);
+        self.volume_envelope
+            .reload(start_volume, volume_increase, envelope_period);
         // Not sure why the docs said to do this? This is wrong...
         // if self.envelope_timer.period == 0 {
         //     self.envelope_timer.period = 8;
@@ -112,6 +130,9 @@ impl ToneChannel {
             self.freq_timer.reset();
             // Reset volume envelope
             self.volume_envelope.trigger();
+            if let Some(ref mut sweep) = self.frequency_sweep {
+                sweep.trigger(freq);
+            }
             if !self.is_dac_on() {
                 // If DAC is off, disable the channel
                 trace!("DAC is off, disabling channel");
@@ -129,7 +150,6 @@ impl ToneChannel {
         }
     }
 
-
     fn is_dac_on(&self) -> bool {
         self.volume_envelope.is_dac_on()
     }
@@ -142,6 +162,9 @@ impl ToneChannel {
         self.freq_hi = 0;
         self.freq_lo = 0;
         self.freq_timer.reset();
+        if let Some(ref mut sweep) = self.frequency_sweep {
+            sweep.reset()
+        }
     }
 
     pub(crate) fn enabled(&self) -> bool {
@@ -199,5 +222,75 @@ impl From<u8> for Duty {
             3 => Duty::Duty3,
             _ => panic!("Unsupported value for Duty enum: {}", d),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum FrequencySweepResult {
+    NewFreq(u16),
+    Disable,
+    Nop,
+}
+
+#[derive(Debug)]
+struct FrequencySweep {
+    enabled: bool,
+    shadow_register: u16,
+    should_negate: bool,
+    timer: Timer,
+    shift: u8,
+}
+
+impl FrequencySweep {
+    fn new() -> Self {
+        Self {
+            enabled: false,
+            shadow_register: 0,
+            should_negate: false,
+            timer: Timer::new(0),
+            shift: 0,
+        }
+    }
+
+    fn tick(&mut self) -> FrequencySweepResult {
+        if self.timer.tick() && self.enabled && self.shift != 0 {
+            let delta = self.shadow_register >> self.shift as u16;
+            let new_freq = if self.should_negate {
+                self.shadow_register.wrapping_sub(delta)
+            } else {
+                self.shadow_register.wrapping_add(delta)
+            };
+            let overflow = self.shadow_register > 2047;
+            if overflow {
+                return FrequencySweepResult::Disable;
+            } else {
+                self.shadow_register = new_freq;
+                return FrequencySweepResult::NewFreq(new_freq);
+            }
+        }
+
+        FrequencySweepResult::Nop
+    }
+
+    fn load(&mut self, sweep_time: u16, negate: bool, shift: u8) {
+        self.timer.period = sweep_time;
+        self.should_negate = negate;
+        self.shift = shift;
+    }
+
+    fn trigger(&mut self, current_frequency: u16) {
+        self.shadow_register = current_frequency;
+        self.timer.reset();
+        if self.timer.period != 0 || self.shift != 0 {
+            self.enabled = true;
+        }
+    }
+
+    fn reset(&mut self) {
+        self.enabled = false;
+        self.shadow_register = 0;
+        self.shift = 0;
+        self.should_negate = false;
+        self.timer.period = 0;
     }
 }
