@@ -4,7 +4,7 @@ use log::{debug, info, trace};
 
 use crate::{
     apu::Apu, cartridge::Cartridge, gfx::Gfx, interrupt::InterruptFlag, joypad::Joypad,
-    timer::Timer, FrameSink, AudioSink,
+    timer::Timer, AudioSink, FrameSink,
 };
 
 const BOOT_ROM_DATA: &[u8] = include_bytes!("../assets/dmg_boot.bin");
@@ -82,7 +82,12 @@ impl Bus {
     }
 
     /// Run the different peripherals for the given number of clock cycles
-    pub fn cycle(&mut self, cycles: u8, frame_sink: &mut dyn FrameSink, audio_sink: &mut dyn AudioSink) {
+    pub fn cycle(
+        &mut self,
+        cycles: u8,
+        frame_sink: &mut dyn FrameSink,
+        audio_sink: &mut dyn AudioSink,
+    ) {
         self.interrupt_flag |= self.gfx.dots(cycles, frame_sink);
         self.apu.step(cycles, audio_sink);
         if self.timer.cycle(cycles) {
@@ -149,10 +154,10 @@ impl Bus {
                 }
             } else if (0x2000..0x3FFF).contains(&addr) {
                 self.cartridge.select_rom_bank(b);
-            // } else {
-            //     // ROM Bank Number register
-            //     // self.cartridge.select_rom_bank(b);
-            //     debug!("Not implemented: select 9th bit of ROM bank number");
+                // } else {
+                //     // ROM Bank Number register
+                //     // self.cartridge.select_rom_bank(b);
+                //     debug!("Not implemented: select 9th bit of ROM bank number");
             }
         } else if CART_BANK_MAPPED.contains(&addr) {
             if (0x4000..=0x5FFF).contains(&addr) {
@@ -295,11 +300,7 @@ impl Bus {
             self.apu.write_io(addr, b);
         } else if IO_RANGE_WAV.contains(&addr) {
             // Waveform ram
-            trace!(
-                "Write waveform RAM 0x{:04x}<-0x{:02X}",
-                addr,
-                b
-            );
+            trace!("Write waveform RAM 0x{:04x}<-0x{:02X}", addr, b);
             self.apu.write_wav(addr, b);
         } else if IO_RANGE_LCD.contains(&addr) {
             // LCD
@@ -326,7 +327,8 @@ impl Bus {
         } else {
             trace!(
                 "Write I/O Register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
-                addr, b
+                addr,
+                b
             );
         }
     }

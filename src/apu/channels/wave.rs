@@ -1,6 +1,6 @@
-use bitvec::{view::BitView, order::Lsb0, field::BitField};
+use bitvec::{field::BitField, order::Lsb0, view::BitView};
 
-use crate::apu::{Timer, frame_sequencer::FrameSequencer};
+use crate::apu::{frame_sequencer::FrameSequencer, Timer};
 
 use super::LengthCounter;
 
@@ -141,5 +141,3 @@ impl OutputLevel {
         }
     }
 }
-
-

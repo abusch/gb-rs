@@ -9,4 +9,3 @@ bitflags! {
         const JOYPAD   = 0b00010000;
     }
 }
-

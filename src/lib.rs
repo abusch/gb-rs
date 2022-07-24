@@ -2,12 +2,12 @@ use std::collections::VecDeque;
 
 mod apu;
 mod bus;
-pub mod joypad;
 pub mod cartridge;
 mod cpu;
 pub mod gameboy;
 mod gfx;
 mod interrupt;
+pub mod joypad;
 mod timer;
 
 pub const SCREEN_WIDTH: usize = 160;

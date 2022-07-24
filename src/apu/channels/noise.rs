@@ -1,9 +1,9 @@
 use std::ops::ShrAssign;
 
-use bitvec::{view::BitView, order::Lsb0, field::BitField};
+use bitvec::{field::BitField, order::Lsb0, view::BitView};
 use log::trace;
 
-use crate::apu::{Timer, frame_sequencer::FrameSequencer};
+use crate::apu::{frame_sequencer::FrameSequencer, Timer};
 
 use super::{LengthCounter, VolumeEnvelope};
 
@@ -93,7 +93,8 @@ impl NoiseChannel {
         let volume_increase = bits[3];
         // todo envelope sweep
         let envelope_period = bits[0..=2].load::<u8>() as u16;
-        self.volume_envelope.reload(start_volume, volume_increase, envelope_period);
+        self.volume_envelope
+            .reload(start_volume, volume_increase, envelope_period);
         if !self.is_dac_on() {
             self.enabled = false;
         }
@@ -155,4 +156,3 @@ impl NoiseChannel {
         self.enabled
     }
 }
-

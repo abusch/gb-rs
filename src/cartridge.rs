@@ -34,12 +34,16 @@ impl Cartridge {
             let ram = std::fs::read(&cart.save_file).context("Failed to load RAM file")?;
             let expected_size = cart.get_num_ram_banks() as usize * 8192;
             if ram.len() != expected_size {
-                warn!("RAM file {} has size {}, expected {}. Ignoring...", cart.save_file.display(), ram.len(), expected_size);
+                warn!(
+                    "RAM file {} has size {}, expected {}. Ignoring...",
+                    cart.save_file.display(),
+                    ram.len(),
+                    expected_size
+                );
             } else {
                 info!("Loading RAM file {}...", cart.save_file.display());
                 cart.ram[..expected_size].copy_from_slice(&ram[..]);
             }
-
         } else {
             info!("No RAM file found.");
         }
@@ -135,7 +139,10 @@ impl Cartridge {
 
     pub fn set_secondary_bank_register(&mut self, bank: u8) {
         self.secondary_bank_register = bank & 0x03;
-        trace!("Secondary bank register: {:02x}", self.secondary_bank_register);
+        trace!(
+            "Secondary bank register: {:02x}",
+            self.secondary_bank_register
+        );
     }
 
     pub fn select_banking_mode(&mut self, b: u8) {
@@ -197,7 +204,11 @@ impl Cartridge {
     pub fn save(&self) {
         let ram_size = self.get_num_ram_banks() as usize * 8192;
         if let Err(e) = std::fs::write(&self.save_file, &self.ram[..ram_size]) {
-            warn!("Failed to save RAM file {}: {}", &self.save_file.display(), e);
+            warn!(
+                "Failed to save RAM file {}: {}",
+                &self.save_file.display(),
+                e
+            );
         }
     }
 

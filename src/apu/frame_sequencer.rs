@@ -18,5 +18,3 @@ impl FrameSequencer {
         self.0 == 2 || self.0 == 6
     }
 }
-
-

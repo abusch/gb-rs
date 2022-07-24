@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
 use ansi_term::Colour;
+use anyhow::Result;
 use rustyline::{
     completion::{Completer, Pair},
     error::ReadlineError,
@@ -16,11 +17,11 @@ pub struct Debugger {
 }
 
 impl Debugger {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self> {
         let helper = DebuggerHelper::default();
-        let mut editor = Editor::<DebuggerHelper>::new();
+        let mut editor = Editor::<DebuggerHelper>::new()?;
         editor.set_helper(Some(helper));
-        Self { editor }
+        Ok(Self { editor })
     }
 
     pub fn debug(&mut self) -> Command {

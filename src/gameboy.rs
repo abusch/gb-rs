@@ -2,7 +2,7 @@ use crate::bus::Bus;
 use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
 use crate::joypad::Button;
-use crate::{FrameSink, AudioSink};
+use crate::{AudioSink, FrameSink};
 
 pub struct GameBoy {
     cpu: Cpu,
@@ -47,7 +47,7 @@ impl GameBoy {
     pub fn dump_sprite(&self, id: u8) {
         self.bus.gfx.dump_sprite(id);
     }
-    
+
     pub fn dump_palettes(&self) {
         self.bus.gfx.dump_palettes();
     }

@@ -1,4 +1,4 @@
-use bitvec::{view::BitView, order::Lsb0};
+use bitvec::{order::Lsb0, view::BitView};
 
 #[derive(Debug, Default)]
 pub struct Joypad {

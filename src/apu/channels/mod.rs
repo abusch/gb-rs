@@ -1,11 +1,11 @@
+mod noise;
 mod tone;
 mod wave;
-mod noise;
 
 use log::trace;
+pub(crate) use noise::NoiseChannel;
 pub(crate) use tone::ToneChannel;
 pub(crate) use wave::WaveChannel;
-pub(crate) use noise::NoiseChannel;
 
 use super::Timer;
 

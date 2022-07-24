@@ -53,7 +53,7 @@ impl Emulator {
             gb,
             start_time_ns: Instant::now(),
             emulated_cycles: 0,
-            debugger: Debugger::new(),
+            debugger: Debugger::new()?,
             sink: MostRecentFrameSink::default(),
             audio_sink: CpalAudioSink::new(producer),
         })

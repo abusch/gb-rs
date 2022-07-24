@@ -10,7 +10,7 @@ mod frame_sequencer;
 
 use frame_sequencer::FrameSequencer;
 
-use self::channels::{ToneChannel, NoiseChannel, WaveChannel};
+use self::channels::{NoiseChannel, ToneChannel, WaveChannel};
 
 // Channel 1
 const REG_NR10: u16 = 0xFF10;

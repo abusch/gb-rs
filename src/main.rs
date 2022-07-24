@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{BufferSize, SampleRate, Stream, StreamConfig, Sample};
+use cpal::{BufferSize, Sample, SampleRate, Stream, StreamConfig};
 use emulator::Emulator;
 use gb_rs::{SCREEN_HEIGHT, SCREEN_WIDTH};
-use log::{debug, error, info, warn, trace};
+use log::{debug, error, info, trace, warn};
 use pixels::{Pixels, SurfaceTexture};
 use ringbuf::{Consumer, RingBuffer};
 use winit::{

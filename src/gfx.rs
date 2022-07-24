@@ -1,4 +1,7 @@
-use std::{fmt::Debug, ops::{Deref, DerefMut}};
+use std::{
+    fmt::Debug,
+    ops::{Deref, DerefMut},
+};
 
 use bitvec::prelude::*;
 use log::trace;
@@ -432,7 +435,7 @@ impl Gfx {
                 // treat tile id as *signed*, so sign-extend it to 16 bits
                 let signed_id = tile_id as i8 as i16;
                 let offset = (16 * signed_id) as u16;
-                
+
                 base.wrapping_add(offset)
                 // (base + 16 * signed_id as i16) as u16
             };
@@ -462,11 +465,13 @@ impl Gfx {
             });
 
             let final_color = match (self.obj_enabled, sprite_pixel_and_bg_has_priority) {
-                (true, Some((p, true))) => if color_byte != 0 {
-                    self.bgp[color_byte as usize]
-                } else {
-                    p
-                },
+                (true, Some((p, true))) => {
+                    if color_byte != 0 {
+                        self.bgp[color_byte as usize]
+                    } else {
+                        p
+                    }
+                }
                 (true, Some((p, false))) => p,
                 (true, None) => self.bgp[color_byte as usize],
                 (false, _) => self.bgp[color_byte as usize],
@@ -777,7 +782,7 @@ impl Palette {
     fn to_debug_str(&self) -> String {
         let mut s = String::new();
         for c in self.0 {
-            let (r,g,b) = c.as_rgba();
+            let (r, g, b) = c.as_rgba();
             s.push_str(&format!("{}", ansi_term::Color::RGB(r, g, b).paint("██")));
         }
         s
@@ -785,7 +790,7 @@ impl Palette {
 }
 
 impl Deref for Palette {
-    type Target=[Color; 4];
+    type Target = [Color; 4];
 
     fn deref(&self) -> &Self::Target {
         &self.0
