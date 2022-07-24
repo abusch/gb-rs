@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{BufferSize, SampleRate, Stream, StreamConfig};
+use cpal::{BufferSize, SampleRate, Stream, StreamConfig, Sample};
 use emulator::Emulator;
 use gb_rs::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use log::{debug, error, info, warn, trace};
@@ -94,10 +94,6 @@ fn init_audio(mut consumer: Consumer<i16>) -> Result<Stream> {
         .default_output_device()
         .context("error while querying config")?;
     debug!("Audio device: {:?}", device.name());
-    // let supported_configs_range = device.supported_output_configs()?;
-    // for conf in supported_configs_range {
-    //     info!("Supported config: {conf:?}");
-    // }
     let config = StreamConfig {
         channels: 2,
         sample_rate: SampleRate(44100),
@@ -109,15 +105,15 @@ fn init_audio(mut consumer: Consumer<i16>) -> Result<Stream> {
     let stream = device
         .build_output_stream(
             &config,
-            move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
+            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 let mut fell_behind = false;
                 trace!("Writing {} audio samples", data.len());
                 for sample in data {
                     *sample = match consumer.pop() {
-                        Some(s) => s,
+                        Some(s) => Sample::from(&s),
                         None => {
                             fell_behind = true;
-                            0
+                            0.0
                         }
                     }
                 }
