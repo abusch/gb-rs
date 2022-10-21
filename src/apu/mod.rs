@@ -276,7 +276,9 @@ impl Timer {
     }
 
     pub fn tick(&mut self) -> bool {
-        self.counter -= 1;
+        if self.counter > 0 {
+            self.counter -= 1;
+        }
         if self.counter == 0 {
             self.reset();
             true

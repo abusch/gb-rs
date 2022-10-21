@@ -1,4 +1,10 @@
+use std::any::Any;
+use std::path::PathBuf;
+use std::thread;
+use std::time::Duration;
+
 use anyhow::{Context, Result};
+use clap::Parser;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, Sample, SampleRate, Stream, StreamConfig};
 use emulator::Emulator;
@@ -17,9 +23,20 @@ use winit_input_helper::WinitInputHelper;
 mod debugger;
 mod emulator;
 
+#[derive(Parser)]
+#[command(about, version, author)]
+pub struct Cli {
+    #[arg(short, long)]
+    quiet: bool,
+    /// Path to the ROM file
+    rom: PathBuf,
+}
+
 fn main() -> Result<()> {
     // initialise logger
     env_logger::builder().parse_filters("gb_rs=debug").init();
+
+    let cli = Cli::parse();
 
     let event_loop = EventLoop::new();
     let mut input = WinitInputHelper::new();
@@ -42,8 +59,14 @@ fn main() -> Result<()> {
     // Buffer can hold 0.5s of samples (assuming 2 channels)
     let ringbuf = RingBuffer::new(8102);
     let (producer, consumer) = ringbuf.split();
-    let mut emulator = Emulator::new(producer)?;
-    let _stream = init_audio(consumer)?;
+    let mut emulator = Emulator::new(&cli.rom, producer)?;
+    let _guard: Box<dyn Any> = if cli.quiet {
+        init_no_audio(consumer);
+        Box::new(())
+    } else {
+        let stream = init_audio(consumer)?;
+        Box::new(stream)
+    };
 
     event_loop.run(move |event, _, control_flow| {
         if let Event::RedrawRequested(_) = event {
@@ -117,9 +140,9 @@ fn init_audio(mut consumer: Consumer<i16>) -> Result<Stream> {
                         }
                     }
                 }
-                if fell_behind {
-                    debug!("Buffer underrun!");
-                }
+                // if fell_behind {
+                //     debug!("Buffer underrun!");
+                // }
             },
             err_fn,
         )
@@ -128,4 +151,17 @@ fn init_audio(mut consumer: Consumer<i16>) -> Result<Stream> {
     info!("Audio stream started!");
 
     Ok(stream)
+}
+
+fn init_no_audio(mut consumer: Consumer<i16>) {
+    thread::spawn(move || {
+        loop {
+            // empty the ring buffer
+            while consumer.pop().is_some() {
+                // nop
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+
+    });
 }

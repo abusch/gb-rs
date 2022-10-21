@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use log::{debug, info};
 
 use gb_rs::{
@@ -36,10 +36,8 @@ pub struct Emulator {
 }
 
 impl Emulator {
-    pub fn new(producer: Producer<i16>) -> Result<Self> {
-        let file = std::env::args().nth(1).context("Unable to find ROM file")?;
-
-        let cartridge = Cartridge::load(file)?;
+    pub fn new(rom: impl AsRef<Path>, producer: Producer<i16>) -> Result<Self> {
+        let cartridge = Cartridge::load(rom)?;
         info!("Title is {}", cartridge.title());
         info!("Licensee code is {}", cartridge.licensee_code());
         info!("Cartridge type is {}", cartridge.cartridge_type());
