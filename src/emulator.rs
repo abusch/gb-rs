@@ -3,6 +3,7 @@ use std::{
     fs::File,
     io::BufWriter,
     path::Path,
+    sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -13,7 +14,7 @@ use gb_rs::{
     cartridge::Cartridge, gameboy::GameBoy, joypad::Button, AudioSink, FrameSink, SCREEN_HEIGHT,
     SCREEN_WIDTH,
 };
-use ringbuf::Producer;
+use ringbuf::{HeapRb, Producer};
 use winit::event::VirtualKeyCode;
 use winit_input_helper::WinitInputHelper;
 
@@ -36,7 +37,7 @@ pub struct Emulator {
 }
 
 impl Emulator {
-    pub fn new(rom: impl AsRef<Path>, producer: Producer<i16>) -> Result<Self> {
+    pub fn new(rom: impl AsRef<Path>, producer: Producer<i16, Arc<HeapRb<i16>>>) -> Result<Self> {
         let cartridge = Cartridge::load(rom)?;
         info!("Title is {}", cartridge.title());
         info!("Licensee code is {}", cartridge.licensee_code());
@@ -188,12 +189,12 @@ impl FrameSink for MostRecentFrameSink {
 }
 
 struct CpalAudioSink {
-    buffer: Producer<i16>,
+    buffer: Producer<i16, Arc<HeapRb<i16>>>,
     master_volume: i16,
 }
 
 impl CpalAudioSink {
-    fn new(buffer: Producer<i16>) -> Self {
+    fn new(buffer: Producer<i16, Arc<HeapRb<i16>>>) -> Self {
         Self {
             buffer,
             master_volume: 16,
@@ -214,7 +215,9 @@ impl AudioSink for CpalAudioSink {
     }
 
     fn push_samples(&mut self, samples: &mut VecDeque<i16>) {
-        self.buffer
-            .push_each(|| samples.pop_front().map(|v| v * self.master_volume));
+        let mut iter = samples.iter().map(|v| *v * self.master_volume);
+        let n = self.buffer
+            .push_iter(&mut iter);
+        samples.drain(0..n);
     }
 }

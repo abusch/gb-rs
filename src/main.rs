@@ -1,5 +1,6 @@
 use std::any::Any;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -11,7 +12,7 @@ use emulator::Emulator;
 use gb_rs::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use log::{debug, error, info, trace, warn};
 use pixels::{Pixels, SurfaceTexture};
-use ringbuf::{Consumer, RingBuffer};
+use ringbuf::{Consumer, HeapRb};
 use winit::{
     dpi::LogicalSize,
     event::{Event, VirtualKeyCode},
@@ -57,7 +58,7 @@ fn main() -> Result<()> {
     };
 
     // Buffer can hold 0.5s of samples (assuming 2 channels)
-    let ringbuf = RingBuffer::new(8102);
+    let ringbuf = HeapRb::new(8102);
     let (producer, consumer) = ringbuf.split();
     let mut emulator = Emulator::new(&cli.rom, producer)?;
     let _guard: Box<dyn Any> = if cli.quiet {
@@ -111,7 +112,7 @@ fn main() -> Result<()> {
     });
 }
 
-fn init_audio(mut consumer: Consumer<i16>) -> Result<Stream> {
+fn init_audio(mut consumer: Consumer<i16, Arc<HeapRb<i16>>>) -> Result<Stream> {
     let host = cpal::default_host();
     let device = host
         .default_output_device()
@@ -153,7 +154,7 @@ fn init_audio(mut consumer: Consumer<i16>) -> Result<Stream> {
     Ok(stream)
 }
 
-fn init_no_audio(mut consumer: Consumer<i16>) {
+fn init_no_audio(mut consumer: Consumer<i16, Arc<HeapRb<i16>>>) {
     thread::spawn(move || {
         loop {
             // empty the ring buffer
