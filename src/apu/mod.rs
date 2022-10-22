@@ -210,7 +210,7 @@ impl Apu {
             }
             REG_NR51 => self.sound_output_selection,
             REG_NR52 => {
-                let mut byte = 0u8;
+                let mut byte = 0xff;
                 let bits = byte.view_bits_mut::<Lsb0>();
                 bits.set(7, self.apu_enabled);
                 bits.set(3, self.channel4.enabled());
@@ -266,6 +266,12 @@ impl Apu {
                 } else {
                     debug!("Turning APU OFF!");
                     self.buf.clear();
+                    self.left_vin_enabled = false;
+                    self.right_vin_enabled = false;
+                    self.timer.reset();
+                    self.left_volume = 0;
+                    self.right_volume = 0;
+                    self.sound_output_selection = 0;
                     self.channel1.reset();
                     self.channel2.reset();
                     self.channel3.reset();

@@ -23,7 +23,7 @@ impl Lsfr {
     }
 
     fn reset(&mut self) {
-        self.reg = 0xffff;
+        self.reg = 0x0000;
         self.width_mode = false;
     }
 
@@ -182,6 +182,10 @@ impl NoiseChannel {
         self.enabled = false;
         self.length_counter.reset();
         self.volume_envelope.reset();
+        self.lsfr.reset();
+        self.base_divisor = 0;
+        self.shift = 0;
+        self.timer.reset();
     }
 
     pub(crate) fn output(&self) -> i16 {

@@ -1,5 +1,5 @@
 use bitvec::{field::BitField, order::Lsb0, view::BitView};
-use log::trace;
+use log::{trace, debug};
 
 use crate::apu::{frame_sequencer::FrameSequencer, Timer};
 
@@ -211,6 +211,7 @@ impl ToneChannel {
         self.freq_hi = 0;
         self.freq_lo = 0;
         self.freq_timer.reset();
+        self.wave_generator.reset();
         if let Some(ref mut sweep) = self.frequency_sweep {
             sweep.reset()
         }
@@ -250,6 +251,11 @@ impl SquareWaveGenerator {
             Duty::Duty2 => self.step == 0 || self.step == 5 || self.step == 6 || self.step == 7,
             Duty::Duty3 => self.step != 0 && self.step != 7,
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.duty = Duty::Duty0;
+        self.step = 0;
     }
 }
 
