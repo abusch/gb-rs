@@ -224,6 +224,11 @@ impl Apu {
     }
 
     pub fn write_io(&mut self, addr: u16, b: u8) {
+        // If the APU is disabled, all writes are ignored, except for NR52
+        if addr != REG_NR52 && !self.apu_enabled {
+            return
+        }
+
         match addr {
             // Channel 1
             REG_NR10 => self.channel1.set_nrx0(b),
@@ -277,7 +282,6 @@ impl Apu {
                     self.channel3.reset();
                     self.channel4.reset();
                 }
-                // TODO reset all registers if we disable sound
             }
             _ => panic!("Invalid sound register {:04x}", addr),
         };
