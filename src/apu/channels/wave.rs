@@ -45,6 +45,14 @@ impl WaveChannel {
         }
     }
 
+    pub(crate) fn nr30(&self) -> u8 {
+        let mut res = 0xFF_u8;
+        let bits = res.view_bits_mut::<Lsb0>();
+        bits.set(7, self.enabled);
+
+        res
+    }
+
     pub(crate) fn set_nr30(&mut self, b: u8) {
         if b.view_bits::<Lsb0>()[7] {
             self.enabled = true;
@@ -54,8 +62,21 @@ impl WaveChannel {
         }
     }
 
+    pub(crate) fn nr31(&self) -> u8 {
+        // NR31 is write-only
+        0xFF
+    }
+
     pub(crate) fn set_nr31(&mut self, b: u8) {
         self.length_counter.load(256 - b as u16);
+    }
+
+    pub(crate) fn nr32(&self) -> u8 {
+        let mut res = 0xFF_u8;
+        let bits = res.view_bits_mut::<Lsb0>();
+        bits[5..=6].store(self.output_level as u8);
+
+        res
     }
 
     pub(crate) fn set_nr32(&mut self, b: u8) {
@@ -68,8 +89,20 @@ impl WaveChannel {
         };
     }
 
+    pub(crate) fn nr33(&self) -> u8 {
+        0xFF
+    }
+
     pub(crate) fn set_nr33(&mut self, b: u8) {
         self.freq.view_bits_mut::<Lsb0>()[0..=7].store(b);
+    }
+
+    pub(crate) fn nr34(&self) -> u8 {
+        let mut res = 0xff;
+        let bits = res.view_bits_mut::<Lsb0>();
+        bits.set(6, self.length_counter.length_enabled);
+
+        res
     }
 
     pub(crate) fn set_nr34(&mut self, b: u8) {
@@ -78,6 +111,8 @@ impl WaveChannel {
 
         if bits[6] {
             self.length_counter.enable();
+        } else {
+            self.length_counter.reset();
         }
 
         if bits[7] {
@@ -86,6 +121,10 @@ impl WaveChannel {
             self.freq_timer.period = (2048 - self.freq) * 2;
             self.length_counter.trigger();
         }
+    }
+
+    pub(crate) fn read_wav(&self, idx: usize) -> u8 {
+        self.wav[idx]
     }
 
     pub(crate) fn write_wav(&mut self, idx: usize, b: u8) {
@@ -124,11 +163,12 @@ impl WaveChannel {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 enum OutputLevel {
-    Mute,
-    Full,
-    Half,
-    Quarter,
+    Mute = 0,
+    Full = 1,
+    Half = 2,
+    Quarter = 3,
 }
 
 impl OutputLevel {

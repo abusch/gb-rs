@@ -39,6 +39,8 @@ const REG_NR50: u16 = 0xFF24;
 const REG_NR51: u16 = 0xFF25;
 const REG_NR52: u16 = 0xFF26;
 
+const WAV_RAM_START: u16 = 0xFF30;
+
 const CPU_CYCLES_PER_SECOND: u32 = 4194304;
 // Period for the main 512Hz timer
 const TIMER_PERIOD: u16 = 8192;
@@ -55,7 +57,12 @@ pub struct Apu {
     left_volume: u8,
     /// Right volume. Comes from NR50.
     right_volume: u8,
+    /// Enable Vin into left output (comes from NR50)
+    left_vin_enabled: bool,
+    /// Enable Vin into right output (comes from NR50)
+    right_vin_enabled: bool,
 
+    #[allow(dead_code)]
     sample_rate: u32,
     sample_period: f32,
     sample_counter: f32,
@@ -75,7 +82,9 @@ impl Apu {
         Self {
             apu_enabled: true,
             sound_output_selection: 0,
+            left_vin_enabled: false,
             left_volume: 0,
+            right_vin_enabled: false,
             right_volume: 0,
             sample_rate: TARGET_SAMPLE_RATE,
             sample_period: CPU_CYCLES_PER_SECOND as f32 / TARGET_SAMPLE_RATE as f32,
@@ -166,30 +175,40 @@ impl Apu {
     pub fn read_io(&self, addr: u16) -> u8 {
         match addr {
             // Channel 1
-            REG_NR10 => 0,
-            REG_NR11 => 0,
-            REG_NR12 => 0,
-            REG_NR13 => 0,
-            REG_NR14 => 0,
+            REG_NR10 => self.channel1.nrx0(),
+            REG_NR11 => self.channel1.nrx1(),
+            REG_NR12 => self.channel1.nrx2(),
+            REG_NR13 => self.channel1.nrx3(),
+            REG_NR14 => self.channel1.nrx4(),
+            0xFF15 => 0xFF, // NR15/NR20 doesn't really exist
             // Channel 2
-            REG_NR21 => 0,
-            REG_NR22 => 0,
-            REG_NR23 => 0,
-            REG_NR24 => 0,
+            REG_NR21 => self.channel2.nrx1(),
+            REG_NR22 => self.channel2.nrx2(),
+            REG_NR23 => self.channel2.nrx3(),
+            REG_NR24 => self.channel2.nrx4(),
             // Channel 3
-            REG_NR30 => 0,
-            REG_NR31 => 0,
-            REG_NR32 => 0,
-            REG_NR33 => 0,
-            REG_NR34 => 0,
+            REG_NR30 => self.channel3.nr30(),
+            REG_NR31 => self.channel3.nr31(),
+            REG_NR32 => self.channel3.nr32(),
+            REG_NR33 => self.channel3.nr33(),
+            REG_NR34 => self.channel3.nr34(),
+            0xFF1F => 0xFF,
             // Channel 4
-            REG_NR41 => 0,
-            REG_NR42 => 0,
-            REG_NR43 => 0,
-            REG_NR44 => 0,
+            REG_NR41 => self.channel4.nr41(),
+            REG_NR42 => self.channel4.nr42(),
+            REG_NR43 => self.channel4.nr43(),
+            REG_NR44 => self.channel4.nr44(),
             // sound control
-            REG_NR50 => 0,
-            REG_NR51 => 0,
+            REG_NR50 => {
+                let mut res = 0xFF;
+                let bits = res.view_bits_mut::<Lsb0>();
+                bits.set(7, self.left_vin_enabled);
+                bits[4..=6].store::<u8>(self.left_volume);
+                bits.set(3, self.right_vin_enabled);
+                bits[0..=2].store::<u8>(self.right_volume);
+                res
+            }
+            REG_NR51 => self.sound_output_selection,
             REG_NR52 => {
                 let mut byte = 0u8;
                 let bits = byte.view_bits_mut::<Lsb0>();
@@ -212,6 +231,7 @@ impl Apu {
             REG_NR12 => self.channel1.set_nrx2(b),
             REG_NR13 => self.channel1.set_nrx3(b),
             REG_NR14 => self.channel1.set_nrx4(b),
+            0xFF15 => (), // nop
             // Channel 2
             REG_NR21 => self.channel2.set_nrx1(b),
             REG_NR22 => self.channel2.set_nrx2(b),
@@ -223,6 +243,7 @@ impl Apu {
             REG_NR32 => self.channel3.set_nr32(b),
             REG_NR33 => self.channel3.set_nr33(b),
             REG_NR34 => self.channel3.set_nr34(b),
+            0xFF1F => (), // nop
             // Channel 4
             REG_NR41 => self.channel4.set_nr41(b),
             REG_NR42 => self.channel4.set_nr42(b),
@@ -231,7 +252,9 @@ impl Apu {
             // sound control
             REG_NR50 => {
                 let bits = b.view_bits::<Lsb0>();
+                self.left_vin_enabled = bits[7];
                 self.left_volume = bits[4..=6].load::<u8>();
+                self.right_vin_enabled = bits[3];
                 self.right_volume = bits[0..=2].load::<u8>();
             }
             REG_NR51 => self.sound_output_selection = b,
@@ -254,8 +277,14 @@ impl Apu {
         };
     }
 
+    pub fn read_wav(&self, addr: u16) -> u8 {
+        let index = addr - WAV_RAM_START;
+        assert!(index <= 0x0F);
+        self.channel3.read_wav(index as usize)
+    }
+
     pub fn write_wav(&mut self, addr: u16, value: u8) {
-        let index = addr - 0xFF30;
+        let index = addr - WAV_RAM_START;
         assert!(index <= 0x0F);
         self.channel3.write_wav(index as usize, value);
     }

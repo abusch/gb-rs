@@ -62,6 +62,20 @@ impl ToneChannel {
         }
     }
 
+    pub(crate) fn nrx0(&self) -> u8 {
+        let mut res = 0xFF;
+        let bits = res.view_bits_mut::<Lsb0>();
+        if let Some(ref sweep) = self.frequency_sweep {
+            // bit 7 is always set
+            bits.set(7, true);
+            bits[4..=6].store(sweep.timer.period as u8);
+            bits.set(3, sweep.should_negate);
+            bits[0..=2].store(sweep.shift);
+        }
+
+        res
+    }
+
     pub(crate) fn set_nrx0(&mut self, b: u8) {
         if let Some(ref mut sweep) = self.frequency_sweep {
             let bits = b.view_bits::<Lsb0>();
@@ -70,6 +84,14 @@ impl ToneChannel {
             let shift = bits[0..=2].load::<u8>();
             sweep.load(sweep_time as u16, negate, shift);
         }
+    }
+
+    pub(crate) fn nrx1(&self) -> u8 {
+        let mut res = 0xFF;
+        let bits = res.view_bits_mut::<Lsb0>();
+        bits[6..=7].store(self.wave_generator.duty as u8);
+
+        res
     }
 
     pub(crate) fn set_nrx1(&mut self, b: u8) {
@@ -83,6 +105,17 @@ impl ToneChannel {
         let length = bits[0..=5].load::<u8>();
         trace!("length = {}", length);
         self.length_counter.load(64 - length as u16);
+    }
+
+    pub(crate) fn nrx2(&self) -> u8 {
+        let mut res = 0xFF;
+        let bits = res.view_bits_mut::<Lsb0>();
+
+        bits[4..=7].store(self.volume_envelope.start_volume);
+        bits.set(3, self.volume_envelope.volume_increase);
+        bits[0..=2].store(self.volume_envelope.timer.period);
+
+        res
     }
 
     pub(crate) fn set_nrx2(&mut self, b: u8) {
@@ -103,9 +136,23 @@ impl ToneChannel {
         }
     }
 
+    pub(crate) fn nrx3(&self) -> u8 {
+        // NRx3 is write-only
+        0xFF
+    }
+
     pub(crate) fn set_nrx3(&mut self, b: u8) {
         trace!("setting NRx3 to {:08b}", b);
         self.freq_lo = b;
+    }
+
+    pub(crate) fn nrx4(&self) -> u8 {
+        let mut res = 0xFF;
+        let bits = res.view_bits_mut::<Lsb0>();
+        // only bit 6 can be read back
+        bits.set(6, self.length_counter.length_enabled);
+        trace!("Returning {:08b} for NRx4", res);
+        res
     }
 
     pub(crate) fn set_nrx4(&mut self, b: u8) {
@@ -114,6 +161,8 @@ impl ToneChannel {
 
         if bits[6] {
             self.length_counter.enable();
+        } else {
+            self.length_counter.reset();
         }
         self.freq_hi = bits[0..=2].load::<u8>();
 
