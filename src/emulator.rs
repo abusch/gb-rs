@@ -37,7 +37,7 @@ pub struct Emulator {
 }
 
 impl Emulator {
-    pub fn new(rom: impl AsRef<Path>, producer: Producer<i16, Arc<HeapRb<i16>>>) -> Result<Self> {
+    pub fn new(rom: impl AsRef<Path>, producer: Producer<i16, Arc<HeapRb<i16>>>, breakpoint: Option<u16>) -> Result<Self> {
         let cartridge = Cartridge::load(rom)?;
         info!("Title is {}", cartridge.title());
         info!("Licensee code is {}", cartridge.licensee_code());
@@ -46,7 +46,7 @@ impl Emulator {
         info!("RAM size is ${:02x}", cartridge.get_ram_size());
         info!("CGB flag: {}", cartridge.cgb_flag());
         info!("SGB flag: {}", cartridge.sgb_flag());
-        let gb = GameBoy::new(cartridge);
+        let gb = GameBoy::new(cartridge, breakpoint);
 
         Ok(Self {
             gb,

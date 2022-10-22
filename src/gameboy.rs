@@ -10,9 +10,9 @@ pub struct GameBoy {
 }
 
 impl GameBoy {
-    pub fn new(cartridge: Cartridge) -> Self {
+    pub fn new(cartridge: Cartridge, breakpoint: Option<u16>) -> Self {
         Self {
-            cpu: Cpu::default(),
+            cpu: Cpu::with_breakpoint(breakpoint),
             bus: Bus::new(8 * 1024, cartridge),
         }
     }

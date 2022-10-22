@@ -1,4 +1,5 @@
 use std::any::Any;
+use std::num::ParseIntError;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
@@ -27,10 +28,18 @@ mod emulator;
 #[derive(Parser)]
 #[command(about, version, author)]
 pub struct Cli {
+    /// Disable sound output
     #[arg(short, long)]
     quiet: bool,
+    /// Set a breakpoint at the given address
+    #[arg(short, long, value_parser = parse_addr)]
+    breakpoint: Option<u16>,
     /// Path to the ROM file
     rom: PathBuf,
+}
+
+fn parse_addr(s: &str) -> Result<u16, ParseIntError> {
+    u16::from_str_radix(s, 16)
 }
 
 fn main() -> Result<()> {
@@ -60,7 +69,7 @@ fn main() -> Result<()> {
     // Buffer can hold 0.5s of samples (assuming 2 channels)
     let ringbuf = HeapRb::new(8102);
     let (producer, consumer) = ringbuf.split();
-    let mut emulator = Emulator::new(&cli.rom, producer)?;
+    let mut emulator = Emulator::new(&cli.rom, producer, cli.breakpoint)?;
     let _guard: Box<dyn Any> = if cli.quiet {
         init_no_audio(consumer);
         Box::new(())
@@ -163,6 +172,5 @@ fn init_no_audio(mut consumer: Consumer<i16, Arc<HeapRb<i16>>>) {
             }
             thread::sleep(Duration::from_millis(5));
         }
-
     });
 }

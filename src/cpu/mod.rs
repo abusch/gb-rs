@@ -43,6 +43,12 @@ impl Default for Cpu {
 }
 
 impl Cpu {
+    pub fn with_breakpoint(breakpoint: Option<u16>) -> Self {
+        Self {
+            breakpoint: breakpoint.unwrap_or(0xffff),
+            ..Self::default()
+        }
+    }
     pub fn handle_interrupt(&mut self, bus: &mut Bus) {
         let interrupt_flag = bus.interrupt_flag();
         let interrupt_enable = bus.interrupt_enable();

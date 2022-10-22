@@ -245,12 +245,13 @@ impl Bus {
             self.interrupt_flag.bits()
         } else if IO_RANGE_APU.contains(&addr) {
             // Sound
-            trace!("Read sound register 0x{:04x} (NOT IMPLEMENTED)", addr);
             self.apu.read_io(addr)
+        } else if (0xFF27..=0xFF2F).contains(&addr) {
+            // Technically part of the APU range, but not used
+            0xff
         } else if IO_RANGE_WAV.contains(&addr) {
             // Waveform ram
-            trace!("Read waveform RAM 0x{:04x} (NOT IMPLEMENTED)", addr);
-            0
+            self.apu.read_wav(addr) 
         } else if IO_RANGE_LCD.contains(&addr) {
             // LCD
             // debug!("Read LCD controller 0x{:04x}", addr);
