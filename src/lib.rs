@@ -4,6 +4,7 @@ mod apu;
 mod bus;
 pub mod cartridge;
 mod cpu;
+pub mod disasm;
 pub mod gameboy;
 mod gfx;
 mod interrupt;

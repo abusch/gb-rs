@@ -85,6 +85,7 @@ impl Emulator {
                     self.gb.resume();
                 }
                 Command::DumpMem(addr) => self.gb.dump_mem(addr),
+                Command::Disassemble(addr) => self.gb.disassemble(addr),
                 Command::DumpCpu => self.gb.dump_cpu(),
                 Command::DumpOam => self.gb.dump_oam(),
                 Command::DumpPalettes => self.gb.dump_palettes(),

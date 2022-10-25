@@ -37,28 +37,23 @@ impl Debugger {
                             .and_then(|n| u16::from_str_radix(n, 16).ok())
                             .unwrap_or(1);
                         Command::Next(num)
-                        // gb.step(sink);
-                        // gb.dump_cpu();
-                        // false
                     }
-                    "continue" => {
-                        Command::Continue
-                        // gb.resume();
-                        // false
-                    }
-                    "cpu" => {
-                        Command::DumpCpu
-                        // gb.dump_cpu();
-                        // false
-                    }
+                    "continue" => Command::Continue,
+                    "cpu" => Command::DumpCpu,
                     "oam" => Command::DumpOam,
                     "palettes" => Command::DumpPalettes,
                     s if s.starts_with("mem") => {
                         if let Some(addr_str) = s.split_whitespace().nth(1) {
                             if let Ok(addr) = u16::from_str_radix(addr_str, 16) {
-                                // println!("Dumping memory at {:x}", addr);
-                                // gb.dump_mem(addr);
                                 return Command::DumpMem(addr);
+                            }
+                        }
+                        Command::Nop
+                    }
+                    s if s.starts_with("dis") => {
+                        if let Some(addr_str) = s.split_whitespace().nth(1) {
+                            if let Ok(addr) = u16::from_str_radix(addr_str, 16) {
+                                return Command::Disassemble(addr);
                             }
                         }
                         Command::Nop
@@ -66,8 +61,6 @@ impl Debugger {
                     s if s.starts_with("br") => {
                         if let Some(addr_str) = s.split_whitespace().nth(1) {
                             if let Ok(addr) = u16::from_str_radix(addr_str, 16) {
-                                // println!("Setting breakpoint at {:x}", addr);
-                                // gb.set_breakpoint(addr);
                                 return Command::Break(addr);
                             }
                         }
@@ -82,11 +75,7 @@ impl Debugger {
                         Command::Nop
                     }
                     "quit" => Command::Quit,
-                    _ => {
-                        // eprintln!("Unknown command {}", line);
-                        // false
-                        Command::Nop
-                    }
+                    _ => Command::Nop,
                 }
             }
             Err(ReadlineError::Interrupted) => {
@@ -110,6 +99,7 @@ pub enum Command {
     Next(u16),
     Continue,
     DumpMem(u16),
+    Disassemble(u16),
     DumpCpu,
     DumpOam,
     Sprite(u8),
@@ -203,7 +193,7 @@ impl Default for DebuggerHelper {
     fn default() -> DebuggerHelper {
         DebuggerHelper {
             commands: vec![
-                "mem", "cpu", "oam", "sprite", "palettes", "br", "next", "continue", "quit",
+                "mem", "cpu", "oam", "sprite", "palettes", "br", "next", "continue", "quit", "dis",
             ],
         }
     }

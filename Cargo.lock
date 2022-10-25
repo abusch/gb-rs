@@ -785,6 +785,7 @@ dependencies = [
  "anyhow",
  "bitflags",
  "bitvec",
+ "byteorder",
  "clap",
  "cpal",
  "env_logger",

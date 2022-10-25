@@ -1,6 +1,7 @@
 use crate::bus::Bus;
 use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
+use crate::disasm::Disassembler;
 use crate::joypad::Button;
 use crate::{AudioSink, FrameSink};
 
@@ -37,6 +38,18 @@ impl GameBoy {
                 print!("{:02x} ", self.bus.read_byte(a));
             }
             println!();
+        }
+    }
+
+    pub fn disassemble(&self, addr: u16) {
+        let bytes = (addr..addr + 100)
+            .map(|a| self.bus.read_byte(a))
+            .collect::<Vec<_>>();
+        let instrs = Disassembler::new(&bytes).run();
+        let mut pc = addr;
+        for inst in instrs {
+            println!("{pc:04X}\t{inst}");
+            pc += inst.bytes;
         }
     }
 
