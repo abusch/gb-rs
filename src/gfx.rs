@@ -81,6 +81,12 @@ pub struct Gfx {
     stat_vblank_itr_source: bool,
     stat_hblank_itr_source: bool,
 
+    // STAT interrupt values
+    stat_lyc_eq_ly_active: bool,
+    stat_oam_active: bool,
+    stat_vblank_active: bool,
+    stat_hblank_active: bool,
+
     /// BG Palette
     bgp: Palette,
     /// OBJ Palette 0
@@ -120,6 +126,10 @@ impl Gfx {
             stat_oam_itr_source: false,
             stat_vblank_itr_source: false,
             stat_hblank_itr_source: false,
+            stat_lyc_eq_ly_active: false,
+            stat_oam_active: false,
+            stat_vblank_active: false,
+            stat_hblank_active: false,
         }
     }
 
@@ -189,7 +199,6 @@ impl Gfx {
             self.scx
         } else if addr == LY_REG {
             // FF44 LY
-            // debug!("LY={}", self.ly);
             self.ly
         } else if addr == LYC_REG {
             // FF45 LYC
@@ -226,7 +235,7 @@ impl Gfx {
             self.obj_size = bits[2];
             self.obj_enabled = bits[1];
             self.bg_and_window_enable = bits[0];
-            // debug!("LCDC reg = 0b{:b}", b);
+            trace!("LCDC reg = 0b{:b}", b);
             if orig_lcd_state && !self.lcd_and_ppu_enabled {
                 trace!("LCD turned OFF!");
             } else if !orig_lcd_state && self.lcd_and_ppu_enabled {
@@ -308,6 +317,7 @@ impl Gfx {
     /// Run the graphics subsystem for one clock cycle (or _dot_)
     fn dot(&mut self, frame_sink: &mut dyn FrameSink) -> InterruptFlag {
         let mut interrupts = InterruptFlag::empty();
+        let stat_line = self.stat_line();
 
         self.dots += 1;
         // Each scanline takes 456 dots
@@ -320,9 +330,7 @@ impl Gfx {
             scanline = 0;
         }
         self.ly = scanline;
-        if self.ly == self.lyc && self.stat_lyc_eq_ly_itr_source {
-            interrupts |= InterruptFlag::STAT;
-        }
+        self.stat_lyc_eq_ly_active = self.ly == self.lyc;
 
         if scanline > 143 {
             self.running_mode = Mode::Mode1;
@@ -336,13 +344,13 @@ impl Gfx {
             }
         }
 
+        self.stat_hblank_active = self.running_mode == Mode::Mode0;
+        self.stat_vblank_active = self.running_mode == Mode::Mode1;
+        self.stat_oam_active = self.running_mode == Mode::Mode2;
         match self.running_mode {
             Mode::Mode0 => {
                 if self.line_drawing_state == LineDrawingState::Drawing {
                     self.line_drawing_state = LineDrawingState::Idle;
-                    if self.stat_hblank_itr_source {
-                        interrupts |= InterruptFlag::STAT;
-                    }
                 }
             }
             Mode::Mode1 => {
@@ -351,9 +359,6 @@ impl Gfx {
                         frame_sink.push_frame(&self.lcd);
                     }
                     interrupts |= InterruptFlag::VBLANK;
-                    if self.stat_vblank_itr_source {
-                        interrupts |= InterruptFlag::STAT;
-                    }
                     self.line_drawing_state = LineDrawingState::FramePushed;
                 }
             }
@@ -363,10 +368,6 @@ impl Gfx {
                 {
                     // OAM scan
                     self.line_drawing_state = LineDrawingState::OamScan;
-                    // TODO do the actual scan
-                    if self.stat_oam_itr_source {
-                        interrupts |= InterruptFlag::STAT;
-                    }
                 }
             }
             Mode::Mode3 => {
@@ -376,6 +377,15 @@ impl Gfx {
                 }
             }
         }
+
+        let new_stat_line = self.stat_line();
+        // A STAT interrupt will be triggered by a rising edge (transition from low to high) on the
+        // STAT interrupt line.
+        if !stat_line && new_stat_line {
+            trace!("Rising edge of the STAT itr line detected: requesting STAT interrupt");
+            interrupts |= InterruptFlag::STAT;
+        }
+
         // Only raise interrupts requests if the LCD is on
         if self.lcd_and_ppu_enabled {
             interrupts
@@ -599,6 +609,26 @@ impl Gfx {
     /// This is meant to be called by the debugger before resuming normal running mode.
     pub(crate) fn enable(&mut self) {
         self.lcd_and_ppu_enabled = true;
+    }
+
+    /// The various STAT interrupt sources (modes 0-2 and LYC=LY) have their state (inactive=low
+    /// and active=high) logically ORed into a shared “STAT interrupt line” if their respective
+    /// enable bit is turned on.
+    fn stat_line(&self) -> bool {
+        let mut stat_line = false;
+        if self.stat_oam_itr_source {
+            stat_line |= self.stat_oam_active;
+        }
+        if self.stat_lyc_eq_ly_itr_source {
+            stat_line |= self.stat_lyc_eq_ly_active;
+        }
+        if self.stat_hblank_itr_source {
+            stat_line |= self.stat_hblank_active;
+        }
+        if self.stat_vblank_itr_source {
+            stat_line |= self.stat_vblank_active;
+        }
+        stat_line
     }
 }
 

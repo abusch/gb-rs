@@ -20,8 +20,10 @@ impl GameBoy {
 
     pub fn step(&mut self, frame_sink: &mut dyn FrameSink, audio_sink: &mut dyn AudioSink) -> u64 {
         let cycles = self.cpu.step(&mut self.bus);
-        self.bus.cycle(cycles, frame_sink, audio_sink);
-        self.cpu.handle_interrupt(&mut self.bus);
+        for _ in 0..cycles {
+            self.bus.cycle(1, frame_sink, audio_sink);
+            self.cpu.handle_interrupt(&mut self.bus);
+        }
 
         cycles as u64
     }

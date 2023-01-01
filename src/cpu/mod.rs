@@ -1,7 +1,7 @@
 mod register;
 
 use bitvec::{order::Lsb0, view::BitView};
-use log::{trace, warn};
+use log::{trace, warn, debug, info};
 
 use self::register::{Reg, RegPair, Registers};
 use crate::{bus::Bus, interrupt::InterruptFlag};
@@ -1097,6 +1097,10 @@ impl Cpu {
 
     /// LD r,r
     fn ld_r_r(&mut self, rt: Reg, rs: Reg) -> u8 {
+        if rt == Reg::B && rs == Reg::B {
+            info!("Software breakpoint triggered");
+            self.paused = true;
+        }
         self.regs.set(rt, self.regs.get(rs));
         4
     }
