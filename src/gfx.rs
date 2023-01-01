@@ -93,6 +93,9 @@ pub struct Gfx {
     obp0: Palette,
     /// OBJ Palette 1
     obp1: Palette,
+
+    // Window internal line counter
+    window_internal_line_counter: u8,
 }
 
 impl Gfx {
@@ -130,6 +133,7 @@ impl Gfx {
             stat_oam_active: false,
             stat_vblank_active: false,
             stat_hblank_active: false,
+            window_internal_line_counter: 0,
         }
     }
 
@@ -348,11 +352,13 @@ impl Gfx {
         self.stat_vblank_active = self.running_mode == Mode::Mode1;
         self.stat_oam_active = self.running_mode == Mode::Mode2;
         match self.running_mode {
+            // HBlank
             Mode::Mode0 => {
                 if self.line_drawing_state == LineDrawingState::Drawing {
                     self.line_drawing_state = LineDrawingState::Idle;
                 }
             }
+            // VBlank
             Mode::Mode1 => {
                 if self.line_drawing_state == LineDrawingState::Idle {
                     if self.lcd_and_ppu_enabled {
@@ -360,8 +366,11 @@ impl Gfx {
                     }
                     interrupts |= InterruptFlag::VBLANK;
                     self.line_drawing_state = LineDrawingState::FramePushed;
+                    // Reset the window internal line counter
+                    self.window_internal_line_counter = 0;
                 }
             }
+            // OAM Scan
             Mode::Mode2 => {
                 if self.line_drawing_state == LineDrawingState::Idle
                     || self.line_drawing_state == LineDrawingState::FramePushed
@@ -370,6 +379,7 @@ impl Gfx {
                     self.line_drawing_state = LineDrawingState::OamScan;
                 }
             }
+            // Drawing
             Mode::Mode3 => {
                 if self.line_drawing_state == LineDrawingState::OamScan {
                     self.line_drawing_state = LineDrawingState::Drawing;
@@ -395,6 +405,7 @@ impl Gfx {
     }
 
     fn draw_scan_line(&mut self) {
+        let mut drawn_from_window = false;
         let bg_tilemap_area = if self.bg_tile_map_area {
             0x9C00
         } else {
@@ -419,7 +430,8 @@ impl Gfx {
                 && lcd_y >= self.wy
             {
                 // We're in the window
-                (lcd_x + 7 - self.wx, lcd_y - self.wy, win_tilemap_area)
+                drawn_from_window = true;
+                (lcd_x + 7 - self.wx, self.window_internal_line_counter, win_tilemap_area)
             } else {
                 // we're in the background
 
@@ -488,6 +500,10 @@ impl Gfx {
             };
 
             self.write_pixel(x, self.ly, final_color);
+        }
+
+        if drawn_from_window {
+            self.window_internal_line_counter += 1;
         }
     }
 
