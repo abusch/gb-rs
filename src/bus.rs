@@ -251,7 +251,7 @@ impl Bus {
             0xff
         } else if IO_RANGE_WAV.contains(&addr) {
             // Waveform ram
-            self.apu.read_wav(addr) 
+            self.apu.read_wav(addr)
         } else if IO_RANGE_LCD.contains(&addr) {
             // LCD
             // debug!("Read LCD controller 0x{:04x}", addr);

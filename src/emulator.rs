@@ -37,7 +37,11 @@ pub struct Emulator {
 }
 
 impl Emulator {
-    pub fn new(rom: impl AsRef<Path>, producer: Producer<i16, Arc<HeapRb<i16>>>, breakpoint: Option<u16>) -> Result<Self> {
+    pub fn new(
+        rom: impl AsRef<Path>,
+        producer: Producer<i16, Arc<HeapRb<i16>>>,
+        breakpoint: Option<u16>,
+    ) -> Result<Self> {
         let cartridge = Cartridge::load(rom)?;
         info!("Title is {}", cartridge.title());
         info!("Licensee code is {}", cartridge.licensee_code());
@@ -217,8 +221,7 @@ impl AudioSink for CpalAudioSink {
 
     fn push_samples(&mut self, samples: &mut VecDeque<i16>) {
         let mut iter = samples.iter().map(|v| *v * self.master_volume);
-        let n = self.buffer
-            .push_iter(&mut iter);
+        let n = self.buffer.push_iter(&mut iter);
         samples.drain(0..n);
     }
 }

@@ -431,7 +431,11 @@ impl Gfx {
             {
                 // We're in the window
                 drawn_from_window = true;
-                (lcd_x + 7 - self.wx, self.window_internal_line_counter, win_tilemap_area)
+                (
+                    lcd_x + 7 - self.wx,
+                    self.window_internal_line_counter,
+                    win_tilemap_area,
+                )
             } else {
                 // we're in the background
 
@@ -519,17 +523,17 @@ impl Gfx {
     }
 
     fn get_sprites_for_scanline(&self, y: u8) -> Vec<Sprite> {
-        let sprites = self
+        let mut sprites = self
             .oam_ram
             .chunks(4)
             .map(Sprite::new)
             .filter(|sprite| sprite.matches_scanline(y, self.obj_size))
-            .take(10)
             .collect::<Vec<_>>();
 
-        // Order the sprites by smallest `x` as they have hight priority
-        // (&mut sprites[..]).sort_by(|s1, s2| s1.x.cmp(&s2.x));
-        sprites
+        // Order the sprites by smallest `x` as they have higher priority
+        sprites[..].sort_by(|s1, s2| s1.x.cmp(&s2.x));
+        // Return the first 10 sprites
+        sprites.into_iter().take(10).collect()
     }
 
     fn get_sprite_pixel(&self, sprite: &Sprite, x: u8, y: u8) -> Option<Color> {

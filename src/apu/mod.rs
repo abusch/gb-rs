@@ -226,7 +226,7 @@ impl Apu {
     pub fn write_io(&mut self, addr: u16, b: u8) {
         // If the APU is disabled, all writes are ignored, except for NR52
         if addr != REG_NR52 && !self.apu_enabled {
-            return
+            return;
         }
 
         match addr {

@@ -1,7 +1,7 @@
 mod register;
 
 use bitvec::{order::Lsb0, view::BitView};
-use log::{trace, warn, debug, info};
+use log::{debug, info, trace, warn};
 
 use self::register::{Reg, RegPair, Registers};
 use crate::{bus::Bus, interrupt::InterruptFlag};
