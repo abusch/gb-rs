@@ -1,5 +1,5 @@
 use bitvec::{field::BitField, order::Lsb0, view::BitView};
-use log::{trace, debug};
+use log::trace;
 
 use crate::apu::{frame_sequencer::FrameSequencer, Timer};
 

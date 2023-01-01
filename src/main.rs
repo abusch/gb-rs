@@ -80,7 +80,7 @@ fn main() -> Result<()> {
 
     event_loop.run(move |event, _, control_flow| {
         if let Event::RedrawRequested(_) = event {
-            emulator.render(pixels.get_frame());
+            emulator.render(pixels.get_frame_mut());
             if let Err(e) = pixels.render() {
                 error!("Error while rendering frame: {}", e);
                 *control_flow = ControlFlow::Exit;
@@ -97,7 +97,11 @@ fn main() -> Result<()> {
             }
 
             if let Some(size) = input.window_resized() {
-                pixels.resize_surface(size.width, size.height);
+                if let Err(e) = pixels.resize_surface(size.width, size.height) {
+                    error!("Error while rendering frame: {e}");
+                    *control_flow = ControlFlow::Exit;
+                    return;
+                }
             }
 
             if input.key_pressed(VirtualKeyCode::D) {
