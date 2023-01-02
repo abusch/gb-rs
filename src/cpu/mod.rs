@@ -27,6 +27,9 @@ pub struct Cpu {
     paused: bool,
     // Pause cpu if LD B,B is encountered
     enable_soft_break: bool,
+
+    // Flag for the HALT bug
+    halt_bug: bool,
 }
 
 impl Default for Cpu {
@@ -41,6 +44,7 @@ impl Default for Cpu {
             breakpoint: 0xffff,
             paused: Default::default(),
             enable_soft_break: false,
+            halt_bug: false,
         }
     }
 }
@@ -57,7 +61,7 @@ impl Cpu {
     pub fn handle_interrupt(&mut self, bus: &mut Bus) {
         let interrupt_flag = bus.interrupt_flag();
         let interrupt_enable = bus.interrupt_enable();
-        let pending_interrupts = !(interrupt_enable & interrupt_flag).is_empty();
+        let pending_interrupts = bus.interrupt_pending();
 
         // if there are pending interrupts, we need to wake the cpu (even if IME=0)
         if pending_interrupts && self.halted {
@@ -376,8 +380,16 @@ impl Cpu {
             0x75 => self.ld_addr_r(bus, RegPair::HL, Reg::L),
             // HALT
             0x76 => {
-                self.halted = true;
-                trace!("HALT! halted={}", self.halted);
+                if self.ime {
+                    // "Normal" case: pause the CPU until next interrupt
+                    self.halted = true;
+                } else if bus.interrupt_pending() {
+                    // HALT bug: don't pause the CPU, but triggers the halt bug, which causes
+                    // the next byte to be read twice
+                    self.halt_bug = true;
+                } else {
+                    self.halted = true;
+                }
                 4
             }
             // LD (HL),A
@@ -1075,7 +1087,13 @@ impl Cpu {
 
     fn fetch(&mut self, bus: &mut Bus) -> u8 {
         let byte = bus.read_byte(self.pc);
-        self.pc += 1;
+        if self.halt_bug {
+            // Don't increment PC so the same byte is read again
+            // See https://gbdev.io/pandocs/halt.html#halt-bug
+            self.halt_bug = false;
+        } else {
+            self.pc += 1;
+        }
         byte
     }
 

@@ -219,6 +219,10 @@ impl Bus {
         );
     }
 
+    pub fn interrupt_pending(&self) -> bool {
+        !(self.interrupt_enable & self.interrupt_flag).is_empty()
+    }
+
     /// Read access to IO registers
     fn read_io(&self, addr: u16) -> u8 {
         if IO_RANGE_JPD.contains(&addr) {
