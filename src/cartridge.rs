@@ -30,22 +30,23 @@ impl Cartridge {
             save_file: save_file_path,
         };
 
-        if cart.save_file.exists() {
-            let ram = std::fs::read(&cart.save_file).context("Failed to load RAM file")?;
-            let expected_size = cart.get_num_ram_banks() as usize * 8192;
-            if ram.len() != expected_size {
-                warn!(
-                    "RAM file {} has size {}, expected {}. Ignoring...",
-                    cart.save_file.display(),
-                    ram.len(),
-                    expected_size
-                );
+        if let Some(expected_size) = cart.get_num_ram_banks().map(|s| s as usize * 8192) {
+            if cart.save_file.exists() {
+                let ram = std::fs::read(&cart.save_file).context("Failed to load RAM file")?;
+                if ram.len() != expected_size {
+                    warn!(
+                        "RAM file {} has size {}, expected {}. Ignoring...",
+                        cart.save_file.display(),
+                        ram.len(),
+                        expected_size
+                    );
+                } else {
+                    info!("Loading RAM file {}...", cart.save_file.display());
+                    cart.ram[..expected_size].copy_from_slice(&ram[..]);
+                }
             } else {
-                info!("Loading RAM file {}...", cart.save_file.display());
-                cart.ram[..expected_size].copy_from_slice(&ram[..]);
+                info!("No RAM file found.");
             }
-        } else {
-            info!("No RAM file found.");
         }
 
         Ok(cart)
@@ -109,6 +110,26 @@ impl Cartridge {
             0xFF => "HuC1+RAM+BATTERY",
             b => panic!("Unknown cartridge type {:x}", b),
         }
+    }
+
+    pub fn has_ram(&self) -> bool {
+        matches!(
+            self.data[0x147],
+            0x02 | 0x03
+                | 0x08
+                | 0x09
+                | 0x0c
+                | 0x0d
+                | 0x10
+                | 0x12
+                | 0x13
+                | 0x1A
+                | 0x1B
+                | 0x1D
+                | 0x1E
+                | 0x22
+                | 0xFF
+        )
     }
 
     pub fn has_mbc1(&self) -> bool {
@@ -202,13 +223,14 @@ impl Cartridge {
     }
 
     pub fn save(&self) {
-        let ram_size = self.get_num_ram_banks() as usize * 8192;
-        if let Err(e) = std::fs::write(&self.save_file, &self.ram[..ram_size]) {
-            warn!(
-                "Failed to save RAM file {}: {}",
-                &self.save_file.display(),
-                e
-            );
+        if let Some(ram_size) = self.get_num_ram_banks().map(|s| s as usize * 8192) {
+            if let Err(e) = std::fs::write(&self.save_file, &self.ram[..ram_size]) {
+                warn!(
+                    "Failed to save RAM file {}: {}",
+                    &self.save_file.display(),
+                    e
+                );
+            }
         }
     }
 
@@ -228,14 +250,17 @@ impl Cartridge {
         }
     }
 
-    fn get_num_ram_banks(&self) -> u16 {
-        match self.get_ram_size() {
-            0x00 => 0,
-            0x02 => 1,
-            0x03 => 4,
-            0x04 => 16,
-            0x05 => 8,
-            s => panic!("Invalid ROM size {}", s),
+    fn get_num_ram_banks(&self) -> Option<u16> {
+        if self.has_ram() {
+            match self.get_ram_size() {
+                0x02 => Some(1),
+                0x03 => Some(4),
+                0x04 => Some(16),
+                0x05 => Some(8),
+                _ => None,
+            }
+        } else {
+            None
         }
     }
 }
