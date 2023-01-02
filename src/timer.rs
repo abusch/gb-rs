@@ -14,6 +14,8 @@ pub struct Timer {
     /// FF07 - TAC - Timer Control
     tac_timer_enable: bool,
     tac_input_clock_select: ClockSpeed,
+
+    tima_has_overflowed: bool,
 }
 
 impl Timer {
@@ -24,19 +26,26 @@ impl Timer {
             tma: 0,
             tac_timer_enable: false,
             tac_input_clock_select: ClockSpeed::Speed0,
+            tima_has_overflowed: false,
         }
     }
 
     pub fn cycle(&mut self, cycles: u8) -> bool {
         let mut request_interrupt = false;
         for _ in 0..cycles {
-            request_interrupt |= self.update_div(self.div_timer.wrapping_add(1));
+            if self.tima_has_overflowed {
+                // When TIMA overflows, there is a 1-cycle delay before it is reloaded with TMA and
+                // an interrupt is triggered
+                self.tima_has_overflowed = false;
+                self.tima = self.tma;
+                request_interrupt = true;
+            }
+            self.update_div(self.div_timer.wrapping_add(1));
         }
         request_interrupt
     }
 
-    fn update_div(&mut self, new_value: u16) -> bool {
-        let mut request_interrupt = false;
+    fn update_div(&mut self, new_value: u16) {
         let old_div_timer = self.div_timer;
         // Update DIV
         self.div_timer = new_value;
@@ -57,14 +66,13 @@ impl Timer {
                 // Falling edge detected: update TIMA
                 let (new_tima, overflow) = self.tima.overflowing_add(1);
                 if overflow {
-                    self.tima = self.tma;
-                    request_interrupt = true;
+                    self.tima_has_overflowed = true;
+                    self.tima = 0;
                 } else {
                     self.tima = new_tima;
                 }
             }
         }
-        request_interrupt
     }
 
     pub fn set_tac(&mut self, tac: u8) {
@@ -92,8 +100,8 @@ impl Timer {
         (self.div_timer >> 8) as u8
     }
 
-    pub fn reset_div_timer(&mut self) -> bool{
-        self.update_div(0)
+    pub fn reset_div_timer(&mut self) {
+        self.update_div(0);
     }
 
     /// Get the timer's tima.

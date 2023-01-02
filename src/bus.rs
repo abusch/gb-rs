@@ -292,9 +292,7 @@ impl Bus {
             }
         } else if IO_RANGE_TIM.contains(&addr) {
             match addr {
-                0xff04 => if self.timer.reset_div_timer() {
-                    self.interrupt_flag |= InterruptFlag::TIMER;
-                },
+                0xff04 => self.timer.reset_div_timer(),
                 0xff05 => self.timer.set_tima(b),
                 0xff06 => self.timer.set_tma(b),
                 0xff07 => self.timer.set_tac(b),
