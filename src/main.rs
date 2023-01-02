@@ -34,6 +34,12 @@ pub struct Cli {
     /// Set a breakpoint at the given address
     #[arg(short, long, value_parser = parse_addr)]
     breakpoint: Option<u16>,
+    /// Enable software breakpoint
+    ///
+    /// If enabled, the `LD B,B` instruction triggers a breakpoint. Execution is paused and the
+    /// debugger is started. This is useful for some test ROMS.
+    #[arg(long)]
+    enable_soft_break: bool,
     /// Path to the ROM file
     rom: PathBuf,
 }
@@ -69,7 +75,7 @@ fn main() -> Result<()> {
     // Buffer can hold 0.5s of samples (assuming 2 channels)
     let ringbuf = HeapRb::new(8102);
     let (producer, consumer) = ringbuf.split();
-    let mut emulator = Emulator::new(&cli.rom, producer, cli.breakpoint)?;
+    let mut emulator = Emulator::new(&cli.rom, producer, cli.breakpoint, cli.enable_soft_break)?;
     let _guard: Box<dyn Any> = if cli.quiet {
         init_no_audio(consumer);
         Box::new(())

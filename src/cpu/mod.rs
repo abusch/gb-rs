@@ -25,6 +25,8 @@ pub struct Cpu {
     // for debugging
     breakpoint: u16,
     paused: bool,
+    // Pause cpu if LD B,B is encountered
+    enable_soft_break: bool,
 }
 
 impl Default for Cpu {
@@ -38,17 +40,20 @@ impl Default for Cpu {
             // breakpoint: 0x0100,
             breakpoint: 0xffff,
             paused: Default::default(),
+            enable_soft_break: false,
         }
     }
 }
 
 impl Cpu {
-    pub fn with_breakpoint(breakpoint: Option<u16>) -> Self {
+    pub fn with_breakpoint(breakpoint: Option<u16>, enable_soft_break: bool) -> Self {
         Self {
             breakpoint: breakpoint.unwrap_or(0xffff),
+            enable_soft_break,
             ..Self::default()
         }
     }
+
     pub fn handle_interrupt(&mut self, bus: &mut Bus) {
         let interrupt_flag = bus.interrupt_flag();
         let interrupt_enable = bus.interrupt_enable();
@@ -1097,7 +1102,7 @@ impl Cpu {
 
     /// LD r,r
     fn ld_r_r(&mut self, rt: Reg, rs: Reg) -> u8 {
-        if rt == Reg::B && rs == Reg::B {
+        if self.enable_soft_break && rt == Reg::B && rs == Reg::B {
             info!("Software breakpoint triggered");
             self.paused = true;
         }

@@ -11,9 +11,9 @@ pub struct GameBoy {
 }
 
 impl GameBoy {
-    pub fn new(cartridge: Cartridge, breakpoint: Option<u16>) -> Self {
+    pub fn new(cartridge: Cartridge, breakpoint: Option<u16>, enable_soft_break: bool) -> Self {
         Self {
-            cpu: Cpu::with_breakpoint(breakpoint),
+            cpu: Cpu::with_breakpoint(breakpoint, enable_soft_break),
             bus: Bus::new(8 * 1024, cartridge),
         }
     }
