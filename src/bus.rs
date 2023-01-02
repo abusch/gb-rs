@@ -58,8 +58,10 @@ pub struct Bus {
     interrupt_enable: InterruptFlag,
     /// IF - Interrupt Flag register
     interrupt_flag: InterruptFlag,
-
+    /// Timer-related registers
     timer: Timer,
+    /// SB - serial byte
+    sb: u8,
 }
 
 impl Bus {
@@ -78,6 +80,7 @@ impl Bus {
             interrupt_enable: InterruptFlag::empty(),
             interrupt_flag: InterruptFlag::empty(),
             timer: Timer::new(),
+            sb: 0,
         }
     }
 
@@ -234,11 +237,12 @@ impl Bus {
             self.joypad.read()
         } else if IO_RANGE_COM.contains(&addr) {
             // Communication controller
-            // debug!(
-            //     "Read communication controller register 0x{:04x} (NOT IMPLEMENTED)",
-            //     addr
-            // );
-            0xFF
+            // FIXME: implement properly
+            if addr == 0xFF01 {
+                self.sb
+            } else {
+                0x7E
+            }
         } else if IO_RANGE_TIM.contains(&addr) {
             match addr {
                 0xff04 => self.timer.div_timer(),
@@ -283,10 +287,9 @@ impl Bus {
             );
         } else if IO_RANGE_COM.contains(&addr) {
             // Communication controller
-            // debug!(
-            //     "Write communication controller register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
-            //     addr, b
-            // );
+            if addr == 0xFF01 {
+                self.sb = b;
+            }
         } else if IO_RANGE_TIM.contains(&addr) {
             match addr {
                 0xff04 => self.timer.reset_div_timer(),

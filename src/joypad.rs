@@ -1,6 +1,6 @@
 use bitvec::{order::Lsb0, view::BitView};
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Joypad {
     action_selected: bool,
     direction_selected: bool,
@@ -14,10 +14,29 @@ pub struct Joypad {
     right_pressed: bool,
 }
 
+impl Default for Joypad {
+    fn default() -> Self {
+        Self {
+            action_selected: true,
+            direction_selected: true,
+            select_pressed: Default::default(),
+            start_pressed: Default::default(),
+            a_pressed: Default::default(),
+            b_pressed: Default::default(),
+            up_pressed: Default::default(),
+            down_pressed: Default::default(),
+            left_pressed: Default::default(),
+            right_pressed: Default::default(),
+        }
+    }
+}
+
 impl Joypad {
     pub fn read(&self) -> u8 {
         let mut byte = 0xFFu8;
         let bits = byte.view_bits_mut::<Lsb0>();
+        bits.set(4, !self.direction_selected);
+        bits.set(5, !self.action_selected);
         if self.action_selected {
             bits.set(0, !self.a_pressed);
             bits.set(1, !self.b_pressed);
