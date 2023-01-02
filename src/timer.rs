@@ -30,32 +30,37 @@ impl Timer {
     pub fn cycle(&mut self, cycles: u8) -> bool {
         let mut request_interrupt = false;
         for _ in 0..cycles {
-            let old_div_timer = self.div_timer;
-            // Update DIV
-            self.div_timer = self.div_timer.wrapping_add(1);
+            request_interrupt |= self.update_div(self.div_timer.wrapping_add(1));
+        }
+        request_interrupt
+    }
 
-            // Update TIMA
-            if self.tac_timer_enable {
-                // Bit number of the system clock counter to check for a falling edge
-                let bit_num = match self.tac_input_clock_select {
-                    ClockSpeed::Speed0 => 9,
-                    ClockSpeed::Speed1 => 3,
-                    ClockSpeed::Speed2 => 5,
-                    ClockSpeed::Speed3 => 7,
-                };
-                let old_bit = old_div_timer.view_bits::<Lsb0>()[bit_num];
-                let new_bit = self.div_timer.view_bits::<Lsb0>()[bit_num];
+    fn update_div(&mut self, new_value: u16) -> bool {
+        let mut request_interrupt = false;
+        let old_div_timer = self.div_timer;
+        // Update DIV
+        self.div_timer = new_value;
 
-                if old_bit && !new_bit {
-                    // Falling edge detected: update TIMA
+        // Update TIMA
+        if self.tac_timer_enable {
+            // Bit number of the system clock counter to check for a falling edge
+            let bit_num = match self.tac_input_clock_select {
+                ClockSpeed::Speed0 => 9,
+                ClockSpeed::Speed1 => 3,
+                ClockSpeed::Speed2 => 5,
+                ClockSpeed::Speed3 => 7,
+            };
+            let old_bit = old_div_timer.view_bits::<Lsb0>()[bit_num];
+            let new_bit = self.div_timer.view_bits::<Lsb0>()[bit_num];
 
-                    let (new_tima, overflow) = self.tima.overflowing_add(1);
-                    if overflow {
-                        self.tima = self.tma;
-                        request_interrupt = true;
-                    } else {
-                        self.tima = new_tima;
-                    }
+            if old_bit && !new_bit {
+                // Falling edge detected: update TIMA
+                let (new_tima, overflow) = self.tima.overflowing_add(1);
+                if overflow {
+                    self.tima = self.tma;
+                    request_interrupt = true;
+                } else {
+                    self.tima = new_tima;
                 }
             }
         }
@@ -87,8 +92,8 @@ impl Timer {
         (self.div_timer >> 8) as u8
     }
 
-    pub fn reset_div_timer(&mut self) {
-        self.div_timer = 0;
+    pub fn reset_div_timer(&mut self) -> bool{
+        self.update_div(0)
     }
 
     /// Get the timer's tima.
