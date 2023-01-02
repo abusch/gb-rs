@@ -282,7 +282,7 @@ impl Gfx {
 
     /// Return the value of the STAT register (FF41)
     fn stat(&self) -> u8 {
-        let mut byte = 0u8;
+        let mut byte = 0b10000000_u8; // bit 7 is always 1
         let bits = byte.view_bits_mut::<Lsb0>();
 
         // interrupt sources

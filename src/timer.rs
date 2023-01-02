@@ -75,7 +75,7 @@ impl Timer {
     }
 
     pub fn tac(&self) -> u8 {
-        let mut tac = 0;
+        let mut tac = 0xFF; // unused are set to 1
         let bits = tac.view_bits_mut::<Lsb0>();
         bits.set(2, self.tac_timer_enable);
         bits[0..2].store(self.tac_input_clock_select as u8);

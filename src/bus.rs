@@ -1,6 +1,6 @@
 use std::ops::RangeInclusive;
 
-use log::{debug, info, trace};
+use log::{info, trace};
 
 use crate::{
     apu::Apu, cartridge::Cartridge, gfx::Gfx, interrupt::InterruptFlag, joypad::Joypad,
@@ -188,7 +188,10 @@ impl Bus {
             self.hram[(addr - HRAM.start()) as usize] = b;
         } else if addr == 0xFFFF {
             trace!("Setting Interrupt Enable Register with 0b{:08b}", b);
-            self.interrupt_enable = InterruptFlag::from_bits_truncate(b);
+            unsafe {
+                // FIXME: that kind of sucks...
+                self.interrupt_enable = InterruptFlag::from_bits_unchecked(b);
+            }
         } else {
             unreachable!("How did we get here? addr=0x{:04x}", addr);
         }
@@ -235,7 +238,7 @@ impl Bus {
             //     "Read communication controller register 0x{:04x} (NOT IMPLEMENTED)",
             //     addr
             // );
-            0
+            0xFF
         } else if IO_RANGE_TIM.contains(&addr) {
             match addr {
                 0xff04 => self.timer.div_timer(),
@@ -246,7 +249,8 @@ impl Bus {
             }
         } else if IO_RANGE_INT.contains(&addr) {
             // IF - interrupt flag
-            self.interrupt_flag.bits()
+            // Note: unused bits are always 1
+            self.interrupt_flag.bits() | 0b11100000
         } else if IO_RANGE_APU.contains(&addr) {
             // Sound
             self.apu.read_io(addr)
@@ -260,13 +264,9 @@ impl Bus {
             // LCD
             // debug!("Read LCD controller 0x{:04x}", addr);
             self.gfx.read_reg(addr)
-        } else if IO_RANGE_DBR.contains(&addr) {
-            // Disable boot rom
-            debug!("Read disable boot rom 0x{:04x} (NOT IMPLEMENTED)", addr);
-            0
         } else {
-            // some games access unknown registers for some reason, so just ignore
-            0
+            // some games access unknown registers for some reason, so just return FF
+            0xFF
         }
     }
 
@@ -322,7 +322,7 @@ impl Bus {
                 self.gfx.write_reg(addr, b);
             }
         } else if IO_RANGE_DBR.contains(&addr) {
-            if b == 0x01 {
+            if b != 0 {
                 self.has_booted = true;
                 // Disable boot rom
                 info!("Boot sequence complete. Disabling boot ROM.");
