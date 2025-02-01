@@ -15,7 +15,7 @@ use gb_rs::{
     SCREEN_WIDTH,
 };
 use ringbuf::{HeapRb, Producer};
-use winit::event::VirtualKeyCode;
+use winit::keyboard::KeyCode;
 use winit_input_helper::WinitInputHelper;
 
 use crate::debugger::{Command, Debugger};
@@ -135,21 +135,21 @@ impl Emulator {
 
     pub fn handle_input(&mut self, input: &WinitInputHelper) {
         self.gb
-            .set_button_pressed(Button::Start, input.key_held(VirtualKeyCode::Return));
+            .set_button_pressed(Button::Start, input.key_held(KeyCode::Enter));
         self.gb
-            .set_button_pressed(Button::Select, input.key_held(VirtualKeyCode::Space));
+            .set_button_pressed(Button::Select, input.key_held(KeyCode::Space));
         self.gb
-            .set_button_pressed(Button::A, input.key_held(VirtualKeyCode::A));
+            .set_button_pressed(Button::A, input.key_held(KeyCode::KeyA));
         self.gb
-            .set_button_pressed(Button::B, input.key_held(VirtualKeyCode::B));
+            .set_button_pressed(Button::B, input.key_held(KeyCode::KeyB));
         self.gb
-            .set_button_pressed(Button::Up, input.key_held(VirtualKeyCode::Up));
+            .set_button_pressed(Button::Up, input.key_held(KeyCode::ArrowUp));
         self.gb
-            .set_button_pressed(Button::Down, input.key_held(VirtualKeyCode::Down));
+            .set_button_pressed(Button::Down, input.key_held(KeyCode::ArrowDown));
         self.gb
-            .set_button_pressed(Button::Left, input.key_held(VirtualKeyCode::Left));
+            .set_button_pressed(Button::Left, input.key_held(KeyCode::ArrowLeft));
         self.gb
-            .set_button_pressed(Button::Right, input.key_held(VirtualKeyCode::Right));
+            .set_button_pressed(Button::Right, input.key_held(KeyCode::ArrowRight));
     }
 }
 

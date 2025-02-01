@@ -14,12 +14,9 @@ use gb_rs::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use log::{debug, error, info, trace, warn};
 use pixels::{Pixels, SurfaceTexture};
 use ringbuf::{Consumer, HeapRb};
-use winit::{
-    dpi::LogicalSize,
-    event::{Event, VirtualKeyCode},
-    event_loop::{ControlFlow, EventLoop},
-    window::WindowBuilder,
-};
+use winit::event::WindowEvent;
+use winit::keyboard::KeyCode;
+use winit::{dpi::LogicalSize, event::Event, event_loop::EventLoop, window::WindowBuilder};
 use winit_input_helper::WinitInputHelper;
 
 mod debugger;
@@ -54,7 +51,7 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    let event_loop = EventLoop::new();
+    let event_loop = EventLoop::new()?;
     let mut input = WinitInputHelper::new();
     let window = {
         let size = LogicalSize::new(SCREEN_WIDTH as f64, SCREEN_HEIGHT as f64);
@@ -84,20 +81,24 @@ fn main() -> Result<()> {
         Box::new(stream)
     };
 
-    event_loop.run(move |event, _, control_flow| {
-        if let Event::RedrawRequested(_) = event {
-            emulator.render(pixels.get_frame_mut());
+    event_loop.run(|event, event_loop| {
+        if let Event::WindowEvent {
+            event: WindowEvent::RedrawRequested,
+            ..
+        } = event
+        {
+            emulator.render(pixels.frame_mut());
             if let Err(e) = pixels.render() {
                 error!("Error while rendering frame: {}", e);
-                *control_flow = ControlFlow::Exit;
+                event_loop.exit();
                 return;
             }
         }
 
         if input.update(&event) {
             // Close events
-            if input.key_pressed(VirtualKeyCode::Escape) {
-                *control_flow = ControlFlow::Exit;
+            if input.key_pressed(KeyCode::Escape) {
+                event_loop.exit();
                 emulator.finish();
                 return;
             }
@@ -105,16 +106,16 @@ fn main() -> Result<()> {
             if let Some(size) = input.window_resized() {
                 if let Err(e) = pixels.resize_surface(size.width, size.height) {
                     error!("Error while rendering frame: {e}");
-                    *control_flow = ControlFlow::Exit;
+                    event_loop.exit();
                     return;
                 }
             }
 
-            if input.key_pressed(VirtualKeyCode::D) {
+            if input.key_pressed(KeyCode::KeyD) {
                 emulator.start_debugger();
             }
 
-            if input.key_pressed(VirtualKeyCode::S) {
+            if input.key_pressed(KeyCode::KeyS) {
                 if let Err(e) = emulator.screenshot() {
                     warn!("Failed to save screenshot: {}", e);
                 }
@@ -122,13 +123,15 @@ fn main() -> Result<()> {
 
             emulator.handle_input(&input);
             if emulator.update() {
-                *control_flow = ControlFlow::Exit;
+                event_loop.exit();
                 emulator.finish();
                 return;
             }
             window.request_redraw();
         }
-    });
+    })?;
+
+    Ok(())
 }
 
 fn init_audio(mut consumer: Consumer<i16, Arc<HeapRb<i16>>>) -> Result<Stream> {
@@ -149,13 +152,13 @@ fn init_audio(mut consumer: Consumer<i16, Arc<HeapRb<i16>>>) -> Result<Stream> {
         .build_output_stream(
             &config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                let mut fell_behind = false;
+                let mut _fell_behind = false;
                 trace!("Writing {} audio samples", data.len());
                 for sample in data {
                     *sample = match consumer.pop() {
                         Some(s) => Sample::from(&s),
                         None => {
-                            fell_behind = true;
+                            _fell_behind = true;
                             0.0
                         }
                     }
