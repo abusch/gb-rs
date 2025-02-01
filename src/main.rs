@@ -156,7 +156,7 @@ fn init_audio(mut consumer: impl Consumer<Item = i16> + Send + 'static) -> Resul
                 trace!("Writing {} audio samples", data.len());
                 for sample in data {
                     *sample = match consumer.try_pop() {
-                        Some(s) => Sample::from(&s),
+                        Some(s) => s.to_sample::<f32>(),
                         None => {
                             _fell_behind = true;
                             0.0
@@ -168,6 +168,7 @@ fn init_audio(mut consumer: impl Consumer<Item = i16> + Send + 'static) -> Resul
                 // }
             },
             err_fn,
+            None,
         )
         .context("Failed to build output stream")?;
     stream.play().context("Failed to start stream")?;

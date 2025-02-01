@@ -5,21 +5,25 @@ use anyhow::Result;
 use rustyline::{
     completion::{Completer, Pair},
     error::ReadlineError,
-    highlight::Highlighter,
+    highlight::{CmdKind, Highlighter},
     hint::Hinter,
+    history::MemHistory,
     validate::Validator,
-    Editor, Helper,
+    Config, Editor, Helper,
 };
 
 #[derive(Debug)]
 pub struct Debugger {
-    editor: Editor<DebuggerHelper>,
+    editor: Editor<DebuggerHelper, MemHistory>,
 }
 
 impl Debugger {
     pub fn new() -> Result<Self> {
         let helper = DebuggerHelper::default();
-        let mut editor = Editor::<DebuggerHelper>::new()?;
+        let mut editor = Editor::<DebuggerHelper, MemHistory>::with_history(
+            Config::default(),
+            MemHistory::new(),
+        )?;
         editor.set_helper(Some(helper));
         Ok(Self { editor })
     }
@@ -28,7 +32,9 @@ impl Debugger {
         let readline = self.editor.readline("gb-rs> ");
         match readline {
             Ok(line) => {
-                self.editor.add_history_entry(line.as_str());
+                self.editor
+                    .add_history_entry(line.as_str())
+                    .expect("Failed to add history entry");
                 match line.as_str() {
                     s if s.starts_with("next") => {
                         let num = s
@@ -181,7 +187,7 @@ impl Highlighter for DebuggerHelper {
         std::borrow::Cow::Borrowed(candidate)
     }
 
-    fn highlight_char(&self, line: &str, pos: usize) -> bool {
+    fn highlight_char(&self, line: &str, pos: usize, _kind: CmdKind) -> bool {
         let _ = (line, pos);
         false
     }
