@@ -14,7 +14,7 @@ use gb_rs::{
     cartridge::Cartridge, gameboy::GameBoy, joypad::Button, AudioSink, FrameSink, SCREEN_HEIGHT,
     SCREEN_WIDTH,
 };
-use ringbuf::{HeapRb, Producer};
+use ringbuf::{producer::Producer, storage::Heap, wrap::caching::Caching, SharedRb};
 use winit::keyboard::KeyCode;
 use winit_input_helper::WinitInputHelper;
 
@@ -24,6 +24,7 @@ use crate::debugger::{Command, Debugger};
 // const CPU_CYCLE_PER_SEC: u64 = 4194304;
 // 1/4194304 seconds per cycle -> 238 nanoseconds per cycle
 const CPU_CYCLE_TIME_NS: u64 = 238;
+pub type ProducerI16 = Caching<Arc<SharedRb<Heap<i16>>>, true, false>;
 
 /// The object that pulls everything together and drives the emulation engine while interfacing
 /// with actual input/outputs.
@@ -39,7 +40,7 @@ pub struct Emulator {
 impl Emulator {
     pub fn new(
         rom: impl AsRef<Path>,
-        producer: Producer<i16, Arc<HeapRb<i16>>>,
+        producer: ProducerI16,
         breakpoint: Option<u16>,
         enable_soft_break: bool,
     ) -> Result<Self> {
@@ -195,12 +196,12 @@ impl FrameSink for MostRecentFrameSink {
 }
 
 struct CpalAudioSink {
-    buffer: Producer<i16, Arc<HeapRb<i16>>>,
+    buffer: ProducerI16,
     master_volume: i16,
 }
 
 impl CpalAudioSink {
-    fn new(buffer: Producer<i16, Arc<HeapRb<i16>>>) -> Self {
+    fn new(buffer: ProducerI16) -> Self {
         Self {
             buffer,
             master_volume: 16,
@@ -210,8 +211,8 @@ impl CpalAudioSink {
 
 impl AudioSink for CpalAudioSink {
     fn push_sample(&mut self, sample: (i16, i16)) -> bool {
-        if self.buffer.push(sample.0 * self.master_volume).is_err()
-            || self.buffer.push(sample.1 * self.master_volume).is_err()
+        if self.buffer.try_push(sample.0 * self.master_volume).is_err()
+            || self.buffer.try_push(sample.1 * self.master_volume).is_err()
         {
             debug!("Buffer overrun!");
             return true;

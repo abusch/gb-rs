@@ -1,7 +1,6 @@
 use std::any::Any;
 use std::num::ParseIntError;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -13,7 +12,8 @@ use emulator::Emulator;
 use gb_rs::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use log::{debug, error, info, trace, warn};
 use pixels::{Pixels, SurfaceTexture};
-use ringbuf::{Consumer, HeapRb};
+use ringbuf::traits::{Consumer, Split};
+use ringbuf::HeapRb;
 use winit::event::WindowEvent;
 use winit::keyboard::KeyCode;
 use winit::{dpi::LogicalSize, event::Event, event_loop::EventLoop, window::WindowBuilder};
@@ -70,7 +70,7 @@ fn main() -> Result<()> {
     };
 
     // Buffer can hold 0.5s of samples (assuming 2 channels)
-    let ringbuf = HeapRb::new(8102);
+    let ringbuf = HeapRb::<i16>::new(8102);
     let (producer, consumer) = ringbuf.split();
     let mut emulator = Emulator::new(&cli.rom, producer, cli.breakpoint, cli.enable_soft_break)?;
     let _guard: Box<dyn Any> = if cli.quiet {
@@ -134,7 +134,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn init_audio(mut consumer: Consumer<i16, Arc<HeapRb<i16>>>) -> Result<Stream> {
+fn init_audio(mut consumer: impl Consumer<Item = i16> + Send + 'static) -> Result<Stream> {
     let host = cpal::default_host();
     let device = host
         .default_output_device()
@@ -155,7 +155,7 @@ fn init_audio(mut consumer: Consumer<i16, Arc<HeapRb<i16>>>) -> Result<Stream> {
                 let mut _fell_behind = false;
                 trace!("Writing {} audio samples", data.len());
                 for sample in data {
-                    *sample = match consumer.pop() {
+                    *sample = match consumer.try_pop() {
                         Some(s) => Sample::from(&s),
                         None => {
                             _fell_behind = true;
@@ -176,11 +176,11 @@ fn init_audio(mut consumer: Consumer<i16, Arc<HeapRb<i16>>>) -> Result<Stream> {
     Ok(stream)
 }
 
-fn init_no_audio(mut consumer: Consumer<i16, Arc<HeapRb<i16>>>) {
+fn init_no_audio(mut consumer: impl Consumer<Item = i16> + Send + 'static) {
     thread::spawn(move || {
         loop {
             // empty the ring buffer
-            while consumer.pop().is_some() {
+            while consumer.try_pop().is_some() {
                 // nop
             }
             thread::sleep(Duration::from_millis(5));
