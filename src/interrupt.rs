@@ -1,6 +1,7 @@
 use bitflags::bitflags;
 
 bitflags! {
+    #[derive(Debug, Copy, Clone, PartialEq, Eq)]
     pub struct InterruptFlag: u8 {
         const VBLANK   = 0b00000001;
         const STAT = 0b00000010;

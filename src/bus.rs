@@ -191,10 +191,7 @@ impl Bus {
             self.hram[(addr - HRAM.start()) as usize] = b;
         } else if addr == 0xFFFF {
             trace!("Setting Interrupt Enable Register with 0b{:08b}", b);
-            unsafe {
-                // FIXME: that kind of sucks...
-                self.interrupt_enable = InterruptFlag::from_bits_unchecked(b);
-            }
+            self.interrupt_enable = InterruptFlag::from_bits_retain(b);
         } else {
             unreachable!("How did we get here? addr=0x{:04x}", addr);
         }
