@@ -1,15 +1,16 @@
 use bitvec::{field::BitField, order::Lsb0, view::BitView};
-use log::trace;
+use log::{debug, trace};
 
 use crate::apu::{frame_sequencer::FrameSequencer, Timer};
 
-use super::{LengthCounter, VolumeEnvelope};
+use super::{dac, LengthCounter, VolumeEnvelope};
 #[derive(Debug)]
-pub(crate) struct ToneChannel {
+pub(crate) struct ToneChannel<const N: u8> {
+    dac_enabled: bool,
     enabled: bool,
     length_counter: LengthCounter,
 
-    volume_envelope: VolumeEnvelope,
+    volume_envelope: VolumeEnvelope<N>,
 
     freq_hi: u8,
     freq_lo: u8,
@@ -19,9 +20,10 @@ pub(crate) struct ToneChannel {
     wave_generator: SquareWaveGenerator,
 }
 
-impl ToneChannel {
+impl<const N: u8> ToneChannel<N> {
     pub(crate) fn new(with_frequency_sweep: bool) -> Self {
         Self {
+            dac_enabled: false,
             enabled: false,
             length_counter: LengthCounter::new(64),
             volume_envelope: VolumeEnvelope::new(),
@@ -46,6 +48,7 @@ impl ToneChannel {
     pub(crate) fn tick_frame(&mut self, frame_sequencer: &FrameSequencer) {
         if frame_sequencer.length_triggered() && self.length_counter.tick() {
             // The length counter expired: disable the channel
+            debug!("Length counter expired: disabling tone channel");
             self.enabled = false;
         }
         if frame_sequencer.vol_envelope_trigged() {
@@ -124,14 +127,23 @@ impl ToneChannel {
         let start_volume = bits[4..=7].load::<u8>();
         let volume_increase = bits[3];
         let envelope_period = bits[0..=2].load::<u8>() as u16;
+        // Not sure why the docs said to do this? This is wrong...
+        // if envelope_period == 0 {
+        //     envelope_period = 8;
+        // }
         self.volume_envelope
             .reload(start_volume, volume_increase, envelope_period);
-        // Not sure why the docs said to do this? This is wrong...
-        // if self.envelope_timer.period == 0 {
-        //     self.envelope_timer.period = 8;
-        // }
-        if !self.is_dac_on() {
-            trace!("DAC is off, disabling channel");
+        debug!(
+            "Channel {N}: volume envelope = {start_volume}, {volume_increase}, {envelope_period}"
+        );
+        if start_volume != 0 || volume_increase {
+            if !self.dac_enabled {
+                debug!("Channel {N}: DAC turned on");
+                self.dac_enabled = true;
+            }
+        } else {
+            debug!("Channel {N}: DAC turned off, disabling channel");
+            self.dac_enabled = false;
             self.enabled = false;
         }
     }
@@ -156,25 +168,30 @@ impl ToneChannel {
     }
 
     pub(crate) fn set_nrx4(&mut self, b: u8) {
-        trace!("setting NRx4 to {:08b}", b);
+        if !self.is_dac_on() {
+            debug!("Channel {N}: DAC is off, ignoring write to NRx4");
+            return;
+        }
+        trace!("Channel {N}: setting NRx4 to {:08b}", b);
         let bits = b.view_bits::<Lsb0>();
 
         if bits[6] {
             self.length_counter.enable();
         } else {
-            self.length_counter.reset();
+            self.length_counter.disable();
         }
         self.freq_hi = bits[0..=2].load::<u8>();
 
         if bits[7] {
+            debug!("Channel {N}: Tone channel triggered");
             // Trigger
             self.enabled = true;
             self.length_counter.trigger();
             let freq = ((self.freq_hi as u16) << 8) + self.freq_lo as u16;
-            if freq == 0 {
-                // should we do this?
-                self.enabled = false;
-            }
+            // if freq == 0 {
+            //     // should we do this?
+            //     self.enabled = false;
+            // }
             self.freq_timer.period = (2048 - freq) * 4;
             self.freq_timer.reset();
             // Reset volume envelope
@@ -182,29 +199,40 @@ impl ToneChannel {
             if let Some(ref mut sweep) = self.frequency_sweep {
                 sweep.trigger(freq);
             }
-            if !self.is_dac_on() {
-                // If DAC is off, disable the channel
-                trace!("DAC is off, disabling channel");
-                self.enabled = false;
-            }
+            // if !self.is_dac_on() {
+            //     // If DAC is off, disable the channel
+            //     debug!("Channel {N}: Tone channel DAC is off, disabling channel");
+            //     self.enabled = false;
+            // }
             // TODO  sweep, etc..
         }
     }
 
-    pub(crate) fn output(&self) -> i16 {
-        if self.enabled && self.is_dac_on() && self.wave_generator.output() {
-            self.volume_envelope.volume() as i16
+    pub(crate) fn digital_output(&self) -> u8 {
+        if self.enabled && self.wave_generator.output() {
+            self.volume_envelope.volume()
         } else {
+            // If the channel is disabled, return *digital* 0
             0
         }
     }
 
-    fn is_dac_on(&self) -> bool {
-        self.volume_envelope.is_dac_on()
+    pub(crate) fn output(&self) -> f32 {
+        if self.is_dac_on() {
+            dac(self.digital_output())
+        } else {
+            // If the DAC is off, *always* output analog 0.0
+            0.0
+        }
+    }
+
+    pub(crate) fn is_dac_on(&self) -> bool {
+        self.dac_enabled
     }
 
     pub(crate) fn reset(&mut self) {
         trace!("Resetting square channel");
+        self.dac_enabled = false;
         self.enabled = false;
         self.volume_envelope.reset();
         self.length_counter.reset();

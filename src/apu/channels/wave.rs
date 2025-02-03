@@ -2,12 +2,13 @@ use bitvec::{field::BitField, order::Lsb0, view::BitView};
 
 use crate::apu::{frame_sequencer::FrameSequencer, Timer};
 
-use super::LengthCounter;
+use super::{dac, LengthCounter};
 
 #[derive(Debug)]
 pub(crate) struct WaveChannel {
     // Wave table containing 32 4-bit samples
     wav: [u8; 16],
+    dac_enabled: bool,
     enabled: bool,
     length_counter: LengthCounter,
     output_level: OutputLevel,
@@ -20,6 +21,7 @@ impl WaveChannel {
     pub(crate) fn new() -> Self {
         Self {
             wav: [0; 16],
+            dac_enabled: false,
             enabled: false,
             length_counter: LengthCounter::new(256),
             output_level: OutputLevel::Mute,
@@ -55,9 +57,10 @@ impl WaveChannel {
 
     pub(crate) fn set_nr30(&mut self, b: u8) {
         if b.view_bits::<Lsb0>()[7] {
-            self.enabled = true;
+            self.dac_enabled = true;
             self.position = 0;
         } else {
+            self.dac_enabled = false;
             self.enabled = false;
         }
     }
@@ -117,6 +120,9 @@ impl WaveChannel {
 
         if bits[7] {
             // trigger
+            if self.is_dac_on() {
+                self.enabled = true;
+            }
             self.position = 0;
             self.freq_timer.period = (2048 - self.freq) * 2;
             self.length_counter.trigger();
@@ -131,7 +137,7 @@ impl WaveChannel {
         self.wav[idx] = b;
     }
 
-    pub(crate) fn output(&self) -> i16 {
+    pub(crate) fn digital_output(&self) -> u8 {
         if !self.enabled {
             return 0;
         }
@@ -144,10 +150,16 @@ impl WaveChannel {
             // upper nibble
             byte >> 4
         };
-        let adjusted_value = self.output_level.apply(value);
 
-        adjusted_value as i16
-        // dac(adjusted_value)
+        self.output_level.apply(value)
+    }
+
+    pub(crate) fn output(&self) -> f32 {
+        if self.is_dac_on() {
+            dac(self.digital_output())
+        } else {
+            0.0
+        }
     }
 
     pub(crate) fn reset(&mut self) {
@@ -155,6 +167,10 @@ impl WaveChannel {
         self.length_counter.reset();
         self.position = 0;
         self.output_level = OutputLevel::Mute;
+    }
+
+    pub(crate) fn is_dac_on(&self) -> bool {
+        self.dac_enabled
     }
 
     pub(crate) fn enabled(&self) -> bool {

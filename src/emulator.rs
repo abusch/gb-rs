@@ -24,7 +24,7 @@ use crate::debugger::{Command, Debugger};
 // const CPU_CYCLE_PER_SEC: u64 = 4194304;
 // 1/4194304 seconds per cycle -> 238 nanoseconds per cycle
 const CPU_CYCLE_TIME_NS: u64 = 238;
-pub type ProducerI16 = Caching<Arc<SharedRb<Heap<i16>>>, true, false>;
+pub type ProducerF32 = Caching<Arc<SharedRb<Heap<f32>>>, true, false>;
 
 /// The object that pulls everything together and drives the emulation engine while interfacing
 /// with actual input/outputs.
@@ -40,7 +40,7 @@ pub struct Emulator {
 impl Emulator {
     pub fn new(
         rom: impl AsRef<Path>,
-        producer: ProducerI16,
+        producer: ProducerF32,
         breakpoint: Option<u16>,
         enable_soft_break: bool,
     ) -> Result<Self> {
@@ -196,21 +196,21 @@ impl FrameSink for MostRecentFrameSink {
 }
 
 struct CpalAudioSink {
-    buffer: ProducerI16,
-    master_volume: i16,
+    buffer: ProducerF32,
+    master_volume: f32,
 }
 
 impl CpalAudioSink {
-    fn new(buffer: ProducerI16) -> Self {
+    fn new(buffer: ProducerF32) -> Self {
         Self {
             buffer,
-            master_volume: 16,
+            master_volume: 1.0,
         }
     }
 }
 
 impl AudioSink for CpalAudioSink {
-    fn push_sample(&mut self, sample: (i16, i16)) -> bool {
+    fn push_sample(&mut self, sample: (f32, f32)) -> bool {
         if self.buffer.try_push(sample.0 * self.master_volume).is_err()
             || self.buffer.try_push(sample.1 * self.master_volume).is_err()
         {
@@ -221,7 +221,7 @@ impl AudioSink for CpalAudioSink {
         false
     }
 
-    fn push_samples(&mut self, samples: &mut VecDeque<i16>) {
+    fn push_samples(&mut self, samples: &mut VecDeque<f32>) {
         let mut iter = samples.iter().map(|v| *v * self.master_volume);
         let n = self.buffer.push_iter(&mut iter);
         samples.drain(0..n);

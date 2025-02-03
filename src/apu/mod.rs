@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 
 use bitvec::{field::BitField, order::Lsb0, view::BitView};
+use channels::HighPassFilter;
 use log::debug;
 
 use crate::AudioSink;
@@ -62,6 +63,10 @@ pub struct Apu {
     /// Enable Vin into right output (comes from NR50)
     right_vin_enabled: bool,
 
+    // Left high-pass filter
+    left_hpf: HighPassFilter,
+    right_hpf: HighPassFilter,
+
     #[allow(dead_code)]
     sample_rate: u32,
     sample_period: f32,
@@ -69,12 +74,12 @@ pub struct Apu {
     timer: Timer,
     frame_sequencer: FrameSequencer,
 
-    channel1: ToneChannel,
-    channel2: ToneChannel,
+    channel1: ToneChannel<1>,
+    channel2: ToneChannel<2>,
     channel3: WaveChannel,
     channel4: NoiseChannel,
 
-    buf: VecDeque<i16>,
+    buf: VecDeque<f32>,
 }
 
 impl Apu {
@@ -84,8 +89,11 @@ impl Apu {
             sound_output_selection: 0,
             left_vin_enabled: false,
             left_volume: 0,
+            left_hpf: HighPassFilter::default(),
             right_vin_enabled: false,
             right_volume: 0,
+            right_hpf: HighPassFilter::default(),
+
             sample_rate: TARGET_SAMPLE_RATE,
             sample_period: CPU_CYCLES_PER_SECOND as f32 / TARGET_SAMPLE_RATE as f32,
             sample_counter: 0.0,
@@ -131,9 +139,9 @@ impl Apu {
     }
 
     // Outputs a pair of left/right samples
-    fn output(&self) -> (i16, i16) {
-        let mut left = 0;
-        let mut right = 0;
+    fn output(&mut self) -> (f32, f32) {
+        let mut left = 0.0;
+        let mut right = 0.0;
 
         if !self.apu_enabled {
             return (left, right);
@@ -141,6 +149,7 @@ impl Apu {
 
         let nr51 = self.sound_output_selection.view_bits::<Lsb0>();
 
+        // Mix all the analog values
         if nr51[7] {
             left += self.channel4.output();
         }
@@ -166,8 +175,19 @@ impl Apu {
             right += self.channel1.output();
         }
 
-        left *= self.left_volume as i16 + 1;
-        right *= self.right_volume as i16 + 1;
+        // Apply master volume
+        left *= 1.0 / ((8 - self.left_volume) as f32);
+        right *= 1.0 / ((8 - self.right_volume) as f32);
+
+        // Check if any DAC is enabled
+        let dacs_enabled = self.channel1.is_dac_on()
+            || self.channel2.is_dac_on()
+            || self.channel3.is_dac_on()
+            || self.channel4.is_dac_on();
+
+        // Apply HPF
+        left = self.left_hpf.apply(left, dacs_enabled);
+        right = self.right_hpf.apply(right, dacs_enabled);
 
         (left, right)
     }
@@ -267,7 +287,7 @@ impl Apu {
                 self.apu_enabled = b.view_bits::<Lsb0>()[7];
                 if self.apu_enabled {
                     debug!("Turning APU ON!");
-                    self.channel1.reset();
+                    // self.channel1.reset();
                 } else {
                     debug!("Turning APU OFF!");
                     self.buf.clear();
@@ -315,6 +335,11 @@ impl Timer {
     }
 
     pub fn tick(&mut self) -> bool {
+        // A period of 0 disable the timer
+        if self.period == 0 {
+            return false;
+        }
+
         if self.counter > 0 {
             self.counter -= 1;
         }

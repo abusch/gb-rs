@@ -47,7 +47,9 @@ fn parse_addr(s: &str) -> Result<u16, ParseIntError> {
 
 fn main() -> Result<()> {
     // initialise logger
-    env_logger::builder().parse_filters("gb_rs=debug").init();
+    env_logger::builder()
+        .parse_filters("gb_rs=debug,gb_rs::apu=info")
+        .init();
 
     let cli = Cli::parse();
 
@@ -70,7 +72,7 @@ fn main() -> Result<()> {
     };
 
     // Buffer can hold 0.5s of samples (assuming 2 channels)
-    let ringbuf = HeapRb::<i16>::new(8102);
+    let ringbuf = HeapRb::<f32>::new(8102);
     let (producer, consumer) = ringbuf.split();
     let mut emulator = Emulator::new(&cli.rom, producer, cli.breakpoint, cli.enable_soft_break)?;
     let _guard: Box<dyn Any> = if cli.quiet {
@@ -134,7 +136,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn init_audio(mut consumer: impl Consumer<Item = i16> + Send + 'static) -> Result<Stream> {
+fn init_audio(mut consumer: impl Consumer<Item = f32> + Send + 'static) -> Result<Stream> {
     let host = cpal::default_host();
     let device = host
         .default_output_device()
@@ -177,7 +179,7 @@ fn init_audio(mut consumer: impl Consumer<Item = i16> + Send + 'static) -> Resul
     Ok(stream)
 }
 
-fn init_no_audio(mut consumer: impl Consumer<Item = i16> + Send + 'static) {
+fn init_no_audio(mut consumer: impl Consumer<Item = f32> + Send + 'static) {
     thread::spawn(move || {
         loop {
             // empty the ring buffer

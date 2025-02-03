@@ -1,11 +1,11 @@
 use std::ops::ShrAssign;
 
 use bitvec::{field::BitField, order::Lsb0, view::BitView};
-use log::trace;
+use log::debug;
 
 use crate::apu::{frame_sequencer::FrameSequencer, Timer};
 
-use super::{LengthCounter, VolumeEnvelope};
+use super::{dac, LengthCounter, VolumeEnvelope};
 
 /// Linear Feedback Shift Register
 #[derive(Debug)]
@@ -47,11 +47,12 @@ impl Lsfr {
 
 #[derive(Debug)]
 pub(crate) struct NoiseChannel {
+    dac_enabled: bool,
     enabled: bool,
     lsfr: Lsfr,
     timer: Timer,
     length_counter: LengthCounter,
-    volume_envelope: VolumeEnvelope,
+    volume_envelope: VolumeEnvelope<4>,
     // These 2 are used to derive the channel frequency but we need to keep them around so they can
     // be read again (via NR43)
     base_divisor: u8,
@@ -61,6 +62,7 @@ pub(crate) struct NoiseChannel {
 impl NoiseChannel {
     pub(crate) fn new() -> Self {
         Self {
+            dac_enabled: false,
             enabled: false,
             lsfr: Lsfr::new(),
             timer: Timer::new(4096),
@@ -79,13 +81,11 @@ impl NoiseChannel {
 
     pub(crate) fn tick_frame(&mut self, frame_sequencer: &FrameSequencer) {
         if frame_sequencer.length_triggered() && self.length_counter.tick() {
+            debug!("Length counter expired: disabling noise channel");
             self.enabled = false;
         }
         if frame_sequencer.vol_envelope_trigged() {
             self.volume_envelope.tick();
-            if !self.volume_envelope.is_dac_on() {
-                self.enabled = false;
-            }
         }
     }
 
@@ -117,7 +117,15 @@ impl NoiseChannel {
         let envelope_period = bits[0..=2].load::<u8>() as u16;
         self.volume_envelope
             .reload(start_volume, volume_increase, envelope_period);
-        if !self.is_dac_on() {
+
+        if start_volume != 0 || volume_increase {
+            if !self.dac_enabled {
+                debug!("DAC4 turned on.");
+                self.dac_enabled = true;
+            }
+        } else {
+            debug!("DAC4 turned off. Disabling noise channel");
+            self.dac_enabled = false;
             self.enabled = false;
         }
     }
@@ -167,18 +175,20 @@ impl NoiseChannel {
 
         if bits[7] {
             // trigger
-            trace!("Noise channel triggered");
+            debug!("Noise channel triggered");
             self.enabled = true;
             self.lsfr.reset();
             self.volume_envelope.trigger();
             self.length_counter.trigger();
             if !self.is_dac_on() {
+                debug!("DAC4 is off, disabling noise channel");
                 self.enabled = false;
             }
         }
     }
 
     pub(crate) fn reset(&mut self) {
+        self.dac_enabled = false;
         self.enabled = false;
         self.length_counter.reset();
         self.volume_envelope.reset();
@@ -188,16 +198,24 @@ impl NoiseChannel {
         self.timer.reset();
     }
 
-    pub(crate) fn output(&self) -> i16 {
-        if self.enabled && self.is_dac_on() && self.lsfr.output() {
-            self.volume_envelope.volume() as i16
+    pub(crate) fn digital_output(&self) -> u8 {
+        if self.enabled && self.lsfr.output() {
+            self.volume_envelope.volume()
         } else {
             0
         }
     }
 
-    fn is_dac_on(&self) -> bool {
-        self.volume_envelope.is_dac_on()
+    pub(crate) fn output(&self) -> f32 {
+        if self.is_dac_on() {
+            dac(self.digital_output())
+        } else {
+            0.0
+        }
+    }
+
+    pub(crate) fn is_dac_on(&self) -> bool {
+        self.dac_enabled
     }
 
     pub(crate) fn enabled(&self) -> bool {
