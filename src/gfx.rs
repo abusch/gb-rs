@@ -319,6 +319,7 @@ impl Gfx {
     }
 
     /// Run the graphics subsystem for one clock cycle (or _dot_)
+    #[inline(always)]
     fn dot(&mut self, frame_sink: &mut dyn FrameSink) -> InterruptFlag {
         let mut interrupts = InterruptFlag::empty();
         let stat_line = self.stat_line();
@@ -392,7 +393,7 @@ impl Gfx {
         // A STAT interrupt will be triggered by a rising edge (transition from low to high) on the
         // STAT interrupt line.
         if !stat_line && new_stat_line {
-            trace!("Rising edge of the STAT itr line detected: requesting STAT interrupt");
+            // trace!("Rising edge of the STAT itr line detected: requesting STAT interrupt");
             interrupts |= InterruptFlag::STAT;
         }
 
@@ -634,21 +635,12 @@ impl Gfx {
     /// The various STAT interrupt sources (modes 0-2 and LYC=LY) have their state (inactive=low
     /// and active=high) logically ORed into a shared “STAT interrupt line” if their respective
     /// enable bit is turned on.
+    #[inline(always)]
     fn stat_line(&self) -> bool {
-        let mut stat_line = false;
-        if self.stat_oam_itr_source {
-            stat_line |= self.stat_oam_active;
-        }
-        if self.stat_lyc_eq_ly_itr_source {
-            stat_line |= self.stat_lyc_eq_ly_active;
-        }
-        if self.stat_hblank_itr_source {
-            stat_line |= self.stat_hblank_active;
-        }
-        if self.stat_vblank_itr_source {
-            stat_line |= self.stat_vblank_active;
-        }
-        stat_line
+        (self.stat_oam_itr_source && self.stat_oam_active)
+            || (self.stat_lyc_eq_ly_itr_source && self.stat_lyc_eq_ly_active)
+            || (self.stat_hblank_itr_source && self.stat_hblank_active)
+            || (self.stat_vblank_itr_source && self.stat_vblank_active)
     }
 }
 
