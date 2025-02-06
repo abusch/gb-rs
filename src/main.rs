@@ -1,23 +1,32 @@
 use std::any::Any;
 use std::num::ParseIntError;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{BufferSize, Sample, SampleRate, Stream, StreamConfig};
+use cpal::{
+    traits::{DeviceTrait, HostTrait, StreamTrait},
+    BufferSize, Sample, SampleRate, Stream, StreamConfig,
+};
 use emulator::Emulator;
 use gb_rs::{SCREEN_HEIGHT, SCREEN_WIDTH};
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, info, trace};
 use pixels::{Pixels, SurfaceTexture};
-use ringbuf::traits::{Consumer, Split};
-use ringbuf::HeapRb;
-use winit::event::WindowEvent;
-use winit::keyboard::KeyCode;
-use winit::{dpi::LogicalSize, event::Event, event_loop::EventLoop, window::WindowBuilder};
-use winit_input_helper::WinitInputHelper;
+use ringbuf::{
+    traits::{Consumer, Split},
+    HeapRb,
+};
+use winit::{
+    application::ApplicationHandler,
+    dpi::LogicalSize,
+    event::WindowEvent,
+    event_loop::EventLoop,
+    keyboard::{Key, NamedKey},
+    window::{Window, WindowAttributes},
+};
 
 mod debugger;
 mod emulator;
@@ -53,28 +62,10 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    let event_loop = EventLoop::new()?;
-    let mut input = WinitInputHelper::new();
-    let window = {
-        let size = LogicalSize::new(SCREEN_WIDTH as f64, SCREEN_HEIGHT as f64);
-        WindowBuilder::new()
-            .with_title("gb-rs")
-            .with_inner_size(size)
-            .with_min_inner_size(size)
-            .build(&event_loop)
-            .unwrap()
-    };
-
-    let mut pixels = {
-        let window_size = window.inner_size();
-        let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, &window);
-        Pixels::new(SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32, surface_texture)?
-    };
-
     // Buffer can hold 0.5s of samples (assuming 2 channels)
     let ringbuf = HeapRb::<f32>::new(8102);
     let (producer, consumer) = ringbuf.split();
-    let mut emulator = Emulator::new(&cli.rom, producer, cli.breakpoint, cli.enable_soft_break)?;
+    let emulator = Emulator::new(&cli.rom, producer, cli.breakpoint, cli.enable_soft_break)?;
     let _guard: Box<dyn Any> = if cli.quiet {
         init_no_audio(consumer);
         Box::new(())
@@ -83,57 +74,106 @@ fn main() -> Result<()> {
         Box::new(stream)
     };
 
-    event_loop.run(|event, event_loop| {
-        if let Event::WindowEvent {
-            event: WindowEvent::RedrawRequested,
-            ..
-        } = event
-        {
-            emulator.render(pixels.frame_mut());
-            if let Err(e) = pixels.render() {
-                error!("Error while rendering frame: {}", e);
-                event_loop.exit();
-                return;
-            }
-        }
-
-        if input.update(&event) {
-            // Close events
-            if input.key_pressed(KeyCode::Escape) {
-                event_loop.exit();
-                emulator.finish();
-                return;
-            }
-
-            if let Some(size) = input.window_resized() {
-                if let Err(e) = pixels.resize_surface(size.width, size.height) {
-                    error!("Error while rendering frame: {e}");
-                    event_loop.exit();
-                    return;
-                }
-            }
-
-            if input.key_pressed(KeyCode::KeyD) {
-                emulator.start_debugger();
-            }
-
-            if input.key_pressed(KeyCode::KeyS) {
-                if let Err(e) = emulator.screenshot() {
-                    warn!("Failed to save screenshot: {}", e);
-                }
-            }
-
-            emulator.handle_input(&input);
-            if emulator.update() {
-                event_loop.exit();
-                emulator.finish();
-                return;
-            }
-            window.request_redraw();
-        }
-    })?;
+    let mut app = App::new(emulator);
+    let event_loop = EventLoop::new()?;
+    event_loop.run_app(&mut app)?;
 
     Ok(())
+}
+
+struct App {
+    pixels: Option<Pixels<'static>>,
+    window: Option<Arc<Window>>,
+    emulator: Emulator,
+}
+
+impl App {
+    pub fn new(emulator: Emulator) -> Self {
+        Self {
+            pixels: None,
+            window: None,
+            emulator,
+        }
+    }
+}
+
+impl ApplicationHandler for App {
+    fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        if self.pixels.is_none() {
+            event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
+            let size = LogicalSize::new(SCREEN_WIDTH as f64, SCREEN_HEIGHT as f64);
+            let window = Arc::new(
+                event_loop
+                    .create_window(
+                        WindowAttributes::default()
+                            .with_title("gb-rs")
+                            .with_inner_size(size)
+                            .with_min_inner_size(size),
+                    )
+                    .expect("Failed to create window"),
+            );
+            let window_size = window.inner_size();
+            let surface_texture =
+                SurfaceTexture::new(window_size.width, window_size.height, window.clone());
+            let pixels = Pixels::new(SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32, surface_texture)
+                .expect("Failed to create Pixels");
+
+            // kickoff rendering
+            window.request_redraw();
+
+            self.pixels = Some(pixels);
+            self.window = Some(window);
+        }
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+        _window_id: winit::window::WindowId,
+        event: WindowEvent,
+    ) {
+        match event {
+            WindowEvent::CloseRequested => {
+                event_loop.exiting();
+            }
+            WindowEvent::Resized(size) => {
+                if let Some(ref mut pixels) = self.pixels {
+                    if let Err(e) = pixels.resize_surface(size.width, size.height) {
+                        error!("Error while rendering frame: {e}");
+                        event_loop.exit();
+                    }
+                }
+            }
+            WindowEvent::KeyboardInput { event: k, .. } => {
+                if k.logical_key == Key::Named(NamedKey::Escape) {
+                    event_loop.exit();
+                    self.emulator.finish();
+                    return;
+                }
+                self.emulator.handle_input(k);
+            }
+            WindowEvent::RedrawRequested => {
+                if let (Some(pixels), Some(window)) = (self.pixels.as_mut(), self.window.as_mut()) {
+                    // Run the emiulator
+                    if self.emulator.update() {
+                        event_loop.exit();
+                        self.emulator.finish();
+                        return;
+                    }
+                    // Render a frame
+                    self.emulator.render(pixels.frame_mut());
+                    if let Err(e) = pixels.render() {
+                        error!("Error while rendering frame: {}", e);
+                        event_loop.exit();
+                        self.emulator.finish();
+                        return;
+                    }
+                    window.request_redraw();
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 fn init_audio(mut consumer: impl Consumer<Item = f32> + Send + 'static) -> Result<Stream> {
@@ -154,20 +194,13 @@ fn init_audio(mut consumer: impl Consumer<Item = f32> + Send + 'static) -> Resul
         .build_output_stream(
             &config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                let mut _fell_behind = false;
                 trace!("Writing {} audio samples", data.len());
                 for sample in data {
                     *sample = match consumer.try_pop() {
                         Some(s) => s.to_sample::<f32>(),
-                        None => {
-                            _fell_behind = true;
-                            0.0
-                        }
+                        None => 0.0,
                     }
                 }
-                // if fell_behind {
-                //     debug!("Buffer underrun!");
-                // }
             },
             err_fn,
             None,

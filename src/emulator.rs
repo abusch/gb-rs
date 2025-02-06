@@ -15,8 +15,10 @@ use gb_rs::{
     SCREEN_WIDTH,
 };
 use ringbuf::{producer::Producer, storage::Heap, wrap::caching::Caching, SharedRb};
-use winit::keyboard::KeyCode;
-use winit_input_helper::WinitInputHelper;
+use winit::{
+    event::KeyEvent,
+    keyboard::{KeyCode, PhysicalKey},
+};
 
 use crate::debugger::{Command, Debugger};
 
@@ -134,24 +136,62 @@ impl Emulator {
         Ok(())
     }
 
-    pub fn handle_input(&mut self, input: &WinitInputHelper) {
-        self.gb
-            .set_button_pressed(Button::Start, input.key_held(KeyCode::Enter));
-        self.gb
-            .set_button_pressed(Button::Select, input.key_held(KeyCode::Space));
-        self.gb
-            .set_button_pressed(Button::A, input.key_held(KeyCode::KeyA));
-        self.gb
-            .set_button_pressed(Button::B, input.key_held(KeyCode::KeyB));
-        self.gb
-            .set_button_pressed(Button::Up, input.key_held(KeyCode::ArrowUp));
-        self.gb
-            .set_button_pressed(Button::Down, input.key_held(KeyCode::ArrowDown));
-        self.gb
-            .set_button_pressed(Button::Left, input.key_held(KeyCode::ArrowLeft));
-        self.gb
-            .set_button_pressed(Button::Right, input.key_held(KeyCode::ArrowRight));
+    pub fn handle_input(&mut self, key: KeyEvent) {
+        // Ignore repeats
+        if key.repeat {
+            return;
+        }
+        // Ignore keys that don't have a key code
+        let PhysicalKey::Code(keycode) = key.physical_key else {
+            return;
+        };
+
+        match keycode {
+            KeyCode::Enter => self
+                .gb
+                .set_button_pressed(Button::Start, key.state.is_pressed()),
+            KeyCode::Space => self
+                .gb
+                .set_button_pressed(Button::Select, key.state.is_pressed()),
+            KeyCode::KeyA => self
+                .gb
+                .set_button_pressed(Button::A, key.state.is_pressed()),
+            KeyCode::KeyB => self
+                .gb
+                .set_button_pressed(Button::B, key.state.is_pressed()),
+            KeyCode::ArrowUp => self
+                .gb
+                .set_button_pressed(Button::Up, key.state.is_pressed()),
+            KeyCode::ArrowDown => self
+                .gb
+                .set_button_pressed(Button::Down, key.state.is_pressed()),
+            KeyCode::ArrowLeft => self
+                .gb
+                .set_button_pressed(Button::Left, key.state.is_pressed()),
+            KeyCode::ArrowRight => self
+                .gb
+                .set_button_pressed(Button::Right, key.state.is_pressed()),
+            _ => (),
+        }
     }
+    // pub fn handle_input(&mut self, input: &WinitInputHelper) {
+    //     self.gb
+    //         .set_button_pressed(Button::Start, input.key_held(KeyCode::Enter));
+    //     self.gb
+    //         .set_button_pressed(Button::Select, input.key_held(KeyCode::Space));
+    //     self.gb
+    //         .set_button_pressed(Button::A, input.key_held(KeyCode::KeyA));
+    //     self.gb
+    //         .set_button_pressed(Button::B, input.key_held(KeyCode::KeyB));
+    //     self.gb
+    //         .set_button_pressed(Button::Up, input.key_held(KeyCode::ArrowUp));
+    //     self.gb
+    //         .set_button_pressed(Button::Down, input.key_held(KeyCode::ArrowDown));
+    //     self.gb
+    //         .set_button_pressed(Button::Left, input.key_held(KeyCode::ArrowLeft));
+    //     self.gb
+    //         .set_button_pressed(Button::Right, input.key_held(KeyCode::ArrowRight));
+    // }
 }
 
 /// Frame sink that only keeps the most recent frame
