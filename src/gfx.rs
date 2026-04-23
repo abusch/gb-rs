@@ -439,8 +439,12 @@ impl Gfx {
                 )
             } else {
                 // we're in the background
-
-                (lcd_x + self.scx, lcd_y + self.scy, bg_tilemap_area)
+                // BG is a 256x256 torus, so scroll offsets wrap around u8.
+                (
+                    lcd_x.wrapping_add(self.scx),
+                    lcd_y.wrapping_add(self.scy),
+                    bg_tilemap_area,
+                )
             };
             // Coordinates in "tilemap space" (i.e. 32x32)
             let (tilemap_x, tilemap_y) = (bg_x / 8, bg_y / 8);
