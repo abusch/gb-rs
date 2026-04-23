@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::Parser;
 use cpal::{
-    BufferSize, Sample, SampleRate, Stream, StreamConfig,
+    BufferSize, Sample, Stream, StreamConfig,
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 use emulator::Emulator;
@@ -181,10 +181,10 @@ fn init_audio(mut consumer: impl Consumer<Item = f32> + Send + 'static) -> Resul
     let device = host
         .default_output_device()
         .context("error while querying config")?;
-    debug!("Audio device: {:?}", device.name());
+    debug!("Audio device: {:?}", device.description());
     let config = StreamConfig {
         channels: 2,
-        sample_rate: SampleRate(44100),
+        sample_rate: 44100,
         buffer_size: BufferSize::Fixed(2048),
     };
     let err_fn = |err| {

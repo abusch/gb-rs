@@ -16,13 +16,13 @@ bitflags = "2.8"
 bitvec = "1.0"
 byteorder = "1.4"
 clap = { version = "4.0", features = ["derive"] }
-cpal = "0.15"
+cpal = "0.17"
 log = { version = "0.4", features = ["release_max_level_info"] }
 env_logger = "0.11"
-pixels = "0.15.0"
-png = "0.17"
+pixels = "0.17"
+png = "0.18"
 ringbuf = "0.4"
-rustyline = "15"
+rustyline = "18"
 winit = "0.30"
 
 [profile.release]
