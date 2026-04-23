@@ -1,9 +1,9 @@
 use bitvec::{field::BitField, order::Lsb0, view::BitView};
 use log::{debug, trace};
 
-use crate::apu::{frame_sequencer::FrameSequencer, Timer};
+use crate::apu::{Timer, frame_sequencer::FrameSequencer};
 
-use super::{dac, LengthCounter, VolumeEnvelope};
+use super::{LengthCounter, VolumeEnvelope, dac};
 #[derive(Debug)]
 pub(crate) struct ToneChannel<const N: u8> {
     dac_enabled: bool,
@@ -54,13 +54,13 @@ impl<const N: u8> ToneChannel<N> {
         if frame_sequencer.vol_envelope_trigged() {
             self.volume_envelope.tick();
         }
-        if frame_sequencer.sweep_triggered() {
-            if let Some(ref mut sweep) = self.frequency_sweep {
-                match sweep.tick() {
-                    FrequencySweepResult::NewFreq(f) => self.freq_timer.period = (2048 - f) * 4,
-                    FrequencySweepResult::Disable => self.enabled = false,
-                    FrequencySweepResult::Nop => (),
-                }
+        if frame_sequencer.sweep_triggered()
+            && let Some(ref mut sweep) = self.frequency_sweep
+        {
+            match sweep.tick() {
+                FrequencySweepResult::NewFreq(f) => self.freq_timer.period = (2048 - f) * 4,
+                FrequencySweepResult::Disable => self.enabled = false,
+                FrequencySweepResult::Nop => (),
             }
         }
     }

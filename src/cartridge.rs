@@ -223,14 +223,14 @@ impl Cartridge {
     }
 
     pub fn save(&self) {
-        if let Some(ram_size) = self.get_num_ram_banks().map(|s| s as usize * 8192) {
-            if let Err(e) = std::fs::write(&self.save_file, &self.ram[..ram_size]) {
-                warn!(
-                    "Failed to save RAM file {}: {}",
-                    &self.save_file.display(),
-                    e
-                );
-            }
+        if let Some(ram_size) = self.get_num_ram_banks().map(|s| s as usize * 8192)
+            && let Err(e) = std::fs::write(&self.save_file, &self.ram[..ram_size])
+        {
+            warn!(
+                "Failed to save RAM file {}: {}",
+                &self.save_file.display(),
+                e
+            );
         }
     }
 

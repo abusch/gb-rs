@@ -8,16 +8,16 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::Parser;
 use cpal::{
-    traits::{DeviceTrait, HostTrait, StreamTrait},
     BufferSize, Sample, SampleRate, Stream, StreamConfig,
+    traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 use emulator::Emulator;
 use gb_rs::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use log::{debug, error, info, trace};
 use pixels::{Pixels, SurfaceTexture};
 use ringbuf::{
-    traits::{Consumer, Split},
     HeapRb,
+    traits::{Consumer, Split},
 };
 use winit::{
     application::ApplicationHandler,
@@ -137,11 +137,11 @@ impl ApplicationHandler for App {
                 event_loop.exiting();
             }
             WindowEvent::Resized(size) => {
-                if let Some(ref mut pixels) = self.pixels {
-                    if let Err(e) = pixels.resize_surface(size.width, size.height) {
-                        error!("Error while rendering frame: {e}");
-                        event_loop.exit();
-                    }
+                if let Some(ref mut pixels) = self.pixels
+                    && let Err(e) = pixels.resize_surface(size.width, size.height)
+                {
+                    error!("Error while rendering frame: {e}");
+                    event_loop.exit();
                 }
             }
             WindowEvent::KeyboardInput { event: k, .. } => {

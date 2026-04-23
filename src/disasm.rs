@@ -368,22 +368,3 @@ fn alu(n: u8) -> &'static str {
         _ => unreachable!(),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_boot_rom() {
-        let rom = std::fs::read("assets/dmg_boot.bin").unwrap();
-        let ops = Disassembler::new(&rom).run();
-
-        let output = ops
-            .iter()
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        println!("{}", output);
-        panic!("");
-    }
-}

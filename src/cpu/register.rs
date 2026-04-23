@@ -164,7 +164,7 @@ pub(super) struct Flags<'regs> {
 }
 
 impl Flags<'_> {
-    fn new(regs: &mut Registers, flag: u16) -> Flags {
+    fn new(regs: &'_ mut Registers, flag: u16) -> Flags<'_> {
         Flags { regs, flag }
     }
 

@@ -3,8 +3,8 @@ use std::ops::RangeInclusive;
 use log::{info, trace};
 
 use crate::{
-    apu::Apu, cartridge::Cartridge, gfx::Gfx, interrupt::InterruptFlag, joypad::Joypad,
-    timer::Timer, AudioSink, FrameSink,
+    AudioSink, FrameSink, apu::Apu, cartridge::Cartridge, gfx::Gfx, interrupt::InterruptFlag,
+    joypad::Joypad, timer::Timer,
 };
 
 const BOOT_ROM_DATA: &[u8] = include_bytes!("../assets/dmg_boot.bin");
@@ -217,8 +217,7 @@ impl Bus {
         self.interrupt_flag.toggle(flag);
         trace!(
             "Acknowledging interrupt: {:?}. Pending: {:?}",
-            flag,
-            self.interrupt_flag
+            flag, self.interrupt_flag
         );
     }
 
@@ -235,11 +234,7 @@ impl Bus {
         } else if IO_RANGE_COM.contains(&addr) {
             // Communication controller
             // FIXME: implement properly
-            if addr == 0xFF01 {
-                self.sb
-            } else {
-                0x7E
-            }
+            if addr == 0xFF01 { self.sb } else { 0x7E }
         } else if IO_RANGE_TIM.contains(&addr) {
             match addr {
                 0xff04 => self.timer.div_timer(),
@@ -332,8 +327,7 @@ impl Bus {
         } else {
             trace!(
                 "Write I/O Register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",
-                addr,
-                b
+                addr, b
             );
         }
     }

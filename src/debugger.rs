@@ -3,13 +3,13 @@ use std::borrow::Cow;
 use ansi_term::Colour;
 use anyhow::Result;
 use rustyline::{
+    Config, Editor, Helper,
     completion::{Completer, Pair},
     error::ReadlineError,
     highlight::{CmdKind, Highlighter},
     hint::Hinter,
     history::MemHistory,
     validate::Validator,
-    Config, Editor, Helper,
 };
 
 #[derive(Debug)]
@@ -49,34 +49,34 @@ impl Debugger {
                     "oam" => Command::DumpOam,
                     "palettes" => Command::DumpPalettes,
                     s if s.starts_with("mem") => {
-                        if let Some(addr_str) = s.split_whitespace().nth(1) {
-                            if let Ok(addr) = u16::from_str_radix(addr_str, 16) {
-                                return Command::DumpMem(addr);
-                            }
+                        if let Some(addr_str) = s.split_whitespace().nth(1)
+                            && let Ok(addr) = u16::from_str_radix(addr_str, 16)
+                        {
+                            return Command::DumpMem(addr);
                         }
                         Command::Nop
                     }
                     s if s.starts_with("dis") => {
-                        if let Some(addr_str) = s.split_whitespace().nth(1) {
-                            if let Ok(addr) = u16::from_str_radix(addr_str, 16) {
-                                return Command::Disassemble(addr);
-                            }
+                        if let Some(addr_str) = s.split_whitespace().nth(1)
+                            && let Ok(addr) = u16::from_str_radix(addr_str, 16)
+                        {
+                            return Command::Disassemble(addr);
                         }
                         Command::Nop
                     }
                     s if s.starts_with("br") => {
-                        if let Some(addr_str) = s.split_whitespace().nth(1) {
-                            if let Ok(addr) = u16::from_str_radix(addr_str, 16) {
-                                return Command::Break(addr);
-                            }
+                        if let Some(addr_str) = s.split_whitespace().nth(1)
+                            && let Ok(addr) = u16::from_str_radix(addr_str, 16)
+                        {
+                            return Command::Break(addr);
                         }
                         Command::Nop
                     }
                     s if s.starts_with("sprite ") => {
-                        if let Some(id_str) = s.split_whitespace().nth(1) {
-                            if let Ok(id) = id_str.parse::<u8>() {
-                                return Command::Sprite(id);
-                            }
+                        if let Some(id_str) = s.split_whitespace().nth(1)
+                            && let Ok(id) = id_str.parse::<u8>()
+                        {
+                            return Command::Sprite(id);
                         }
                         Command::Nop
                     }

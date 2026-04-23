@@ -3,9 +3,9 @@ use std::ops::ShrAssign;
 use bitvec::{field::BitField, order::Lsb0, view::BitView};
 use log::debug;
 
-use crate::apu::{frame_sequencer::FrameSequencer, Timer};
+use crate::apu::{Timer, frame_sequencer::FrameSequencer};
 
-use super::{dac, LengthCounter, VolumeEnvelope};
+use super::{LengthCounter, VolumeEnvelope, dac};
 
 /// Linear Feedback Shift Register
 #[derive(Debug)]

@@ -6,7 +6,7 @@ use std::{
 use bitvec::prelude::*;
 use log::trace;
 
-use crate::{interrupt::InterruptFlag, FrameSink, SCREEN_HEIGHT, SCREEN_WIDTH};
+use crate::{FrameSink, SCREEN_HEIGHT, SCREEN_WIDTH, interrupt::InterruptFlag};
 
 const VRAM_START: u16 = 0x8000;
 const OAM_START: u16 = 0xFE00;
@@ -532,7 +532,7 @@ impl Gfx {
             .collect::<Vec<_>>();
 
         // Order the sprites by smallest `x` as they have higher priority
-        sprites[..].sort_by(|s1, s2| s1.x.cmp(&s2.x));
+        sprites[..].sort_by_key(|s1| s1.x);
         // Return the first 10 sprites
         sprites.into_iter().take(10).collect()
     }

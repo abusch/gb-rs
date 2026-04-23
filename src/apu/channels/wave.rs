@@ -1,8 +1,8 @@
 use bitvec::{field::BitField, order::Lsb0, view::BitView};
 
-use crate::apu::{frame_sequencer::FrameSequencer, Timer};
+use crate::apu::{Timer, frame_sequencer::FrameSequencer};
 
-use super::{dac, LengthCounter};
+use super::{LengthCounter, dac};
 
 #[derive(Debug)]
 pub(crate) struct WaveChannel {
@@ -143,7 +143,7 @@ impl WaveChannel {
         }
 
         let byte = self.wav[self.position as usize / 2];
-        let value = if self.position % 2 == 0 {
+        let value = if self.position.is_multiple_of(2) {
             // lower nibble
             byte & 0x0F
         } else {

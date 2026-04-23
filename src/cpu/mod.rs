@@ -124,7 +124,7 @@ impl Cpu {
         let orig_pc = self.pc;
         let op = self.fetch(bus);
 
-        let cycles = match op {
+        match op {
             // NOP
             0x00 => 4,
             // LD BC,d16
@@ -721,8 +721,7 @@ impl Cpu {
                 warn!("Unimplemented op=0x{:02x}, orig_pc=0x{:04x}", op, orig_pc);
                 0
             }
-        };
-        cycles
+        }
     }
 
     /// CB-prefixed instruction

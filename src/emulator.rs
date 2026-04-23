@@ -11,10 +11,10 @@ use anyhow::Result;
 use log::{debug, info};
 
 use gb_rs::{
-    cartridge::Cartridge, gameboy::GameBoy, joypad::Button, AudioSink, FrameSink, SCREEN_HEIGHT,
-    SCREEN_WIDTH,
+    AudioSink, FrameSink, SCREEN_HEIGHT, SCREEN_WIDTH, cartridge::Cartridge, gameboy::GameBoy,
+    joypad::Button,
 };
-use ringbuf::{producer::Producer, storage::Heap, wrap::caching::Caching, SharedRb};
+use ringbuf::{SharedRb, producer::Producer, storage::Heap, wrap::caching::Caching};
 use winit::{
     event::KeyEvent,
     keyboard::{KeyCode, PhysicalKey},
@@ -66,6 +66,7 @@ impl Emulator {
         })
     }
 
+    #[allow(dead_code)]
     pub fn start_debugger(&mut self) {
         self.gb.pause();
     }
@@ -115,6 +116,7 @@ impl Emulator {
         self.gb.save();
     }
 
+    #[allow(dead_code)]
     pub fn screenshot(&mut self) -> Result<()> {
         let filename = format!(
             "gb-rs-screenshot_{}.png",
