@@ -1,5 +1,3 @@
-use std::collections::VecDeque;
-
 mod apu;
 mod bus;
 pub mod cartridge;
@@ -20,5 +18,4 @@ pub trait FrameSink {
 
 pub trait AudioSink {
     fn push_sample(&mut self, sample: (f32, f32)) -> bool;
-    fn push_samples(&mut self, samples: &mut VecDeque<f32>);
 }

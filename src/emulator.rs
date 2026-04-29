@@ -1,5 +1,4 @@
 use std::{
-    collections::VecDeque,
     fs::File,
     io::BufWriter,
     path::Path,
@@ -11,7 +10,7 @@ use std::{
 };
 
 use anyhow::Result;
-use log::{debug, info};
+use log::info;
 
 use gb_rs::{
     AudioSink, FrameSink, SCREEN_HEIGHT, SCREEN_WIDTH, cartridge::Cartridge, gameboy::GameBoy,
@@ -310,21 +309,9 @@ impl AudioSink for CpalAudioSink {
             self.stats
                 .producer_drop_count
                 .fetch_add(1, Ordering::Relaxed);
-            debug!("Buffer overrun!");
             return true;
         }
 
         false
-    }
-
-    fn push_samples(&mut self, samples: &mut VecDeque<f32>) {
-        let mut iter = samples.iter().map(|v| *v * self.master_volume);
-        let n = self.buffer.push_iter(&mut iter);
-        if n < samples.len() {
-            self.stats
-                .producer_drop_count
-                .fetch_add((samples.len() - n) as u64, Ordering::Relaxed);
-        }
-        samples.drain(0..n);
     }
 }

@@ -1,5 +1,3 @@
-use std::collections::VecDeque;
-
 use bitvec::{field::BitField, order::Lsb0, view::BitView};
 use channels::HighPassFilter;
 use log::debug;
@@ -78,8 +76,6 @@ pub struct Apu {
     channel2: ToneChannel<2>,
     channel3: WaveChannel,
     channel4: NoiseChannel,
-
-    buf: VecDeque<f32>,
 }
 
 impl Apu {
@@ -103,7 +99,6 @@ impl Apu {
             channel2: ToneChannel::new(false),
             channel3: WaveChannel::new(),
             channel4: NoiseChannel::new(),
-            buf: VecDeque::new(),
         }
     }
 
@@ -125,15 +120,8 @@ impl Apu {
             self.sample_counter += 1.0;
             if self.sample_counter >= self.sample_period {
                 self.sample_counter -= self.sample_period;
-                let (left, right) = self.output();
-                if self.buf.len() < 400 {
-                    self.buf.push_back(left);
-                    self.buf.push_back(right);
-                }
-
-                if self.buf.len() > 200 {
-                    sink.push_samples(&mut self.buf);
-                }
+                let sample = self.output();
+                sink.push_sample(sample);
             }
         }
     }
@@ -290,7 +278,6 @@ impl Apu {
                     // self.channel1.reset();
                 } else {
                     debug!("Turning APU OFF!");
-                    self.buf.clear();
                     self.left_vin_enabled = false;
                     self.right_vin_enabled = false;
                     self.timer.reset();
