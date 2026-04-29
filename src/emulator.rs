@@ -3,7 +3,10 @@ use std::{
     fs::File,
     io::BufWriter,
     path::Path,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, AtomicU64, Ordering},
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -14,7 +17,9 @@ use gb_rs::{
     AudioSink, FrameSink, SCREEN_HEIGHT, SCREEN_WIDTH, cartridge::Cartridge, gameboy::GameBoy,
     joypad::Button,
 };
-use ringbuf::{SharedRb, producer::Producer, storage::Heap, wrap::caching::Caching};
+use ringbuf::{
+    SharedRb, producer::Producer, storage::Heap, traits::Observer, wrap::caching::Caching,
+};
 use winit::{
     event::KeyEvent,
     keyboard::{KeyCode, PhysicalKey},
@@ -28,6 +33,15 @@ use crate::debugger::{Command, Debugger};
 const CPU_CYCLE_TIME_NS: u64 = 238;
 pub type ProducerF32 = Caching<Arc<SharedRb<Heap<f32>>>, true, false>;
 
+const STATS_LOG_INTERVAL: Duration = Duration::from_secs(1);
+
+#[derive(Debug, Default)]
+pub struct AudioStats {
+    pub underrun_count: AtomicU64,
+    pub producer_drop_count: AtomicU64,
+    pub last_fill_level: AtomicU32,
+}
+
 /// The object that pulls everything together and drives the emulation engine while interfacing
 /// with actual input/outputs.
 pub struct Emulator {
@@ -37,12 +51,15 @@ pub struct Emulator {
     debugger: Debugger,
     sink: MostRecentFrameSink,
     audio_sink: CpalAudioSink,
+    audio_stats: Arc<AudioStats>,
+    last_stats_log: Instant,
 }
 
 impl Emulator {
     pub fn new(
         rom: impl AsRef<Path>,
         producer: ProducerF32,
+        audio_stats: Arc<AudioStats>,
         breakpoint: Option<u16>,
         enable_soft_break: bool,
     ) -> Result<Self> {
@@ -56,13 +73,16 @@ impl Emulator {
         info!("SGB flag: {}", cartridge.sgb_flag());
         let gb = GameBoy::new(cartridge, breakpoint, enable_soft_break);
 
+        let now = Instant::now();
         Ok(Self {
             gb,
-            start_time_ns: Instant::now(),
+            start_time_ns: now,
             emulated_cycles: 0,
             debugger: Debugger::new()?,
             sink: MostRecentFrameSink::default(),
-            audio_sink: CpalAudioSink::new(producer),
+            audio_sink: CpalAudioSink::new(producer, Arc::clone(&audio_stats)),
+            audio_stats,
+            last_stats_log: now,
         })
     }
 
@@ -76,6 +96,8 @@ impl Emulator {
     }
 
     pub fn update(&mut self) -> bool {
+        self.log_audio_stats();
+
         let target_time_ns = self.start_time_ns.elapsed();
         let target_cycles = target_time_ns.as_nanos() as u64 / CPU_CYCLE_TIME_NS;
 
@@ -114,6 +136,29 @@ impl Emulator {
 
     pub fn finish(&mut self) {
         self.gb.save();
+    }
+
+    fn log_audio_stats(&mut self) {
+        let now = Instant::now();
+        if now.duration_since(self.last_stats_log) < STATS_LOG_INTERVAL {
+            return;
+        }
+        self.last_stats_log = now;
+
+        let fill = self.audio_sink.fill_level() as u32;
+        self.audio_stats
+            .last_fill_level
+            .store(fill, Ordering::Relaxed);
+
+        let underruns = self.audio_stats.underrun_count.swap(0, Ordering::Relaxed);
+        let drops = self
+            .audio_stats
+            .producer_drop_count
+            .swap(0, Ordering::Relaxed);
+
+        if underruns > 0 || drops > 0 {
+            info!("audio stats: underruns/s={underruns} producer_drops/s={drops} fill={fill}");
+        }
     }
 
     #[allow(dead_code)]
@@ -240,14 +285,20 @@ impl FrameSink for MostRecentFrameSink {
 struct CpalAudioSink {
     buffer: ProducerF32,
     master_volume: f32,
+    stats: Arc<AudioStats>,
 }
 
 impl CpalAudioSink {
-    fn new(buffer: ProducerF32) -> Self {
+    fn new(buffer: ProducerF32, stats: Arc<AudioStats>) -> Self {
         Self {
             buffer,
             master_volume: 1.0,
+            stats,
         }
+    }
+
+    fn fill_level(&self) -> usize {
+        self.buffer.occupied_len()
     }
 }
 
@@ -256,6 +307,9 @@ impl AudioSink for CpalAudioSink {
         if self.buffer.try_push(sample.0 * self.master_volume).is_err()
             || self.buffer.try_push(sample.1 * self.master_volume).is_err()
         {
+            self.stats
+                .producer_drop_count
+                .fetch_add(1, Ordering::Relaxed);
             debug!("Buffer overrun!");
             return true;
         }
@@ -266,6 +320,11 @@ impl AudioSink for CpalAudioSink {
     fn push_samples(&mut self, samples: &mut VecDeque<f32>) {
         let mut iter = samples.iter().map(|v| *v * self.master_volume);
         let n = self.buffer.push_iter(&mut iter);
+        if n < samples.len() {
+            self.stats
+                .producer_drop_count
+                .fetch_add((samples.len() - n) as u64, Ordering::Relaxed);
+        }
         samples.drain(0..n);
     }
 }

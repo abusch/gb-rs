@@ -2,6 +2,7 @@ use std::any::Any;
 use std::num::ParseIntError;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
 
@@ -11,7 +12,7 @@ use cpal::{
     BufferSize, Sample, Stream, StreamConfig,
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
-use emulator::Emulator;
+use emulator::{AudioStats, Emulator};
 use gb_rs::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use log::{debug, error, info, trace};
 use pixels::{Pixels, SurfaceTexture};
@@ -65,12 +66,19 @@ fn main() -> Result<()> {
     // Buffer can hold 0.5s of samples (assuming 2 channels)
     let ringbuf = HeapRb::<f32>::new(8102);
     let (producer, consumer) = ringbuf.split();
-    let emulator = Emulator::new(&cli.rom, producer, cli.breakpoint, cli.enable_soft_break)?;
+    let audio_stats = Arc::new(AudioStats::default());
+    let emulator = Emulator::new(
+        &cli.rom,
+        producer,
+        Arc::clone(&audio_stats),
+        cli.breakpoint,
+        cli.enable_soft_break,
+    )?;
     let _guard: Box<dyn Any> = if cli.quiet {
         init_no_audio(consumer);
         Box::new(())
     } else {
-        let stream = init_audio(consumer)?;
+        let stream = init_audio(consumer, Arc::clone(&audio_stats))?;
         Box::new(stream)
     };
 
@@ -176,7 +184,10 @@ impl ApplicationHandler for App {
     }
 }
 
-fn init_audio(mut consumer: impl Consumer<Item = f32> + Send + 'static) -> Result<Stream> {
+fn init_audio(
+    mut consumer: impl Consumer<Item = f32> + Send + 'static,
+    stats: Arc<AudioStats>,
+) -> Result<Stream> {
     let host = cpal::default_host();
     let device = host
         .default_output_device()
@@ -195,11 +206,20 @@ fn init_audio(mut consumer: impl Consumer<Item = f32> + Send + 'static) -> Resul
             &config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 trace!("Writing {} audio samples", data.len());
+                let mut underrun_frames: u64 = 0;
                 for sample in data {
                     *sample = match consumer.try_pop() {
                         Some(s) => s.to_sample::<f32>(),
-                        None => 0.0,
+                        None => {
+                            underrun_frames += 1;
+                            0.0
+                        }
                     }
+                }
+                if underrun_frames > 0 {
+                    stats
+                        .underrun_count
+                        .fetch_add(underrun_frames, Ordering::Relaxed);
                 }
             },
             err_fn,
