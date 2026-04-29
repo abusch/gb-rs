@@ -201,20 +201,25 @@ fn init_audio(
     let err_fn = |err| {
         error!("Error writing to audio stream: {}", err);
     };
+    let mut playback = PlaybackState::new();
     let stream = device
         .build_output_stream(
             &config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 trace!("Writing {} audio samples", data.len());
                 let mut underrun_frames: u64 = 0;
-                for sample in data {
-                    *sample = match consumer.try_pop() {
-                        Some(s) => s.to_sample::<f32>(),
-                        None => {
-                            underrun_frames += 1;
-                            0.0
-                        }
-                    }
+                for frame in data.chunks_exact_mut(2) {
+                    let popped = if consumer.occupied_len() >= 2 {
+                        let l = consumer.try_pop().unwrap().to_sample::<f32>();
+                        let r = consumer.try_pop().unwrap().to_sample::<f32>();
+                        Some((l, r))
+                    } else {
+                        underrun_frames += 1;
+                        None
+                    };
+                    let (l, r) = playback.process_frame(popped);
+                    frame[0] = l;
+                    frame[1] = r;
                 }
                 if underrun_frames > 0 {
                     stats
@@ -232,6 +237,99 @@ fn init_audio(
     Ok(stream)
 }
 
+/// ~3 ms at 44.1 kHz; ramp length for fade-out and fade-in on underrun boundaries.
+const RAMP_FRAMES: u32 = 132;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlayPhase {
+    Normal,
+    FadingOut,
+    Silent,
+    FadingIn,
+}
+
+struct PlaybackState {
+    phase: PlayPhase,
+    last_l: f32,
+    last_r: f32,
+    ramp_pos: u32,
+}
+
+impl PlaybackState {
+    fn new() -> Self {
+        Self {
+            phase: PlayPhase::Normal,
+            last_l: 0.0,
+            last_r: 0.0,
+            ramp_pos: 0,
+        }
+    }
+
+    fn process_frame(&mut self, popped: Option<(f32, f32)>) -> (f32, f32) {
+        match (self.phase, popped) {
+            (PlayPhase::Normal, Some((l, r))) => {
+                self.last_l = l;
+                self.last_r = r;
+                (l, r)
+            }
+            (PlayPhase::Normal, None) => {
+                self.phase = PlayPhase::FadingOut;
+                self.ramp_pos = 0;
+                self.fade_out_step()
+            }
+            (PlayPhase::FadingOut, None) => self.fade_out_step(),
+            (PlayPhase::FadingOut, Some((l, r))) => {
+                // Underrun ended mid fade-out. Switch to fade-in at the matching envelope
+                // value to keep the output continuous.
+                self.last_l = l;
+                self.last_r = r;
+                self.phase = PlayPhase::FadingIn;
+                self.ramp_pos = (RAMP_FRAMES + 1).saturating_sub(self.ramp_pos);
+                self.fade_in_step()
+            }
+            (PlayPhase::Silent, None) => (0.0, 0.0),
+            (PlayPhase::Silent, Some((l, r))) => {
+                self.last_l = l;
+                self.last_r = r;
+                self.phase = PlayPhase::FadingIn;
+                self.ramp_pos = 0;
+                self.fade_in_step()
+            }
+            (PlayPhase::FadingIn, Some((l, r))) => {
+                self.last_l = l;
+                self.last_r = r;
+                self.fade_in_step()
+            }
+            (PlayPhase::FadingIn, None) => {
+                // Underrun resumed during fade-in. Ramp back down from the current envelope.
+                self.phase = PlayPhase::FadingOut;
+                self.ramp_pos = (RAMP_FRAMES + 1).saturating_sub(self.ramp_pos);
+                self.fade_out_step()
+            }
+        }
+    }
+
+    fn fade_out_step(&mut self) -> (f32, f32) {
+        let env = 1.0 - (self.ramp_pos as f32 / RAMP_FRAMES as f32);
+        self.ramp_pos += 1;
+        if self.ramp_pos >= RAMP_FRAMES {
+            self.phase = PlayPhase::Silent;
+            self.ramp_pos = 0;
+        }
+        (self.last_l * env, self.last_r * env)
+    }
+
+    fn fade_in_step(&mut self) -> (f32, f32) {
+        let env = self.ramp_pos as f32 / RAMP_FRAMES as f32;
+        self.ramp_pos += 1;
+        if self.ramp_pos >= RAMP_FRAMES {
+            self.phase = PlayPhase::Normal;
+            self.ramp_pos = 0;
+        }
+        (self.last_l * env, self.last_r * env)
+    }
+}
+
 fn init_no_audio(mut consumer: impl Consumer<Item = f32> + Send + 'static) {
     thread::spawn(move || {
         loop {
@@ -242,4 +340,104 @@ fn init_no_audio(mut consumer: impl Consumer<Item = f32> + Send + 'static) {
             thread::sleep(Duration::from_millis(5));
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A constant-amplitude sample: easy to reason about envelope shape.
+    const A: (f32, f32) = (0.5, 0.5);
+
+    fn run(state: &mut PlaybackState, frames: &[Option<(f32, f32)>]) -> Vec<(f32, f32)> {
+        frames.iter().map(|f| state.process_frame(*f)).collect()
+    }
+
+    #[test]
+    fn passthrough_in_normal_state() {
+        let mut state = PlaybackState::new();
+        let out = run(&mut state, &[Some(A); 5]);
+        assert!(out.iter().all(|&s| s == A));
+        assert_eq!(state.phase, PlayPhase::Normal);
+    }
+
+    #[test]
+    fn underrun_triggers_monotone_fade_to_silence() {
+        let mut state = PlaybackState::new();
+        // Prime with one good sample so last_l/last_r are set.
+        state.process_frame(Some(A));
+
+        // Run RAMP_FRAMES underruns; expect monotone non-increasing envelope down to ~0.
+        let mut prev = A.0 + 1.0; // sentinel above 1.0
+        for _ in 0..RAMP_FRAMES {
+            let (l, _) = state.process_frame(None);
+            assert!(l <= prev, "expected monotone fade-out: {l} > {prev}");
+            assert!((0.0..=A.0).contains(&l));
+            prev = l;
+        }
+        assert_eq!(state.phase, PlayPhase::Silent);
+
+        // Subsequent underruns are pure silence.
+        for _ in 0..10 {
+            assert_eq!(state.process_frame(None), (0.0, 0.0));
+        }
+    }
+
+    #[test]
+    fn recovery_from_silence_fades_in_from_zero() {
+        let mut state = PlaybackState::new();
+        state.process_frame(Some(A));
+        // Drain to Silent.
+        for _ in 0..(RAMP_FRAMES + 5) {
+            state.process_frame(None);
+        }
+        assert_eq!(state.phase, PlayPhase::Silent);
+
+        // Now feed RAMP_FRAMES samples; envelope should monotonically rise from 0 to A.
+        let mut prev = -1.0;
+        for _ in 0..RAMP_FRAMES {
+            let (l, _) = state.process_frame(Some(A));
+            assert!(l >= prev, "expected monotone fade-in: {l} < {prev}");
+            assert!((0.0..=A.0).contains(&l));
+            prev = l;
+        }
+        assert_eq!(state.phase, PlayPhase::Normal);
+
+        // After fade-in, full passthrough.
+        let (l, r) = state.process_frame(Some(A));
+        assert_eq!((l, r), A);
+    }
+
+    #[test]
+    fn underrun_during_fade_in_reverses_envelope() {
+        let mut state = PlaybackState::new();
+        state.process_frame(Some(A));
+        for _ in 0..(RAMP_FRAMES + 1) {
+            state.process_frame(None);
+        }
+        // We're now Silent; ramp partway up.
+        for _ in 0..(RAMP_FRAMES / 2) {
+            state.process_frame(Some(A));
+        }
+        assert_eq!(state.phase, PlayPhase::FadingIn);
+        let (peak, _) = state.process_frame(Some(A));
+
+        // Now hit underrun - phase should switch to FadingOut and envelope decrease.
+        let (next, _) = state.process_frame(None);
+        assert_eq!(state.phase, PlayPhase::FadingOut);
+        assert!(
+            next <= peak,
+            "fade-out should start below peak: {next} > {peak}"
+        );
+    }
+
+    #[test]
+    fn no_pop_when_starting_in_silence() {
+        // First-ever underruns (state == Normal, last is zero) should produce all zeros,
+        // not a discontinuity.
+        let mut state = PlaybackState::new();
+        for _ in 0..(RAMP_FRAMES * 2) {
+            assert_eq!(state.process_frame(None), (0.0, 0.0));
+        }
+    }
 }
