@@ -26,10 +26,16 @@ use winit::{
 
 use crate::debugger::{Command, Debugger};
 
-// 4.194304MHZ -> 4194304 cycles per seconds
-// const CPU_CYCLE_PER_SEC: u64 = 4194304;
-// 1/4194304 seconds per cycle -> 238 nanoseconds per cycle
-const CPU_CYCLE_TIME_NS: u64 = 238;
+// 4.194304 MHz CPU clock. We do not store a precomputed ns-per-cycle constant: at 238 ns
+// it rounds the period down by 0.18%, which makes the emulator run ~78 samples/s faster
+// than real time and steadily fills the audio ring buffer. Convert via full multiply/divide
+// against `NS_PER_SEC` instead.
+const CPU_HZ: u64 = 4_194_304;
+const NS_PER_SEC: u64 = 1_000_000_000;
+
+fn cycles_to_ns(cycles: u64) -> u64 {
+    (cycles as u128 * NS_PER_SEC as u128 / CPU_HZ as u128) as u64
+}
 pub type ProducerF32 = Caching<Arc<SharedRb<Heap<f32>>>, true, false>;
 
 const STATS_LOG_INTERVAL: Duration = Duration::from_secs(1);
@@ -97,8 +103,8 @@ impl Emulator {
     pub fn update(&mut self) -> bool {
         self.log_audio_stats();
 
-        let target_time_ns = self.start_time_ns.elapsed();
-        let target_cycles = target_time_ns.as_nanos() as u64 / CPU_CYCLE_TIME_NS;
+        let elapsed_ns = self.start_time_ns.elapsed().as_nanos() as u64;
+        let target_cycles = elapsed_ns.saturating_mul(CPU_HZ) / NS_PER_SEC;
 
         if self.gb.is_paused() {
             match self.debugger.debug() {
@@ -110,8 +116,8 @@ impl Emulator {
                 }
                 Command::Continue => {
                     // Reset start time
-                    self.start_time_ns = Instant::now()
-                        - Duration::from_nanos(self.emulated_cycles * CPU_CYCLE_TIME_NS);
+                    self.start_time_ns =
+                        Instant::now() - Duration::from_nanos(cycles_to_ns(self.emulated_cycles));
                     self.gb.resume();
                 }
                 Command::DumpMem(addr) => self.gb.dump_mem(addr),
@@ -141,7 +147,7 @@ impl Emulator {
     /// (warm-up, debugger, etc.).
     pub fn reset_clock(&mut self) {
         let now = Instant::now();
-        self.start_time_ns = now - Duration::from_nanos(self.emulated_cycles * CPU_CYCLE_TIME_NS);
+        self.start_time_ns = now - Duration::from_nanos(cycles_to_ns(self.emulated_cycles));
         self.last_stats_log = now;
     }
 
