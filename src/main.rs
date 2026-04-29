@@ -75,11 +75,11 @@ fn main() -> Result<()> {
         cli.enable_soft_break,
     )?;
 
-    // Pre-buffer ~30 ms of audio (1323 stereo frames = 2646 f32) before starting the
+    // Pre-buffer ~46 ms of audio (2 cpal callbacks worth = 4096 f32) before starting the
     // cpal stream, so the first callback finds samples ready instead of underrunning.
     if !cli.quiet {
-        const WARMUP_F32: usize = 1323 * 2;
-        const WARMUP_TIMEOUT: Duration = Duration::from_millis(200);
+        const WARMUP_F32: usize = 2048 * 2;
+        const WARMUP_TIMEOUT: Duration = Duration::from_millis(500);
         emulator.warm_up_audio(WARMUP_F32, WARMUP_TIMEOUT);
         emulator.reset_clock();
     }
