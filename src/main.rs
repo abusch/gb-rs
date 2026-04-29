@@ -67,13 +67,23 @@ fn main() -> Result<()> {
     let ringbuf = HeapRb::<f32>::new(8102);
     let (producer, consumer) = ringbuf.split();
     let audio_stats = Arc::new(AudioStats::default());
-    let emulator = Emulator::new(
+    let mut emulator = Emulator::new(
         &cli.rom,
         producer,
         Arc::clone(&audio_stats),
         cli.breakpoint,
         cli.enable_soft_break,
     )?;
+
+    // Pre-buffer ~30 ms of audio (1323 stereo frames = 2646 f32) before starting the
+    // cpal stream, so the first callback finds samples ready instead of underrunning.
+    if !cli.quiet {
+        const WARMUP_F32: usize = 1323 * 2;
+        const WARMUP_TIMEOUT: Duration = Duration::from_millis(200);
+        emulator.warm_up_audio(WARMUP_F32, WARMUP_TIMEOUT);
+        emulator.reset_clock();
+    }
+
     let _guard: Box<dyn Any> = if cli.quiet {
         init_no_audio(consumer);
         Box::new(())

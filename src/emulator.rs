@@ -137,6 +137,27 @@ impl Emulator {
         self.gb.save();
     }
 
+    /// Re-anchor the wall-clock so `update()` doesn't try to "catch up" after a pause
+    /// (warm-up, debugger, etc.).
+    pub fn reset_clock(&mut self) {
+        let now = Instant::now();
+        self.start_time_ns = now - Duration::from_nanos(self.emulated_cycles * CPU_CYCLE_TIME_NS);
+        self.last_stats_log = now;
+    }
+
+    /// Step the emulator (ignoring wall-clock pacing) until the audio ring buffer holds at
+    /// least `target_fill` f32 samples, or `timeout` elapses. Used at startup to avoid the
+    /// initial cpal underrun. Caller should `reset_clock()` afterwards.
+    pub fn warm_up_audio(&mut self, target_fill: usize, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        while self.audio_sink.fill_level() < target_fill {
+            if Instant::now() >= deadline {
+                break;
+            }
+            self.emulated_cycles += self.gb.step(&mut self.sink, &mut self.audio_sink);
+        }
+    }
+
     fn log_audio_stats(&mut self) {
         let now = Instant::now();
         if now.duration_since(self.last_stats_log) < STATS_LOG_INTERVAL {
