@@ -43,8 +43,6 @@ const WAV_RAM_START: u16 = 0xFF30;
 const CPU_CYCLES_PER_SECOND: u32 = 4194304;
 // Period for the main 512Hz timer
 const TIMER_PERIOD: u16 = 8192;
-const TARGET_SAMPLE_RATE: u32 = 44100;
-// const SAMPLE_CYCLES: f32 = CPU_CYCLES_PER_SECOND as f32 / 44100.0;
 
 #[derive(Debug)]
 pub struct Apu {
@@ -65,8 +63,6 @@ pub struct Apu {
     left_hpf: HighPassFilter,
     right_hpf: HighPassFilter,
 
-    #[allow(dead_code)]
-    sample_rate: u32,
     sample_period: f32,
     sample_counter: f32,
     timer: Timer,
@@ -79,7 +75,7 @@ pub struct Apu {
 }
 
 impl Apu {
-    pub fn new() -> Self {
+    pub fn new(sample_rate: u32) -> Self {
         Self {
             apu_enabled: true,
             sound_output_selection: 0,
@@ -90,8 +86,7 @@ impl Apu {
             right_volume: 0,
             right_hpf: HighPassFilter::default(),
 
-            sample_rate: TARGET_SAMPLE_RATE,
-            sample_period: CPU_CYCLES_PER_SECOND as f32 / TARGET_SAMPLE_RATE as f32,
+            sample_period: CPU_CYCLES_PER_SECOND as f32 / sample_rate as f32,
             sample_counter: 0.0,
             timer: Timer::new(TIMER_PERIOD),
             frame_sequencer: FrameSequencer::default(),

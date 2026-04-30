@@ -9,7 +9,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::Parser;
 use cpal::{
-    BufferSize, Sample, Stream, StreamConfig,
+    BufferSize, Device, Sample, Stream, StreamConfig, SupportedStreamConfig,
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 use emulator::{AudioStats, Emulator};
@@ -47,6 +47,10 @@ pub struct Cli {
     /// debugger is started. This is useful for some test ROMS.
     #[arg(long)]
     enable_soft_break: bool,
+    /// Force a specific audio sample rate (Hz). Must be supported by the output device.
+    /// If omitted, the device's default rate is used.
+    #[arg(long)]
+    audio_rate: Option<u32>,
     /// Path to the ROM file
     rom: PathBuf,
 }
@@ -63,8 +67,23 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    // Buffer can hold 0.5s of samples (assuming 2 channels)
-    let ringbuf = HeapRb::<f32>::new(8102);
+    // Pick the output device and its preferred config so the APU can decimate directly to
+    // the device sample rate. For `--quiet`, fall back to a sensible constant since no
+    // stream is opened.
+    let audio_target = if cli.quiet {
+        None
+    } else {
+        Some(negotiate_audio(cli.audio_rate)?)
+    };
+    let device_rate = audio_target
+        .as_ref()
+        .map(|(_, cfg)| cfg.sample_rate())
+        .unwrap_or(48_000);
+    info!("audio: device rate = {device_rate} Hz");
+
+    // Buffer holds ~0.5 s of stereo at the device rate (= device_rate * 2 channels / 2).
+    let ringbuf_capacity = device_rate as usize;
+    let ringbuf = HeapRb::<f32>::new(ringbuf_capacity);
     let (producer, consumer) = ringbuf.split();
     let audio_stats = Arc::new(AudioStats::default());
     let mut emulator = Emulator::new(
@@ -73,23 +92,27 @@ fn main() -> Result<()> {
         Arc::clone(&audio_stats),
         cli.breakpoint,
         cli.enable_soft_break,
+        device_rate,
     )?;
 
-    // Pre-buffer ~46 ms of audio (2 cpal callbacks worth = 4096 f32) before starting the
-    // cpal stream, so the first callback finds samples ready instead of underrunning.
+    // Pre-buffer ~46 ms of audio (2 cpal callbacks worth) before starting the cpal stream,
+    // so the first callback finds samples ready instead of underrunning.
     if !cli.quiet {
-        const WARMUP_F32: usize = 2048 * 2;
+        let warmup_f32 = (device_rate as usize) * 46 / 1000 * 2;
         const WARMUP_TIMEOUT: Duration = Duration::from_millis(500);
-        emulator.warm_up_audio(WARMUP_F32, WARMUP_TIMEOUT);
+        emulator.warm_up_audio(warmup_f32, WARMUP_TIMEOUT);
         emulator.reset_clock();
     }
 
-    let _guard: Box<dyn Any> = if cli.quiet {
-        init_no_audio(consumer);
-        Box::new(())
-    } else {
-        let stream = init_audio(consumer, Arc::clone(&audio_stats))?;
-        Box::new(stream)
+    let _guard: Box<dyn Any> = match audio_target {
+        None => {
+            init_no_audio(consumer);
+            Box::new(())
+        }
+        Some((device, supported_cfg)) => {
+            let stream = init_audio(device, supported_cfg, consumer, Arc::clone(&audio_stats))?;
+            Box::new(stream)
+        }
     };
 
     let mut app = App::new(emulator);
@@ -194,18 +217,34 @@ impl ApplicationHandler for App {
     }
 }
 
-fn init_audio(
-    mut consumer: impl Consumer<Item = f32> + Send + 'static,
-    stats: Arc<AudioStats>,
-) -> Result<Stream> {
+fn negotiate_audio(forced_rate: Option<u32>) -> Result<(Device, SupportedStreamConfig)> {
     let host = cpal::default_host();
     let device = host
         .default_output_device()
-        .context("error while querying config")?;
+        .context("no default output device available")?;
     debug!("Audio device: {:?}", device.description());
+    let supported_cfg = match forced_rate {
+        None => device
+            .default_output_config()
+            .context("failed to query default output config")?,
+        Some(rate) => device
+            .supported_output_configs()
+            .context("failed to enumerate output configs")?
+            .find_map(|range| range.try_with_sample_rate(rate))
+            .with_context(|| format!("device does not support sample rate {rate} Hz"))?,
+    };
+    Ok((device, supported_cfg))
+}
+
+fn init_audio(
+    device: Device,
+    supported_cfg: SupportedStreamConfig,
+    mut consumer: impl Consumer<Item = f32> + Send + 'static,
+    stats: Arc<AudioStats>,
+) -> Result<Stream> {
     let config = StreamConfig {
         channels: 2,
-        sample_rate: 44100,
+        sample_rate: supported_cfg.sample_rate(),
         buffer_size: BufferSize::Fixed(2048),
     };
     let err_fn = |err| {
@@ -247,7 +286,8 @@ fn init_audio(
     Ok(stream)
 }
 
-/// ~3 ms at 44.1 kHz; ramp length for fade-out and fade-in on underrun boundaries.
+/// Ramp length (in output frames) for fade-out / fade-in on underrun boundaries.
+/// 132 frames is ~3 ms at 44.1 kHz, ~2.75 ms at 48 kHz — short enough for either rate.
 const RAMP_FRAMES: u32 = 132;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

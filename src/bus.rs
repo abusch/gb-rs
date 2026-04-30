@@ -65,13 +65,13 @@ pub struct Bus {
 }
 
 impl Bus {
-    pub fn new(ram_size: usize, cartridge: Cartridge) -> Self {
+    pub fn new(ram_size: usize, cartridge: Cartridge, sample_rate: u32) -> Self {
         let ram = vec![0; ram_size];
 
         Self {
             ram: ram.into_boxed_slice(),
             hram: vec![0; 0x80].into_boxed_slice(),
-            apu: Apu::new(),
+            apu: Apu::new(sample_rate),
             gfx: Gfx::new(),
             cartridge,
             joypad: Joypad::default(),

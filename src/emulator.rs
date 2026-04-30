@@ -67,6 +67,7 @@ impl Emulator {
         audio_stats: Arc<AudioStats>,
         breakpoint: Option<u16>,
         enable_soft_break: bool,
+        sample_rate: u32,
     ) -> Result<Self> {
         let cartridge = Cartridge::load(rom)?;
         info!("Title is {}", cartridge.title());
@@ -76,7 +77,7 @@ impl Emulator {
         info!("RAM size is ${:02x}", cartridge.get_ram_size());
         info!("CGB flag: {}", cartridge.cgb_flag());
         info!("SGB flag: {}", cartridge.sgb_flag());
-        let gb = GameBoy::new(cartridge, breakpoint, enable_soft_break);
+        let gb = GameBoy::new(cartridge, breakpoint, enable_soft_break, sample_rate);
 
         let now = Instant::now();
         Ok(Self {
