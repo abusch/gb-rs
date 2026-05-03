@@ -21,7 +21,7 @@ log = { version = "0.4", features = ["release_max_level_info"] }
 env_logger = "0.11"
 pixels = "0.17.1"
 png = "0.18"
-ringbuf = "0.4"
+ringbuf = "0.5"
 rustyline = "18"
 winit = "0.30"
 
