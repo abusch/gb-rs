@@ -1,7 +1,12 @@
-use std::path::{Path, PathBuf};
+use std::{
+    fs::File,
+    io::{BufReader, Read},
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 use log::{debug, info, trace, warn};
+use zip::ZipArchive;
 
 pub struct Cartridge {
     data: Box<[u8]>,
@@ -14,7 +19,25 @@ pub struct Cartridge {
 
 impl Cartridge {
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let content = std::fs::read(path.as_ref()).context("Failed to open rom file")?;
+        let mut file =
+            BufReader::new(File::open(path.as_ref()).context("Failed to open rom file")?);
+        let mut content = Vec::new();
+        if path.as_ref().extension().is_some_and(|ext| ext == "zip") {
+            let mut zip = ZipArchive::new(file).context("Failed to open zip archive")?;
+            let file_name = zip
+                .file_names()
+                .find(|&name| name.ends_with(".gb"))
+                .context("No ROM found in ZIP file")?
+                .to_owned();
+            let mut rom = zip
+                .by_name(&file_name)
+                .context("Failed to read ROM from ZIP file")?;
+            rom.read_to_end(&mut content)
+                .context("Failed to read rom file")?;
+        } else {
+            file.read_to_end(&mut content)
+                .context("Failed to read rom file")?;
+        };
         info!("Loaded {} bytes from rom file", content.len());
 
         let mut save_file_path = PathBuf::from(path.as_ref());

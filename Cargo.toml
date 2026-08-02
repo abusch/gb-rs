@@ -24,6 +24,7 @@ png = "0.18"
 ringbuf = "0.5"
 rustyline = "18"
 winit = "0.30"
+zip = "8.6.0"
 
 [profile.release]
 debug = true
