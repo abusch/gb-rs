@@ -1,8 +1,7 @@
 use std::any::Any;
 use std::num::ParseIntError;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::{Arc, atomic::Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -253,7 +252,7 @@ fn init_audio(
     let mut playback = PlaybackState::new();
     let stream = device
         .build_output_stream(
-            &config,
+            config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 trace!("Writing {} audio samples", data.len());
                 let mut underrun_frames: u64 = 0;

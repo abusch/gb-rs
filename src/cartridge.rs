@@ -228,7 +228,7 @@ impl Cartridge {
         {
             warn!(
                 "Failed to save RAM file {}: {}",
-                &self.save_file.display(),
+                self.save_file.display(),
                 e
             );
         }
