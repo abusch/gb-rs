@@ -101,4 +101,8 @@ impl GameBoy {
     pub fn save(&self) {
         self.bus.cartridge.save();
     }
+
+    pub fn poke(&mut self, addr: u16, value: u8) {
+        self.bus.write_byte(addr, value);
+    }
 }

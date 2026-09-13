@@ -2,6 +2,7 @@ use std::borrow::Cow;
 
 use ansi_term::Colour;
 use anyhow::Result;
+use log::info;
 use rustyline::{
     Config, Editor, Helper,
     completion::{Completer, Pair},
@@ -80,6 +81,19 @@ impl Debugger {
                         }
                         Command::Nop
                     }
+                    s if s.starts_with("poke ") => {
+                        let mut parts = s.split_whitespace();
+                        if let (Some(addr_str), Some(value_str)) =
+                            (dbg!(parts.nth(1)), dbg!(parts.nth(0)))
+                            && let Ok(addr) = u16::from_str_radix(addr_str, 16)
+                            && let Ok(value) = u8::from_str_radix(value_str, 16)
+                        {
+                            return Command::Poke(addr, value);
+                        } else {
+                            info!("Invalid poke command");
+                        }
+                        Command::Nop
+                    }
                     "quit" => Command::Quit,
                     _ => Command::Nop,
                 }
@@ -111,6 +125,7 @@ pub enum Command {
     Sprite(u8),
     DumpPalettes,
     Break(u16),
+    Poke(u16, u8),
     Quit,
     Nop,
 }
@@ -200,6 +215,7 @@ impl Default for DebuggerHelper {
         DebuggerHelper {
             commands: vec![
                 "mem", "cpu", "oam", "sprite", "palettes", "br", "next", "continue", "quit", "dis",
+                "poke",
             ],
         }
     }

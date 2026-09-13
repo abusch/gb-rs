@@ -256,7 +256,7 @@ fn init_audio(
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 trace!("Writing {} audio samples", data.len());
                 let mut underrun_frames: u64 = 0;
-                for frame in data.chunks_exact_mut(2) {
+                for frame in data.as_chunks_mut::<2>().0 {
                     let popped = if consumer.occupied_len() >= 2 {
                         let l = consumer.try_pop().unwrap().to_sample::<f32>();
                         let r = consumer.try_pop().unwrap().to_sample::<f32>();

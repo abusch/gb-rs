@@ -92,7 +92,6 @@ impl Emulator {
         })
     }
 
-    #[allow(dead_code)]
     pub fn start_debugger(&mut self) {
         self.gb.pause();
     }
@@ -128,6 +127,7 @@ impl Emulator {
                 Command::DumpPalettes => self.gb.dump_palettes(),
                 Command::Break(addr) => self.gb.set_breakpoint(addr),
                 Command::Sprite(id) => self.gb.dump_sprite(id),
+                Command::Poke(addr, val) => self.gb.poke(addr, val),
                 Command::Quit => return true,
                 Command::Nop => (),
             }
@@ -245,27 +245,10 @@ impl Emulator {
             KeyCode::ArrowRight => self
                 .gb
                 .set_button_pressed(Button::Right, key.state.is_pressed()),
+            KeyCode::KeyD => self.start_debugger(),
             _ => (),
         }
     }
-    // pub fn handle_input(&mut self, input: &WinitInputHelper) {
-    //     self.gb
-    //         .set_button_pressed(Button::Start, input.key_held(KeyCode::Enter));
-    //     self.gb
-    //         .set_button_pressed(Button::Select, input.key_held(KeyCode::Space));
-    //     self.gb
-    //         .set_button_pressed(Button::A, input.key_held(KeyCode::KeyA));
-    //     self.gb
-    //         .set_button_pressed(Button::B, input.key_held(KeyCode::KeyB));
-    //     self.gb
-    //         .set_button_pressed(Button::Up, input.key_held(KeyCode::ArrowUp));
-    //     self.gb
-    //         .set_button_pressed(Button::Down, input.key_held(KeyCode::ArrowDown));
-    //     self.gb
-    //         .set_button_pressed(Button::Left, input.key_held(KeyCode::ArrowLeft));
-    //     self.gb
-    //         .set_button_pressed(Button::Right, input.key_held(KeyCode::ArrowRight));
-    // }
 }
 
 /// Frame sink that only keeps the most recent frame
