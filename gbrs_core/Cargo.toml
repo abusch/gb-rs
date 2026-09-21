@@ -1,0 +1,11 @@
+[package]
+name = "gbrs_core"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+gb-rs = { path = ".." }
+libretro = { package = "libretro-core", version = "1" }

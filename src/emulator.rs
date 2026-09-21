@@ -69,7 +69,7 @@ impl Emulator {
         enable_soft_break: bool,
         sample_rate: u32,
     ) -> Result<Self> {
-        let cartridge = Cartridge::load(rom)?;
+        let cartridge = Cartridge::load_file(rom)?;
         info!("Title is {}", cartridge.title());
         info!("Licensee code is {}", cartridge.licensee_code());
         info!("Cartridge type is {}", cartridge.cartridge_type());

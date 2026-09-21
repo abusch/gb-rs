@@ -1,7 +1,14 @@
-[package]
-name = "gb-rs"
+[workspace]
+members = ["gbrs_core"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+
+[package]
+name = "gb-rs"
+version.workspace = true
+edition.workspace = true
 authors = ["Antoine Büsch <antoine.busch@gmail.com>"]
 description = "A Gameboy emulator"
 repository = "https://github.com/abusch/gb-rs"

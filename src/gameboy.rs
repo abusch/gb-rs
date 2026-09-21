@@ -102,6 +102,18 @@ impl GameBoy {
         self.bus.cartridge.save();
     }
 
+    /// Power off the Game Boy and pull out its cartridge, as it would be on a fresh power-on.
+    /// External RAM keeps both its contents and its heap allocation.
+    pub fn eject(self) -> Cartridge {
+        let mut cartridge = self.bus.cartridge;
+        cartridge.reset_mapper();
+        cartridge
+    }
+
+    pub fn save_ram_mut(&mut self) -> Option<&mut [u8]> {
+        self.bus.cartridge.save_ram_mut()
+    }
+
     pub fn poke(&mut self, addr: u16, value: u8) {
         self.bus.write_byte(addr, value);
     }

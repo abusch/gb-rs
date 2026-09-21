@@ -333,6 +333,8 @@ impl Bus {
     }
 
     pub(crate) fn set_button_pressed(&mut self, button: crate::joypad::Button, is_pressed: bool) {
-        self.input_has_changed = self.joypad.set_button(button, is_pressed);
+        // OR in the result: several buttons may be updated before the next `cycle()`, and a
+        // later unchanged button must not clear a pending change from an earlier one.
+        self.input_has_changed |= self.joypad.set_button(button, is_pressed);
     }
 }
