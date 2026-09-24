@@ -312,7 +312,10 @@ impl From<u8> for Duty {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+/// Highest value of the 11-bit frequency.
+const MAX_FREQUENCY: u16 = 2047;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FrequencySweepResult {
     NewFreq(u16),
     Disable,
@@ -341,22 +344,30 @@ impl FrequencySweep {
 
     fn tick(&mut self) -> FrequencySweepResult {
         if self.timer.tick() && self.enabled && self.shift != 0 {
-            let delta = self.shadow_register >> self.shift as u16;
-            let new_freq = if self.should_negate {
-                self.shadow_register.wrapping_sub(delta)
-            } else {
-                self.shadow_register.wrapping_add(delta)
-            };
-            let overflow = self.shadow_register > 2047;
-            if overflow {
+            let new_freq = self.next_frequency();
+            if new_freq > MAX_FREQUENCY {
                 return FrequencySweepResult::Disable;
-            } else {
-                self.shadow_register = new_freq;
-                return FrequencySweepResult::NewFreq(new_freq);
             }
+            self.shadow_register = new_freq;
+            // The hardware immediately runs the calculation again with the new frequency, and
+            // disables the channel if that would overflow, but doesn't write it back.
+            if self.next_frequency() > MAX_FREQUENCY {
+                return FrequencySweepResult::Disable;
+            }
+            return FrequencySweepResult::NewFreq(new_freq);
         }
 
         FrequencySweepResult::Nop
+    }
+
+    /// The frequency the next sweep step would switch to, possibly past `MAX_FREQUENCY`.
+    fn next_frequency(&self) -> u16 {
+        let delta = self.shadow_register >> self.shift;
+        if self.should_negate {
+            self.shadow_register - delta
+        } else {
+            self.shadow_register + delta
+        }
     }
 
     fn load(&mut self, sweep_time: u16, negate: bool, shift: u8) {
@@ -379,5 +390,39 @@ impl FrequencySweep {
         self.shift = 0;
         self.should_negate = false;
         self.timer.period = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A sweep that steps on every tick, starting from `freq`.
+    fn sweep(freq: u16, negate: bool, shift: u8) -> FrequencySweep {
+        let mut sweep = FrequencySweep::new();
+        sweep.load(1, negate, shift);
+        sweep.trigger(freq);
+        sweep
+    }
+
+    #[test]
+    fn sweep_updates_frequency() {
+        let mut up = sweep(600, false, 1);
+        assert_eq!(up.tick(), FrequencySweepResult::NewFreq(900));
+        let mut down = sweep(1000, true, 1);
+        assert_eq!(down.tick(), FrequencySweepResult::NewFreq(500));
+    }
+
+    #[test]
+    fn sweep_disables_on_overflow() {
+        // 1500 + 750 overflows straight away.
+        assert_eq!(sweep(1500, false, 1).tick(), FrequencySweepResult::Disable);
+        // 1200 + 600 = 1800 fits, but the second calculation (1800 + 900) overflows.
+        assert_eq!(sweep(1200, false, 1).tick(), FrequencySweepResult::Disable);
+        // Going down never overflows.
+        assert_eq!(
+            sweep(2047, true, 1).tick(),
+            FrequencySweepResult::NewFreq(1024)
+        );
     }
 }
