@@ -1,5 +1,7 @@
+use std::path::Path;
+
 use gbrs::{
-    AudioSink, FrameSink, Rgb555, SCREEN_HEIGHT, SCREEN_WIDTH, cartridge::Cartridge,
+    AudioSink, BootRom, FrameSink, Rgb555, SCREEN_HEIGHT, SCREEN_WIDTH, cartridge::Cartridge,
     gameboy::GameBoy, joypad::Button,
 };
 use libretro::{
@@ -9,6 +11,9 @@ use libretro::{
 };
 
 const AUDIO_SAMPLE_RATE: f64 = 48000.0;
+
+/// Optional boot ROM, looked up in the frontend's system directory.
+const BOOT_ROM_FILE: &str = "dmg_boot.bin";
 
 /// 4.194304 MHz CPU clock.
 const CPU_HZ: u64 = 4_194_304;
@@ -31,6 +36,7 @@ const BUTTON_MAP: [(JoypadButton, Button); 8] = [
 struct GbrsCore {
     content_contract: ContentContract,
     emulator: Option<GameBoy>,
+    boot_rom: Option<BootRom>,
     port: InputPort,
     frame: RetroFrameSink,
     audio: RetroAudioSink,
@@ -43,6 +49,7 @@ impl Default for GbrsCore {
         Self {
             content_contract: ContentContract::new("gb|dmg").with_support_no_game(false),
             emulator: None,
+            boot_rom: None,
             port: InputPort::default(),
             frame: RetroFrameSink::default(),
             audio: RetroAudioSink::default(),
@@ -55,6 +62,7 @@ impl GbrsCore {
     fn power_on(&mut self, cartridge: Cartridge) {
         self.emulator = Some(GameBoy::new(
             cartridge,
+            self.boot_rom.clone(),
             None,
             false,
             AUDIO_SAMPLE_RATE as u32,
@@ -106,6 +114,11 @@ impl Core for GbrsCore {
         let Some(data) = game.and_then(|game| game.data) else {
             return false;
         };
+        // Without a (valid) boot ROM, the game just starts straight away.
+        self.boot_rom = runtime
+            .environment()
+            .system_directory()
+            .and_then(|dir| BootRom::load_file(Path::new(&dir).join(BOOT_ROM_FILE)).ok());
         // No save file: the frontend loads/saves `.srm` through `memory_region(SaveRam)`.
         match Cartridge::load_bytes(data.to_vec(), None) {
             Ok(cartridge) => {

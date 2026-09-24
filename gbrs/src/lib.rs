@@ -9,6 +9,7 @@ mod interrupt;
 pub mod joypad;
 mod timer;
 
+pub use bus::{BOOT_ROM_SIZE, BootRom};
 pub use gfx::DEFAULT_DMG_PALETTE;
 
 pub const SCREEN_WIDTH: usize = 160;
@@ -68,7 +69,10 @@ mod tests {
         // Every 5-bit value survives a round trip.
         for c in 0..32u16 {
             let (r, g, b) = Rgb555(c | (c << 5) | (c << 10)).to_rgb888();
-            assert_eq!(Rgb555::from_rgb888(r, g, b), Rgb555(c | (c << 5) | (c << 10)));
+            assert_eq!(
+                Rgb555::from_rgb888(r, g, b),
+                Rgb555(c | (c << 5) | (c << 10))
+            );
         }
     }
 }

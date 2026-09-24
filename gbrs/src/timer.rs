@@ -100,6 +100,11 @@ impl Timer {
         (self.div_timer >> 8) as u8
     }
 
+    /// Set the full 16-bit counter behind DIV, e.g. to where the boot ROM would have left it.
+    pub fn set_div_counter(&mut self, value: u16) {
+        self.div_timer = value;
+    }
+
     pub fn reset_div_timer(&mut self) {
         self.update_div(0);
     }

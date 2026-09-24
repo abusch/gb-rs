@@ -4,9 +4,9 @@ This is my attempt to write a GameBoy emulator in Rust, to add to the pile of ex
 
 ## How to run
 
-At the moment, you need to have the DMG boot rom file and place it under `assets/dmg_boot.bin` to be able to compile and run the emulator.
+Simply run `cargo run --release -- path/to/rom.gb`.
 
-Then simply run `cargo run --release -- path/to/rom.gb`.
+By default, the game starts straight away, as if the boot ROM had just run. To run an actual boot ROM first, pass it with `--boot-rom path/to/dmg_boot.bin`. The libretro core looks for `dmg_boot.bin` in the frontend's system directory.
 
 Current keybindings: 
 - <kbd>↑</kbd>, <kbd>↓</kbd>, <kbd>←</kbd>, <kbd>→</kbd>: Joypad
@@ -22,7 +22,7 @@ Current keybindings:
 Seems to work fine with most MBC1+RAM games that I've tried.
 
 ## Still to do
-- [ ] Allow building/running without the boot rom
+- [x] Allow building/running without the boot rom
 - [ ] Support other MBCs
 - [x] Sound
 - [ ] Maybe compile to WASM?

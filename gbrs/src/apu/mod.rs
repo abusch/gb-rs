@@ -121,14 +121,52 @@ impl Apu {
         }
     }
 
+    /// Leave the APU the way the DMG boot ROM does after playing its start-up chime.
+    pub(crate) fn skip_boot(&mut self) {
+        self.write_io(REG_NR52, 0x80);
+        // The second note of the chime is the last thing channel 1 played...
+        self.write_io(REG_NR10, 0x80);
+        self.write_io(REG_NR11, 0xBF);
+        self.write_io(REG_NR12, 0xF3);
+        self.write_io(REG_NR13, 0xC1);
+        self.write_io(REG_NR14, 0x87);
+        // ...and it has faded out by the time the boot ROM hands over, but the channel stays on.
+        self.channel1.silence();
+        self.write_io(REG_NR50, 0x77);
+        self.write_io(REG_NR51, 0xF3);
+
+        // Channel 1's DAC has been on for a while, so the high-pass filters have settled.
+        // Starting them from scratch would make the first samples pop.
+        let (left, right) = self.mix();
+        self.left_hpf.settle(left);
+        self.right_hpf.settle(right);
+    }
+
     // Outputs a pair of left/right samples
     fn output(&mut self) -> (f32, f32) {
+        if !self.apu_enabled {
+            return (0.0, 0.0);
+        }
+
+        let (left, right) = self.mix();
+
+        // Check if any DAC is enabled
+        let dacs_enabled = self.channel1.is_dac_on()
+            || self.channel2.is_dac_on()
+            || self.channel3.is_dac_on()
+            || self.channel4.is_dac_on();
+
+        // Apply HPF
+        (
+            self.left_hpf.apply(left, dacs_enabled),
+            self.right_hpf.apply(right, dacs_enabled),
+        )
+    }
+
+    /// Mix the channels' analog outputs and apply the master volume.
+    fn mix(&self) -> (f32, f32) {
         let mut left = 0.0;
         let mut right = 0.0;
-
-        if !self.apu_enabled {
-            return (left, right);
-        }
 
         let nr51 = self.sound_output_selection.view_bits::<Lsb0>();
 
@@ -161,16 +199,6 @@ impl Apu {
         // Apply master volume
         left *= 1.0 / ((8 - self.left_volume) as f32);
         right *= 1.0 / ((8 - self.right_volume) as f32);
-
-        // Check if any DAC is enabled
-        let dacs_enabled = self.channel1.is_dac_on()
-            || self.channel2.is_dac_on()
-            || self.channel3.is_dac_on()
-            || self.channel4.is_dac_on();
-
-        // Apply HPF
-        left = self.left_hpf.apply(left, dacs_enabled);
-        right = self.right_hpf.apply(right, dacs_enabled);
 
         (left, right)
     }

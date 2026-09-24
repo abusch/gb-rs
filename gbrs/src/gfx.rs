@@ -148,6 +148,37 @@ impl Gfx {
         }
     }
 
+    /// Leave VRAM and the LCD registers the way the DMG boot ROM does: the cartridge's logo
+    /// followed by a ® in the middle of the background, with the LCD on.
+    pub(crate) fn skip_boot(&mut self, logo: &[u8; 48]) {
+        // Each nibble of the logo becomes an 8-pixel row by doubling every bit, and each row is
+        // repeated to double the height too. Only the low bitplane is set (colour 1).
+        let mut addr = 0x8010;
+        for nibble in logo.iter().flat_map(|b| [b >> 4, b & 0x0F]) {
+            let row = (0..4)
+                .rev()
+                .fold(0u8, |row, bit| (row << 2) | (((nibble >> bit) & 1) * 0b11));
+            self.write_vram(addr, row);
+            self.write_vram(addr + 2, row);
+            addr += 4;
+        }
+        // The ® tile directly follows the 24 logo tiles, i.e. it's tile 0x19.
+        for row in [0x3C, 0x42, 0xB9, 0xA5, 0xB9, 0xA5, 0x42, 0x3C] {
+            self.write_vram(addr, row);
+            addr += 2;
+        }
+
+        // The logo is 12x2 tiles, with the ® to the right of its top row.
+        for i in 0..12 {
+            self.write_vram(0x9904 + i as u16, 0x01 + i);
+            self.write_vram(0x9924 + i as u16, 0x0D + i);
+        }
+        self.write_vram(0x9910, 0x19);
+
+        self.write_reg(BGP_REG, 0xFC);
+        self.write_reg(LCDC_REG, 0x91);
+    }
+
     /// Read access to the VRAM.
     ///
     /// Note: when the PPU is active (mode 3), this area is locked to the CPU so reads will return

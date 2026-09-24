@@ -39,7 +39,8 @@ impl Default for Cpu {
             sp: Default::default(),
             pc: Default::default(),
             halted: false,
-            ime: true, // is this correct?
+            // Interrupts are disabled at power-on, and the boot ROM doesn't enable them either
+            ime: false,
             // breakpoint: 0x0100,
             breakpoint: 0xffff,
             paused: Default::default(),
@@ -56,6 +57,29 @@ impl Cpu {
             enable_soft_break,
             ..Self::default()
         }
+    }
+
+    /// Set the registers to the values the DMG boot ROM leaves them with when it jumps to the
+    /// cartridge's entry point.
+    pub fn skip_boot(&mut self, header_checksum: u8) {
+        self.regs.set_pair(RegPair::AF, 0x0100);
+        // The flags are left over from verifying the header: the last step adds the checksum to
+        // a value that makes the total wrap to exactly 0.
+        self.regs.flag_z().set();
+        self.regs.flag_h().set_value(header_checksum & 0x0F != 0);
+        self.regs.flag_c().set_value(header_checksum != 0);
+        self.regs.set_pair(RegPair::BC, 0x0013);
+        self.regs.set_pair(RegPair::DE, 0x00D8);
+        self.regs.set_pair(RegPair::HL, 0x014D);
+        self.sp = 0xFFFE;
+        self.pc = 0x0100;
+    }
+
+    /// AF, BC, DE, HL, SP, PC and IME, for tests to compare CPU states.
+    #[cfg(test)]
+    pub(crate) fn snapshot(&self) -> ([u16; 6], bool) {
+        let r = &self.regs;
+        ([*r.af, *r.bc, *r.de, *r.hl, self.sp, self.pc], self.ime)
     }
 
     pub fn handle_interrupt(&mut self, bus: &mut Bus) {
@@ -2125,5 +2149,19 @@ mod tests {
         test_and_check_flags(0x10, 0x0F, false, true, true, false);
         // Z is set, and C is ignored
         test_and_check_flags(0x01, 0x00, true, true, false, false);
+    }
+
+    #[test]
+    fn test_skip_boot_flags() {
+        let af = |header_checksum| {
+            let mut cpu = Cpu::default();
+            cpu.skip_boot(header_checksum);
+            cpu.regs.get_pair(RegPair::AF)
+        };
+
+        assert_eq!(af(0x00), 0x0180);
+        assert_eq!(af(0xE7), 0x01B0);
+        // No half carry when the low nibbles are both 0
+        assert_eq!(af(0x30), 0x0190);
     }
 }

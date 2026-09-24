@@ -4,12 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build & Run
 
-- Build requires `assets/dmg_boot.bin` (DMG boot ROM) at compile time — it is `include_bytes!`'d into the binary from `src/bus.rs`. Without this file, compilation fails.
+- The DMG boot ROM is optional and loaded at runtime (`--boot-rom <PATH>` in the frontend, `dmg_boot.bin` in the system directory for the libretro core). Without it, `GameBoy::new` starts at `0x0100` in the post-boot state. `assets/dmg_boot.bin` is only used by the `skip_boot_matches_boot_rom` test, which is skipped if the file is absent.
 - Run: `cargo run --release -- path/to/rom.gb`
 - Useful CLI flags (see `src/main.rs`):
   - `-q / --quiet`: disable audio output (still drains the sample ring buffer in a background thread to prevent stalls).
   - `-b <HEX>`: set initial breakpoint (address is parsed as hex, no `0x` prefix).
   - `--enable-soft-break`: treat `LD B,B` as a breakpoint trigger (useful for some test ROMs).
+  - `--boot-rom <PATH>`: run the given DMG boot ROM before the game.
 - Logging is configured in `main.rs` via `env_logger` with hardcoded filters `gb_rs=debug,gb_rs::apu=info`. The `release_max_level_info` feature on the `log` crate caps release-build logs at `info` regardless of filter.
 - Release profile has `debug = true` and `incremental = true` — debugging a release build is intentionally supported (emulation needs release-level perf).
 
@@ -38,7 +39,7 @@ The binary provides concrete implementations: `MostRecentFrameSink` (just keeps 
 
 `src/bus.rs` is the hub. It owns: `Apu`, `Gfx`, `Cartridge`, `Joypad`, `Timer`, WRAM, HRAM, interrupt registers, and the serial byte. The memory map and IO-register ranges are declared as top-of-file `RangeInclusive<u16>` constants; `read_byte`/`write_byte` dispatch against them. When adding a new IO register, add a new range constant and extend `read_io`/`write_io`.
 
-Boot-ROM handling: addresses `0x0000..=0x00FF` return boot ROM bytes until a non-zero write to `0xFF50` flips `has_booted = true`. After that, cart ROM is visible in that range. The boot ROM is baked into the binary via `include_bytes!("../assets/dmg_boot.bin")`.
+Boot-ROM handling: if a `BootRom` was given, addresses `0x0000..=0x00FF` return its bytes until a non-zero write to `0xFF50` drops it (`boot_rom = None`). After that, cart ROM is visible in that range. Without a boot ROM, `GameBoy::new` calls the `skip_boot` methods (`Cpu`, `Bus`, and through it `Gfx`/`Apu`/`Timer`) to reproduce the state the boot ROM leaves behind (registers, IO, logo in VRAM; see Pan Docs "Power Up Sequence"). If you change what a peripheral's power-on state looks like, check that `skip_boot` still matches.
 
 Cart saves: `Cartridge::load` looks for a `.sav` sibling of the ROM and loads it into external RAM if present; `GameBoy::save()` (called on exit via `Emulator::finish()`) writes it back. If you add new MBC support, wire the save/load paths through the same mechanism.
 

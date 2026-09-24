@@ -1,5 +1,6 @@
-use std::ops::RangeInclusive;
+use std::{fs, ops::RangeInclusive, path::Path};
 
+use anyhow::{Context, Result};
 use log::{info, trace};
 
 use crate::{
@@ -7,7 +8,27 @@ use crate::{
     joypad::Joypad, timer::Timer,
 };
 
-const BOOT_ROM_DATA: &[u8] = include_bytes!("../../assets/dmg_boot.bin");
+pub const BOOT_ROM_SIZE: usize = 0x100;
+
+/// Image of the DMG boot ROM, which is mapped over the start of the cartridge until it disables
+/// itself.
+#[derive(Clone)]
+pub struct BootRom(Box<[u8; BOOT_ROM_SIZE]>);
+
+impl BootRom {
+    pub fn load_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let content = fs::read(path.as_ref()).context("Failed to read boot rom file")?;
+        Self::load_bytes(content)
+    }
+
+    pub fn load_bytes(content: Vec<u8>) -> Result<Self> {
+        let len = content.len();
+        let data = content.into_boxed_slice().try_into().map_err(|_| {
+            anyhow::anyhow!("Boot ROM should be {BOOT_ROM_SIZE} bytes, but got {len} bytes")
+        })?;
+        Ok(Self(data))
+    }
+}
 
 // Memory Map
 const BOOT_ROM: RangeInclusive<u16> = 0x0000..=0x00FF;
@@ -52,7 +73,8 @@ pub struct Bus {
     joypad: Joypad,
     input_has_changed: bool,
 
-    has_booted: bool,
+    /// Boot ROM, until the boot sequence completes and it gets unmapped
+    boot_rom: Option<BootRom>,
 
     /// IE - Interrupt Enable register
     interrupt_enable: InterruptFlag,
@@ -65,7 +87,12 @@ pub struct Bus {
 }
 
 impl Bus {
-    pub fn new(ram_size: usize, cartridge: Cartridge, sample_rate: u32) -> Self {
+    pub fn new(
+        ram_size: usize,
+        cartridge: Cartridge,
+        sample_rate: u32,
+        boot_rom: Option<BootRom>,
+    ) -> Self {
         let ram = vec![0; ram_size];
 
         Self {
@@ -76,12 +103,30 @@ impl Bus {
             cartridge,
             joypad: Joypad::default(),
             input_has_changed: false,
-            has_booted: false,
+            boot_rom,
             interrupt_enable: InterruptFlag::empty(),
             interrupt_flag: InterruptFlag::empty(),
             timer: Timer::new(),
             sb: 0,
         }
+    }
+
+    /// Put the peripherals in the state the DMG boot ROM leaves them in when it jumps to the
+    /// cartridge. Must only be called on a freshly created `Bus` without a boot ROM.
+    ///
+    /// See <https://gbdev.io/pandocs/Power_Up_Sequence.html>
+    pub(crate) fn skip_boot(&mut self) {
+        let logo = std::array::from_fn(|i| self.cartridge.read_rom(0x0104 + i as u16));
+        self.gfx.skip_boot(&logo);
+        self.apu.skip_boot();
+        self.timer.set_div_counter(0xABCC);
+        // The boot ROM waits for VBlank with interrupts disabled, so this stays pending
+        self.interrupt_flag = InterruptFlag::VBLANK;
+    }
+
+    /// The header checksum, which the boot ROM verifies (and leaves traces of in the CPU flags).
+    pub(crate) fn header_checksum(&self) -> u8 {
+        self.cartridge.read_rom(0x014D)
     }
 
     /// Run the different peripherals for the given number of clock cycles
@@ -103,9 +148,11 @@ impl Bus {
     }
 
     pub fn read_byte(&self, addr: u16) -> u8 {
-        if BOOT_ROM.contains(&addr) && !self.has_booted {
+        if let Some(BootRom(boot_rom)) = &self.boot_rom
+            && BOOT_ROM.contains(&addr)
+        {
             // read from boot rom
-            BOOT_ROM_DATA[addr as usize]
+            boot_rom[addr as usize]
         } else if CART_BANK_00.contains(&addr) || CART_BANK_MAPPED.contains(&addr) {
             self.cartridge.read_rom(addr)
         } else if VRAM.contains(&addr) {
@@ -146,7 +193,7 @@ impl Bus {
     }
 
     pub fn write_byte(&mut self, addr: u16, b: u8) {
-        if BOOT_ROM.contains(&addr) && !self.has_booted {
+        if BOOT_ROM.contains(&addr) && self.boot_rom.is_some() {
             panic!("Tried to write into boot ROM during the boot sequence!");
         } else if CART_BANK_00.contains(&addr) {
             if (0x0000..=0x1FFF).contains(&addr) {
@@ -317,9 +364,7 @@ impl Bus {
                 self.gfx.write_reg(addr, b);
             }
         } else if IO_RANGE_DBR.contains(&addr) {
-            if b != 0 {
-                self.has_booted = true;
-                // Disable boot rom
+            if b != 0 && self.boot_rom.take().is_some() {
                 info!("Boot sequence complete. Disabling boot ROM.");
             }
         } else if (0xff68..=0xff69).contains(&addr) {

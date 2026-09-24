@@ -13,7 +13,7 @@ use anyhow::Result;
 use log::info;
 
 use gbrs::{
-    AudioSink, FrameSink, Rgb555, SCREEN_HEIGHT, SCREEN_WIDTH, cartridge::Cartridge,
+    AudioSink, BootRom, FrameSink, Rgb555, SCREEN_HEIGHT, SCREEN_WIDTH, cartridge::Cartridge,
     gameboy::GameBoy, joypad::Button,
 };
 use ringbuf::{
@@ -63,6 +63,7 @@ pub struct Emulator {
 impl Emulator {
     pub fn new(
         rom: impl AsRef<Path>,
+        boot_rom: Option<BootRom>,
         producer: ProducerF32,
         audio_stats: Arc<AudioStats>,
         breakpoint: Option<u16>,
@@ -77,7 +78,13 @@ impl Emulator {
         info!("RAM size is ${:02x}", cartridge.get_ram_size());
         info!("CGB flag: {}", cartridge.cgb_flag());
         info!("SGB flag: {}", cartridge.sgb_flag());
-        let gb = GameBoy::new(cartridge, breakpoint, enable_soft_break, sample_rate);
+        let gb = GameBoy::new(
+            cartridge,
+            boot_rom,
+            breakpoint,
+            enable_soft_break,
+            sample_rate,
+        );
 
         let now = Instant::now();
         Ok(Self {

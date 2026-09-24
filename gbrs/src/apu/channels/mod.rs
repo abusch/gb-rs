@@ -33,6 +33,12 @@ impl HighPassFilter {
             0.0
         }
     }
+
+    /// Charge the capacitor as if `input` had been applied for a long time, so that it doesn't
+    /// produce a transient.
+    pub fn settle(&mut self, input: f32) {
+        self.capacitor = input;
+    }
 }
 
 /// Turn a digital value between $0 and $F into an analog value between -1 and 1.

@@ -208,6 +208,11 @@ impl<const N: u8> ToneChannel<N> {
         }
     }
 
+    /// Drop the current volume to 0, as if the envelope had fully decayed.
+    pub(crate) fn silence(&mut self) {
+        self.volume_envelope.volume = 0;
+    }
+
     pub(crate) fn digital_output(&self) -> u8 {
         if self.enabled && self.wave_generator.output() {
             self.volume_envelope.volume()

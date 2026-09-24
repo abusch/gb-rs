@@ -12,7 +12,7 @@ use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 use emulator::{AudioStats, Emulator};
-use gbrs::{SCREEN_HEIGHT, SCREEN_WIDTH};
+use gbrs::{BootRom, SCREEN_HEIGHT, SCREEN_WIDTH};
 use log::{debug, error, info, trace};
 use pixels::{Pixels, SurfaceTexture};
 use ringbuf::{
@@ -50,6 +50,11 @@ pub struct Cli {
     /// If omitted, the device's default rate is used.
     #[arg(long)]
     audio_rate: Option<u32>,
+    /// Path to a DMG boot ROM to run before the game.
+    ///
+    /// If omitted, the game starts straight away, as if the boot ROM had just run.
+    #[arg(long)]
+    boot_rom: Option<PathBuf>,
     /// Path to the ROM file
     rom: PathBuf,
 }
@@ -65,6 +70,7 @@ fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
+    let boot_rom = cli.boot_rom.map(BootRom::load_file).transpose()?;
 
     // Pick the output device and its preferred config so the APU can decimate directly to
     // the device sample rate. For `--quiet`, fall back to a sensible constant since no
@@ -87,6 +93,7 @@ fn main() -> Result<()> {
     let audio_stats = Arc::new(AudioStats::default());
     let mut emulator = Emulator::new(
         &cli.rom,
+        boot_rom,
         producer,
         Arc::clone(&audio_stats),
         cli.breakpoint,
