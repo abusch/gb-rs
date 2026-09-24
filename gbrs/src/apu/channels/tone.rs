@@ -175,10 +175,6 @@ impl<const N: u8> ToneChannel<N> {
     }
 
     pub(crate) fn set_nrx4(&mut self, b: u8) {
-        if !self.is_dac_on() {
-            debug!("Channel {N}: DAC is off, ignoring write to NRx4");
-            return;
-        }
         trace!("Channel {N}: setting NRx4 to {:08b}", b);
         let bits = b.view_bits::<Lsb0>();
 
@@ -192,8 +188,8 @@ impl<const N: u8> ToneChannel<N> {
 
         if bits[7] {
             debug!("Channel {N}: Tone channel triggered");
-            // Trigger
-            self.enabled = true;
+            // Trigger. The rest of it still happens if the DAC is off, but the channel stays off.
+            self.enabled = self.is_dac_on();
             self.length_counter.trigger();
             let freq = self.frequency();
             self.freq_timer.reset();
@@ -204,11 +200,6 @@ impl<const N: u8> ToneChannel<N> {
             {
                 self.enabled = false;
             }
-            // if !self.is_dac_on() {
-            //     // If DAC is off, disable the channel
-            //     debug!("Channel {N}: Tone channel DAC is off, disabling channel");
-            //     self.enabled = false;
-            // }
         }
     }
 
@@ -461,6 +452,20 @@ mod tests {
         assert_eq!(channel.freq_timer.period, (2048 - 0x780) * 4);
         channel.set_nrx4(0x06);
         assert_eq!(channel.freq_timer.period, (2048 - 0x680) * 4);
+        assert!(channel.enabled());
+    }
+
+    #[test]
+    fn nrx4_is_written_while_dac_is_off() {
+        let mut channel = ToneChannel::<2>::new(false);
+        channel.set_nrx2(0x00); // DAC off
+        channel.set_nrx4(0xC7); // trigger, with length enabled and frequency 0x700
+        assert!(!channel.enabled());
+        assert!(channel.length_counter.length_enabled);
+        assert_eq!(channel.freq_timer.period, (2048 - 0x700) * 4);
+
+        channel.set_nrx2(0xF0); // DAC on
+        channel.set_nrx4(0x80);
         assert!(channel.enabled());
     }
 
