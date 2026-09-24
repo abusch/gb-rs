@@ -1,5 +1,3 @@
-use std::ops::ShrAssign;
-
 use bitvec::{field::BitField, order::Lsb0, view::BitView};
 use log::debug;
 
@@ -28,14 +26,10 @@ impl Lsfr {
     }
 
     fn tick(&mut self) {
-        let bits = self.reg.view_bits::<Lsb0>();
-        let b = bits[0] ^ bits[1];
-        self.reg.shr_assign(1);
-
-        let bits = self.reg.view_bits_mut::<Lsb0>();
-        bits.set(14, b);
+        let b = (self.reg ^ (self.reg >> 1)) & 1;
+        self.reg = (self.reg >> 1) & !(1 << 14) | (b << 14);
         if self.width_mode {
-            bits.set(6, b);
+            self.reg = self.reg & !(1 << 6) | (b << 6);
         }
     }
 
@@ -73,8 +67,8 @@ impl NoiseChannel {
         }
     }
 
-    pub(crate) fn tick(&mut self) {
-        if self.timer.tick() {
+    pub(crate) fn advance(&mut self, cycles: u16) {
+        for _ in 0..self.timer.advance(cycles) {
             self.lsfr.tick();
         }
     }

@@ -39,10 +39,9 @@ impl<const N: u8> ToneChannel<N> {
         }
     }
 
-    pub(crate) fn tick(&mut self) {
-        if self.freq_timer.tick() {
-            self.wave_generator.tick();
-        }
+    pub(crate) fn advance(&mut self, cycles: u16) {
+        let steps = self.freq_timer.advance(cycles);
+        self.wave_generator.advance(steps);
     }
 
     pub(crate) fn tick_frame(&mut self, frame_sequencer: &FrameSequencer) {
@@ -269,8 +268,8 @@ impl SquareWaveGenerator {
         }
     }
 
-    pub fn tick(&mut self) {
-        self.step = (self.step + 1) % 8;
+    pub fn advance(&mut self, steps: u16) {
+        self.step = ((self.step as u16 + steps) % 8) as u8;
     }
 
     pub fn set_duty(&mut self, duty: Duty) {

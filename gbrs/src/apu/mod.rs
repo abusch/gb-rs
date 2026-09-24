@@ -63,8 +63,16 @@ pub struct Apu {
     left_hpf: HighPassFilter,
     right_hpf: HighPassFilter,
 
-    sample_period: f32,
-    sample_counter: f32,
+    /// Output sample rate, in Hz.
+    sample_rate: u32,
+    /// Accumulates `sample_rate` every cycle: a sample is due each time it reaches
+    /// `CPU_CYCLES_PER_SECOND`.
+    sample_counter: u32,
+    /// Cycles `step` was given that haven't been run yet.
+    pending_cycles: u16,
+    /// Cycles from when `pending_cycles` started accumulating to the next frame sequencer step or
+    /// sample, whichever comes first.
+    cycles_to_event: u16,
     timer: Timer,
     frame_sequencer: FrameSequencer,
 
@@ -86,8 +94,10 @@ impl Apu {
             right_volume: 0,
             right_hpf: HighPassFilter::default(),
 
-            sample_period: CPU_CYCLES_PER_SECOND as f32 / sample_rate as f32,
-            sample_counter: 0.0,
+            sample_rate,
+            sample_counter: 0,
+            pending_cycles: 0,
+            cycles_to_event: 1,
             timer: Timer::new(TIMER_PERIOD),
             frame_sequencer: FrameSequencer::default(),
             channel1: ToneChannel::new(true),
@@ -97,28 +107,79 @@ impl Apu {
         }
     }
 
+    /// Run the APU for `cycles` cycles.
+    ///
+    /// Between frame sequencer steps and samples, nothing observable happens: the channels'
+    /// frequency timers run, but only their state when the next sample is taken matters. So the
+    /// cycles are just added up here, and only actually run when a frame sequencer step or a
+    /// sample is due, or before a register write (see `catch_up`).
+    #[inline]
     pub fn step(&mut self, cycles: u8, sink: &mut dyn AudioSink) {
-        for _ in 0..cycles {
-            self.channel1.tick();
-            self.channel2.tick();
-            self.channel3.tick();
-            self.channel4.tick();
+        self.pending_cycles += cycles as u16;
+        if self.pending_cycles >= self.cycles_to_event {
+            self.run_pending(sink);
+        }
+    }
 
-            if self.timer.tick() {
+    #[inline(never)]
+    fn run_pending(&mut self, sink: &mut dyn AudioSink) {
+        let mut remaining = std::mem::take(&mut self.pending_cycles);
+        while remaining > 0 {
+            let n = remaining.min(self.cycles_until_event());
+            remaining -= n;
+
+            let (frame_step, sample_due) = self.run_for(n);
+            if frame_step {
                 self.frame_sequencer.tick();
                 self.channel1.tick_frame(&self.frame_sequencer);
                 self.channel2.tick_frame(&self.frame_sequencer);
                 self.channel3.tick_frame(&self.frame_sequencer);
                 self.channel4.tick_frame(&self.frame_sequencer);
             }
-
-            self.sample_counter += 1.0;
-            if self.sample_counter >= self.sample_period {
-                self.sample_counter -= self.sample_period;
+            if sample_due {
                 let sample = self.output();
                 sink.push_sample(sample);
             }
         }
+        self.cycles_to_event = self.cycles_until_event();
+    }
+
+    /// Run the pending cycles, which can't include any event since `step` would have run them
+    /// already. This must happen before any change to the channels' state from the outside.
+    fn catch_up(&mut self) {
+        let pending = std::mem::take(&mut self.pending_cycles);
+        let (frame_step, sample_due) = self.run_for(pending);
+        debug_assert!(!frame_step && !sample_due);
+        self.cycles_to_event = self.cycles_until_event();
+    }
+
+    /// Cycles until the next frame sequencer step or sample.
+    fn cycles_until_event(&self) -> u16 {
+        let to_sample = (CPU_CYCLES_PER_SECOND - self.sample_counter).div_ceil(self.sample_rate);
+        self.timer
+            .cycles_to_fire()
+            .min(to_sample.try_into().unwrap_or(u16::MAX))
+    }
+
+    /// Run the channels, frame sequencer timer and sample clock for `cycles` cycles, which must
+    /// not go past the next event. Return whether the frame sequencer should step, and whether a
+    /// sample is due.
+    fn run_for(&mut self, cycles: u16) -> (bool, bool) {
+        // The channels run independently of each other, so they can each be advanced in one go.
+        self.channel1.advance(cycles);
+        self.channel2.advance(cycles);
+        self.channel3.advance(cycles);
+        self.channel4.advance(cycles);
+
+        let frame_step = self.timer.advance(cycles) > 0;
+
+        self.sample_counter += cycles as u32 * self.sample_rate;
+        let sample_due = self.sample_counter >= CPU_CYCLES_PER_SECOND;
+        if sample_due {
+            self.sample_counter -= CPU_CYCLES_PER_SECOND;
+        }
+
+        (frame_step, sample_due)
     }
 
     /// Leave the APU the way the DMG boot ROM does after playing its start-up chime.
@@ -203,6 +264,8 @@ impl Apu {
         (left, right)
     }
 
+    // Nothing readable depends on the channels' frequency timers, so reads don't need to
+    // `catch_up`.
     pub fn read_io(&self, addr: u16) -> u8 {
         match addr {
             // Channel 1
@@ -255,6 +318,7 @@ impl Apu {
     }
 
     pub fn write_io(&mut self, addr: u16, b: u8) {
+        self.catch_up();
         // If the APU is disabled, all writes are ignored, except for NR52
         if addr != REG_NR52 && !self.apu_enabled {
             return;
@@ -324,6 +388,7 @@ impl Apu {
     }
 
     pub fn write_wav(&mut self, addr: u16, value: u8) {
+        self.catch_up();
         let index = addr - WAV_RAM_START;
         assert!(index <= 0x0F);
         self.channel3.write_wav(index as usize, value);
@@ -345,19 +410,34 @@ impl Timer {
     }
 
     pub fn tick(&mut self) -> bool {
-        // A period of 0 disable the timer
+        self.advance(1) > 0
+    }
+
+    /// Number of cycles until the timer next fires (`u16::MAX` if it is disabled).
+    pub fn cycles_to_fire(&self) -> u16 {
         if self.period == 0 {
-            return false;
+            u16::MAX
+        } else {
+            // A counter of 0 (e.g. after the period was changed from 0) fires on the next cycle.
+            self.counter.max(1)
+        }
+    }
+
+    /// Run the timer for `cycles` cycles, and return how many times it fired.
+    pub fn advance(&mut self, cycles: u16) -> u16 {
+        // A period of 0 disables the timer
+        if self.period == 0 {
+            return 0;
         }
 
-        if self.counter > 0 {
-            self.counter -= 1;
-        }
-        if self.counter == 0 {
-            self.reset();
-            true
+        let to_fire = self.counter.max(1);
+        if cycles < to_fire {
+            self.counter = to_fire - cycles;
+            0
         } else {
-            false
+            let after_first = cycles - to_fire;
+            self.counter = self.period - after_first % self.period;
+            1 + after_first / self.period
         }
     }
 

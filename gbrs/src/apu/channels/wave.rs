@@ -31,13 +31,9 @@ impl WaveChannel {
         }
     }
 
-    pub(crate) fn tick(&mut self) {
-        if self.freq_timer.tick() {
-            self.position += 1;
-            if self.position == 32 {
-                self.position = 0;
-            }
-        }
+    pub(crate) fn advance(&mut self, cycles: u16) {
+        let steps = self.freq_timer.advance(cycles);
+        self.position = ((self.position as u16 + steps) % 32) as u8;
     }
 
     pub fn tick_frame(&mut self, frame_sequencer: &FrameSequencer) {

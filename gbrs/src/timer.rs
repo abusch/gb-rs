@@ -32,7 +32,8 @@ impl Timer {
 
     pub fn cycle(&mut self, cycles: u8) -> bool {
         let mut request_interrupt = false;
-        for _ in 0..cycles {
+        let mut remaining = cycles as u16;
+        while remaining > 0 {
             if self.tima_has_overflowed {
                 // When TIMA overflows, there is a 1-cycle delay before it is reloaded with TMA and
                 // an interrupt is triggered
@@ -40,9 +41,37 @@ impl Timer {
                 self.tima = self.tma;
                 request_interrupt = true;
             }
-            self.update_div(self.div_timer.wrapping_add(1));
+            // Nothing else happens until the next falling edge of the selected bit, so jump to it
+            // (or as far as we can go).
+            let period = self.tima_period();
+            let to_edge = period - (self.div_timer & (period - 1));
+            let n = to_edge.min(remaining);
+            self.div_timer = self.div_timer.wrapping_add(n);
+            remaining -= n;
+            if n == to_edge && self.tac_timer_enable {
+                self.increment_tima();
+            }
         }
         request_interrupt
+    }
+
+    /// Number of cycles between two increments of TIMA, i.e. between two falling edges of the
+    /// system counter bit selected by TAC.
+    fn tima_period(&self) -> u16 {
+        match self.tac_input_clock_select {
+            ClockSpeed::Speed0 => 1 << 10,
+            ClockSpeed::Speed1 => 1 << 4,
+            ClockSpeed::Speed2 => 1 << 6,
+            ClockSpeed::Speed3 => 1 << 8,
+        }
+    }
+
+    fn increment_tima(&mut self) {
+        let (new_tima, overflow) = self.tima.overflowing_add(1);
+        self.tima = new_tima;
+        if overflow {
+            self.tima_has_overflowed = true;
+        }
     }
 
     fn update_div(&mut self, new_value: u16) {
@@ -50,28 +79,10 @@ impl Timer {
         // Update DIV
         self.div_timer = new_value;
 
-        // Update TIMA
-        if self.tac_timer_enable {
-            // Bit number of the system clock counter to check for a falling edge
-            let bit_num = match self.tac_input_clock_select {
-                ClockSpeed::Speed0 => 9,
-                ClockSpeed::Speed1 => 3,
-                ClockSpeed::Speed2 => 5,
-                ClockSpeed::Speed3 => 7,
-            };
-            let old_bit = old_div_timer.view_bits::<Lsb0>()[bit_num];
-            let new_bit = self.div_timer.view_bits::<Lsb0>()[bit_num];
-
-            if old_bit && !new_bit {
-                // Falling edge detected: update TIMA
-                let (new_tima, overflow) = self.tima.overflowing_add(1);
-                if overflow {
-                    self.tima_has_overflowed = true;
-                    self.tima = 0;
-                } else {
-                    self.tima = new_tima;
-                }
-            }
+        // TIMA is incremented on a falling edge of the selected bit of the system counter
+        let bit = self.tima_period() >> 1;
+        if self.tac_timer_enable && old_div_timer & bit != 0 && new_value & bit == 0 {
+            self.increment_tima();
         }
     }
 

@@ -54,7 +54,9 @@ Cycle-accurate-ish PPU driven by `dots(cycles, frame_sink)`. It tracks `line_dot
 
 ### APU (`src/apu/`)
 
-`mod.rs` owns the four channels (`ToneChannel` ×2, `WaveChannel`, `NoiseChannel` — all in `channels.rs`) and the 512 Hz `FrameSequencer` (`frame_sequencer.rs`) that clocks length counters, envelopes, and sweep. A `HighPassFilter` is applied before emitting to the `AudioSink`. The APU runs at CPU clock (4.194304 MHz) and downsamples to 44.1 kHz; audio register addresses `NR10..NR52` are defined as constants at the top of `mod.rs`.
+`mod.rs` owns the four channels (`ToneChannel` ×2, `WaveChannel`, `NoiseChannel` — all in `channels.rs`) and the 512 Hz `FrameSequencer` (`frame_sequencer.rs`) that clocks length counters, envelopes, and sweep. A `HighPassFilter` is applied before emitting to the `AudioSink`. The APU runs at CPU clock (4.194304 MHz) and downsamples to the sample rate given to `GameBoy::new` (exact integer resampling, see `sample_counter`); audio register addresses `NR10..NR52` are defined as constants at the top of `mod.rs`.
+
+The APU runs lazily: `Apu::step` only accumulates `pending_cycles`, which are run when a frame sequencer step or a sample is due, or before a register write (`catch_up`). In between, the channels' `Timer`s are advanced arithmetically (`Timer::advance`), not cycle by cycle. So if you add anything that observes channel state from outside at other times (e.g. wave RAM reads while the channel is playing), call `catch_up` first.
 
 ### Debugger (`src/debugger.rs`)
 
