@@ -6,7 +6,7 @@ use std::{
 use bitvec::prelude::*;
 use log::trace;
 
-use crate::{FrameSink, SCREEN_HEIGHT, SCREEN_WIDTH, interrupt::InterruptFlag};
+use crate::{FrameSink, Rgb555, SCREEN_HEIGHT, SCREEN_WIDTH, interrupt::InterruptFlag};
 
 const VRAM_START: u16 = 0x8000;
 const OAM_START: u16 = 0xFE00;
@@ -27,6 +27,14 @@ const OBP1_REG: u16 = 0xFF49;
 const WY_REG: u16 = 0xFF4A;
 const WX_REG: u16 = 0xFF4B;
 
+/// Colours used for the 4 DMG shades (white to black) unless a frontend picks its own.
+pub const DEFAULT_DMG_PALETTE: [Rgb555; 4] = [
+    Rgb555::from_rgb888(0xe0, 0xf8, 0xd0),
+    Rgb555::from_rgb888(0x88, 0xc0, 0x70),
+    Rgb555::from_rgb888(0x30, 0x68, 0x50),
+    Rgb555::from_rgb888(0x08, 0x18, 0x20),
+];
+
 #[derive(Debug)]
 pub struct Gfx {
     vram: Box<[u8]>,
@@ -34,8 +42,10 @@ pub struct Gfx {
 
     /// Represents the LCD itself, i.e. where pixels are actually written.
     ///
-    /// Each pixel is in RGBA format.
-    lcd: Box<[(u8, u8, u8)]>,
+    /// Each pixel is a 15-bit colour, so the same buffer can hold CGB output later on.
+    lcd: Box<[Rgb555]>,
+    /// Colours the 4 DMG shades are rendered with.
+    dmg_palette: [Rgb555; 4],
 
     /// Number of clock cycles since we began rendering the current frame
     dots: usize,
@@ -103,7 +113,8 @@ impl Gfx {
         Self {
             vram: vec![0; 8 * 1024].into_boxed_slice(),
             oam_ram: vec![0; 0xA0].into_boxed_slice(),
-            lcd: vec![(0, 0, 0); SCREEN_WIDTH * SCREEN_HEIGHT].into_boxed_slice(),
+            lcd: vec![Rgb555::default(); SCREEN_WIDTH * SCREEN_HEIGHT].into_boxed_slice(),
+            dmg_palette: DEFAULT_DMG_PALETTE,
             dots: 0,
             running_mode: Mode::Mode2,
             line_drawing_state: LineDrawingState::Idle,
@@ -580,7 +591,15 @@ impl Gfx {
     }
 
     fn write_pixel(&mut self, x: u8, y: u8, color: Color) {
-        self.lcd[y as usize * SCREEN_WIDTH + x as usize] = color.as_rgba();
+        self.lcd[y as usize * SCREEN_WIDTH + x as usize] = self.dmg_color(color);
+    }
+
+    fn dmg_color(&self, color: Color) -> Rgb555 {
+        self.dmg_palette[color.as_u8() as usize]
+    }
+
+    pub(crate) fn set_dmg_palette(&mut self, palette: [Rgb555; 4]) {
+        self.dmg_palette = palette;
     }
 
     pub fn dump_oam(&self) {
@@ -609,7 +628,7 @@ impl Gfx {
         for y in 0..height {
             for x in 0..8 {
                 let pixel = self.get_sprite_color(&sprite, x, y).unwrap_or(Color::White);
-                let (r, g, b) = pixel.as_rgba();
+                let (r, g, b) = self.dmg_color(pixel).to_rgb888();
                 print!("{}", ansi_term::Color::RGB(r, g, b).paint("██"));
             }
             println!();
@@ -617,9 +636,9 @@ impl Gfx {
     }
 
     pub fn dump_palettes(&self) {
-        println!("BGP:  {}", self.bgp.to_debug_str());
-        println!("OBP0: {}", self.obp0.to_debug_str());
-        println!("OBP1: {}", self.obp1.to_debug_str());
+        println!("BGP:  {}", self.bgp.to_debug_str(&self.dmg_palette));
+        println!("OBP0: {}", self.obp0.to_debug_str(&self.dmg_palette));
+        println!("OBP1: {}", self.obp1.to_debug_str(&self.dmg_palette));
     }
 
     /// Disable the LCD.
@@ -694,15 +713,6 @@ impl Color {
             Color::LightGray => 1,
             Color::DarkGray => 2,
             Color::Black => 3,
-        }
-    }
-
-    fn as_rgba(&self) -> (u8, u8, u8) {
-        match self {
-            Color::White => (0xe0, 0xf8, 0xd0),     // #e0f8d0
-            Color::LightGray => (0x88, 0xc0, 0x70), // #88c070
-            Color::DarkGray => (0x30, 0x68, 0x50),  // #306850
-            Color::Black => (0x08, 0x18, 0x20),     // #081820
         }
     }
 }
@@ -825,10 +835,10 @@ impl Debug for Sprite {
 struct Palette([Color; 4]);
 
 impl Palette {
-    fn to_debug_str(&self) -> String {
+    fn to_debug_str(&self, dmg_palette: &[Rgb555; 4]) -> String {
         let mut s = String::new();
         for c in self.0 {
-            let (r, g, b) = c.as_rgba();
+            let (r, g, b) = dmg_palette[c.as_u8() as usize].to_rgb888();
             s.push_str(&format!("{}", ansi_term::Color::RGB(r, g, b).paint("██")));
         }
         s

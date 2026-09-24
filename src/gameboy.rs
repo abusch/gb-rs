@@ -3,7 +3,7 @@ use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
 use crate::disasm::Disassembler;
 use crate::joypad::Button;
-use crate::{AudioSink, FrameSink};
+use crate::{AudioSink, FrameSink, Rgb555};
 
 pub struct GameBoy {
     cpu: Cpu,
@@ -108,6 +108,11 @@ impl GameBoy {
         let mut cartridge = self.bus.cartridge;
         cartridge.reset_mapper();
         cartridge
+    }
+
+    /// Set the colours used for the 4 DMG shades, from lightest to darkest.
+    pub fn set_dmg_palette(&mut self, palette: [Rgb555; 4]) {
+        self.bus.gfx.set_dmg_palette(palette);
     }
 
     pub fn save_ram_mut(&mut self) -> Option<&mut [u8]> {

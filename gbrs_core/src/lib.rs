@@ -1,6 +1,6 @@
 use gb_rs::{
-    AudioSink, FrameSink, SCREEN_HEIGHT, SCREEN_WIDTH, cartridge::Cartridge, gameboy::GameBoy,
-    joypad::Button,
+    AudioSink, FrameSink, Rgb555, SCREEN_HEIGHT, SCREEN_WIDTH, cartridge::Cartridge,
+    gameboy::GameBoy, joypad::Button,
 };
 use libretro::{
     ContentContract, ControllerDescription, ControllerDevice, ControllerInfo, Core, CoreMemory,
@@ -187,8 +187,9 @@ impl Default for RetroFrameSink {
 }
 
 impl FrameSink for RetroFrameSink {
-    fn push_frame(&mut self, frame: &[(u8, u8, u8)]) {
-        for (dst, &(r, g, b)) in self.buf.iter_mut().zip(frame) {
+    fn push_frame(&mut self, frame: &[Rgb555]) {
+        for (dst, color) in self.buf.iter_mut().zip(frame) {
+            let (r, g, b) = color.to_rgb888();
             *dst = u32::from_be_bytes([0, r, g, b]);
         }
     }

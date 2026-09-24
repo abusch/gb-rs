@@ -19,7 +19,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The crate is split into a library (`src/lib.rs`) and a binary (`src/main.rs` + `src/emulator.rs` + `src/debugger.rs`). The library is the emulation core and is deliberately I/O-agnostic: it communicates with the outside world through two traits defined in `lib.rs`:
 
-- `FrameSink::push_frame(&[(u8, u8, u8)])` — called by the PPU when a complete 160×144 RGB frame is ready.
+- `FrameSink::push_frame(&[Rgb555])` — called by the PPU when a complete 160×144 frame is ready. Pixels are 15-bit colours in the CGB's native `xBBBBBGGGGGRRRRR` layout (chosen so CGB support can reuse it); DMG shades are mapped through a configurable palette (`GameBoy::set_dmg_palette`, default `gfx::DEFAULT_DMG_PALETTE`). Frontends convert with `Rgb555::to_rgb888`.
 - `AudioSink::push_sample` / `push_samples` — called by the APU to emit stereo f32 samples.
 
 The binary provides concrete implementations: `MostRecentFrameSink` (just keeps the latest frame for the window renderer) and `CpalAudioSink` (pushes samples into a `ringbuf::HeapRb<f32>` that cpal drains on its audio thread). Keep this separation when touching rendering or audio: the library should never depend on `winit`, `pixels`, or `cpal`.

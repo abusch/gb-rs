@@ -13,8 +13,8 @@ use anyhow::Result;
 use log::info;
 
 use gb_rs::{
-    AudioSink, FrameSink, SCREEN_HEIGHT, SCREEN_WIDTH, cartridge::Cartridge, gameboy::GameBoy,
-    joypad::Button,
+    AudioSink, FrameSink, Rgb555, SCREEN_HEIGHT, SCREEN_WIDTH, cartridge::Cartridge,
+    gameboy::GameBoy, joypad::Button,
 };
 use ringbuf::{
     SharedRb, producer::Producer, storage::Heap, traits::Observer, wrap::caching::Caching,
@@ -253,14 +253,14 @@ impl Emulator {
 
 /// Frame sink that only keeps the most recent frame
 struct MostRecentFrameSink {
-    buf: [(u8, u8, u8); SCREEN_WIDTH * SCREEN_HEIGHT],
+    buf: [Rgb555; SCREEN_WIDTH * SCREEN_HEIGHT],
     new_frame: bool,
 }
 
 impl MostRecentFrameSink {
     pub fn new() -> Self {
         Self {
-            buf: [(0, 0, 0); SCREEN_WIDTH * SCREEN_HEIGHT],
+            buf: [Rgb555::default(); SCREEN_WIDTH * SCREEN_HEIGHT],
             new_frame: true,
         }
     }
@@ -269,11 +269,9 @@ impl MostRecentFrameSink {
         self.buf
             .iter()
             .zip(frame.chunks_mut(4))
-            .for_each(|((r, g, b), p)| {
-                p[0] = *r;
-                p[1] = *g;
-                p[2] = *b;
-                p[3] = 255;
+            .for_each(|(color, p)| {
+                let (r, g, b) = color.to_rgb888();
+                p.copy_from_slice(&[r, g, b, 255]);
             });
         self.new_frame = false;
     }
@@ -286,7 +284,7 @@ impl Default for MostRecentFrameSink {
 }
 
 impl FrameSink for MostRecentFrameSink {
-    fn push_frame(&mut self, frame: &[(u8, u8, u8)]) {
+    fn push_frame(&mut self, frame: &[Rgb555]) {
         self.buf.copy_from_slice(frame);
         self.new_frame = true;
     }
