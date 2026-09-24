@@ -57,7 +57,12 @@ impl<const N: u8> ToneChannel<N> {
             && let Some(ref mut sweep) = self.frequency_sweep
         {
             match sweep.tick() {
-                FrequencySweepResult::NewFreq(f) => self.freq_timer.period = (2048 - f) * 4,
+                FrequencySweepResult::NewFreq(f) => {
+                    // The new frequency is written back to NRx3/NRx4
+                    self.freq_lo = f as u8;
+                    self.freq_hi = (f >> 8) as u8;
+                    self.freq_timer.period = (2048 - f) * 4;
+                }
                 FrequencySweepResult::Disable => self.enabled = false,
                 FrequencySweepResult::Nop => (),
             }
@@ -70,7 +75,7 @@ impl<const N: u8> ToneChannel<N> {
         if let Some(ref sweep) = self.frequency_sweep {
             // bit 7 is always set
             bits.set(7, true);
-            bits[4..=6].store(sweep.timer.period as u8);
+            bits[4..=6].store(sweep.period);
             bits.set(3, sweep.should_negate);
             bits[0..=2].store(sweep.shift);
         }
@@ -84,7 +89,9 @@ impl<const N: u8> ToneChannel<N> {
             let sweep_time = bits[4..=6].load::<u8>();
             let negate = bits[3];
             let shift = bits[0..=2].load::<u8>();
-            sweep.load(sweep_time as u16, negate, shift);
+            if sweep.load(sweep_time, negate, shift) {
+                self.enabled = false;
+            }
         }
     }
 
@@ -195,15 +202,16 @@ impl<const N: u8> ToneChannel<N> {
             self.freq_timer.reset();
             // Reset volume envelope
             self.volume_envelope.trigger();
-            if let Some(ref mut sweep) = self.frequency_sweep {
-                sweep.trigger(freq);
+            if let Some(ref mut sweep) = self.frequency_sweep
+                && sweep.trigger(freq)
+            {
+                self.enabled = false;
             }
             // if !self.is_dac_on() {
             //     // If DAC is off, disable the channel
             //     debug!("Channel {N}: Tone channel DAC is off, disabling channel");
             //     self.enabled = false;
             // }
-            // TODO  sweep, etc..
         }
     }
 
@@ -326,7 +334,12 @@ enum FrequencySweepResult {
 struct FrequencySweep {
     enabled: bool,
     shadow_register: u16,
+    /// Sweep period from NR10, in sweep steps of the frame sequencer. 0 disables the sweep
+    /// calculations, but not the timer.
+    period: u8,
     should_negate: bool,
+    /// Whether a frequency was calculated in negate mode since the last trigger.
+    negate_used: bool,
     timer: Timer,
     shift: u8,
 }
@@ -336,60 +349,83 @@ impl FrequencySweep {
         Self {
             enabled: false,
             shadow_register: 0,
+            period: 0,
             should_negate: false,
-            timer: Timer::new(0),
+            negate_used: false,
+            timer: Timer::new(Self::timer_period(0)),
             shift: 0,
         }
     }
 
+    /// The sweep timer treats a period of 0 as 8.
+    fn timer_period(period: u8) -> u16 {
+        if period == 0 { 8 } else { period as u16 }
+    }
+
     fn tick(&mut self) -> FrequencySweepResult {
-        if self.timer.tick() && self.enabled && self.shift != 0 {
-            let new_freq = self.next_frequency();
-            if new_freq > MAX_FREQUENCY {
-                return FrequencySweepResult::Disable;
-            }
-            self.shadow_register = new_freq;
-            // The hardware immediately runs the calculation again with the new frequency, and
-            // disables the channel if that would overflow, but doesn't write it back.
-            if self.next_frequency() > MAX_FREQUENCY {
-                return FrequencySweepResult::Disable;
-            }
-            return FrequencySweepResult::NewFreq(new_freq);
+        if !self.timer.tick() || !self.enabled || self.period == 0 {
+            return FrequencySweepResult::Nop;
         }
 
-        FrequencySweepResult::Nop
+        // The overflow check happens even if the shift is 0 and the frequency doesn't change.
+        let new_freq = self.next_frequency();
+        if new_freq > MAX_FREQUENCY {
+            return FrequencySweepResult::Disable;
+        }
+        if self.shift == 0 {
+            return FrequencySweepResult::Nop;
+        }
+        self.shadow_register = new_freq;
+        // The hardware immediately runs the calculation again with the new frequency, and
+        // disables the channel if that would overflow, but doesn't write it back.
+        if self.next_frequency() > MAX_FREQUENCY {
+            return FrequencySweepResult::Disable;
+        }
+        FrequencySweepResult::NewFreq(new_freq)
     }
 
     /// The frequency the next sweep step would switch to, possibly past `MAX_FREQUENCY`.
-    fn next_frequency(&self) -> u16 {
+    fn next_frequency(&mut self) -> u16 {
         let delta = self.shadow_register >> self.shift;
         if self.should_negate {
+            self.negate_used = true;
             self.shadow_register - delta
         } else {
             self.shadow_register + delta
         }
     }
 
-    fn load(&mut self, sweep_time: u16, negate: bool, shift: u8) {
-        self.timer.period = sweep_time;
-        self.should_negate = negate;
+    /// Handle a write to NR10. Return whether the channel should be disabled.
+    fn load(&mut self, period: u8, negate: bool, shift: u8) -> bool {
+        // The new period is used from the next time the timer is reloaded.
+        self.period = period;
+        self.timer.period = Self::timer_period(period);
         self.shift = shift;
+        // Leaving negate mode after a calculation used it since the last trigger disables the
+        // channel.
+        let leaving_negate = self.should_negate && !negate && self.negate_used;
+        self.should_negate = negate;
+        leaving_negate
     }
 
-    fn trigger(&mut self, current_frequency: u16) {
+    /// Handle the channel being triggered. Return whether the channel should be disabled.
+    fn trigger(&mut self, current_frequency: u16) -> bool {
         self.shadow_register = current_frequency;
         self.timer.reset();
-        if self.timer.period != 0 || self.shift != 0 {
-            self.enabled = true;
-        }
+        self.negate_used = false;
+        self.enabled = self.period != 0 || self.shift != 0;
+        // With a non-zero shift, the overflow check is run straight away.
+        self.shift != 0 && self.next_frequency() > MAX_FREQUENCY
     }
 
     fn reset(&mut self) {
         self.enabled = false;
         self.shadow_register = 0;
+        self.period = 0;
+        self.timer.period = Self::timer_period(0);
         self.shift = 0;
         self.should_negate = false;
-        self.timer.period = 0;
+        self.negate_used = false;
     }
 }
 
@@ -397,32 +433,85 @@ impl FrequencySweep {
 mod tests {
     use super::*;
 
-    /// A sweep that steps on every tick, starting from `freq`.
-    fn sweep(freq: u16, negate: bool, shift: u8) -> FrequencySweep {
+    /// A sweep that steps on every tick with the given settings, triggered with `freq`.
+    fn sweep(freq: u16, period: u8, negate: bool, shift: u8) -> FrequencySweep {
         let mut sweep = FrequencySweep::new();
-        sweep.load(1, negate, shift);
-        sweep.trigger(freq);
+        sweep.load(period, negate, shift);
+        assert!(!sweep.trigger(freq), "overflow on trigger");
         sweep
     }
 
     #[test]
     fn sweep_updates_frequency() {
-        let mut up = sweep(600, false, 1);
+        let mut up = sweep(600, 1, false, 1);
         assert_eq!(up.tick(), FrequencySweepResult::NewFreq(900));
-        let mut down = sweep(1000, true, 1);
+        let mut down = sweep(1000, 1, true, 1);
         assert_eq!(down.tick(), FrequencySweepResult::NewFreq(500));
     }
 
     #[test]
     fn sweep_disables_on_overflow() {
-        // 1500 + 750 overflows straight away.
-        assert_eq!(sweep(1500, false, 1).tick(), FrequencySweepResult::Disable);
         // 1200 + 600 = 1800 fits, but the second calculation (1800 + 900) overflows.
-        assert_eq!(sweep(1200, false, 1).tick(), FrequencySweepResult::Disable);
+        assert_eq!(
+            sweep(1200, 1, false, 1).tick(),
+            FrequencySweepResult::Disable
+        );
         // Going down never overflows.
         assert_eq!(
-            sweep(2047, true, 1).tick(),
+            sweep(2047, 1, true, 1).tick(),
             FrequencySweepResult::NewFreq(1024)
         );
+    }
+
+    #[test]
+    fn sweep_checks_overflow_on_trigger_if_shift_is_not_zero() {
+        let mut sweep = FrequencySweep::new();
+        sweep.load(1, false, 1);
+        assert!(sweep.trigger(1500));
+        sweep.load(1, false, 0);
+        assert!(!sweep.trigger(1500));
+    }
+
+    #[test]
+    fn sweep_with_shift_0_checks_overflow_without_updating() {
+        let mut fits = sweep(1000, 1, false, 0);
+        assert_eq!(fits.tick(), FrequencySweepResult::Nop);
+        assert_eq!(fits.shadow_register, 1000);
+        assert_eq!(
+            sweep(1500, 1, false, 0).tick(),
+            FrequencySweepResult::Disable
+        );
+    }
+
+    #[test]
+    fn sweep_with_period_0_does_nothing() {
+        let mut sweep = sweep(1000, 0, false, 1);
+        assert!(sweep.enabled);
+        for _ in 0..16 {
+            assert_eq!(sweep.tick(), FrequencySweepResult::Nop);
+        }
+        assert_eq!(sweep.shadow_register, 1000);
+    }
+
+    #[test]
+    fn sweep_timer_treats_period_0_as_8() {
+        let mut sweep = sweep(100, 0, false, 1);
+        for _ in 0..6 {
+            sweep.tick();
+        }
+        // Setting a period only takes effect when the timer reloads, so it has 2 steps to go.
+        sweep.load(1, false, 1);
+        assert_eq!(sweep.tick(), FrequencySweepResult::Nop);
+        assert_eq!(sweep.tick(), FrequencySweepResult::NewFreq(150));
+    }
+
+    #[test]
+    fn leaving_negate_mode_after_using_it_disables_channel() {
+        let mut used = sweep(1000, 1, true, 1);
+        used.tick();
+        assert!(used.load(1, false, 1));
+
+        let mut unused = sweep(1000, 1, true, 0);
+        assert!(!unused.load(1, false, 0));
     }
 }
