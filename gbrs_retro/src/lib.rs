@@ -1,4 +1,4 @@
-use gb_rs::{
+use gbrs::{
     AudioSink, FrameSink, Rgb555, SCREEN_HEIGHT, SCREEN_WIDTH, cartridge::Cartridge,
     gameboy::GameBoy, joypad::Button,
 };

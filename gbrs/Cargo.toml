@@ -1,0 +1,13 @@
+[package]
+name = "gbrs"
+version = "0.2.0"
+edition.workspace = true
+
+[dependencies]
+ansi_term.workspace = true
+anyhow.workspace = true
+bitflags.workspace = true
+bitvec.workspace = true
+byteorder.workspace = true
+log.workspace = true
+zip.workspace = true

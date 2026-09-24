@@ -1,0 +1,12 @@
+[package]
+name = "gbrs_retro"
+version = "0.1.0"
+edition.workspace = true
+description = "A libretro core for the Gameboy emulator"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+gbrs.workspace = true
+libretro.workspace = true

@@ -12,7 +12,7 @@ use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 use emulator::{AudioStats, Emulator};
-use gb_rs::{SCREEN_HEIGHT, SCREEN_WIDTH};
+use gbrs::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use log::{debug, error, info, trace};
 use pixels::{Pixels, SurfaceTexture};
 use ringbuf::{

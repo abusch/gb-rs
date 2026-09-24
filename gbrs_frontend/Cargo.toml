@@ -1,0 +1,24 @@
+[package]
+name = "gbrs_frontend"
+version = "0.1.0"
+edition.workspace = true
+description = "A simple frontend for the Gameboy emulator"
+
+[[bin]]
+name = "gbrs"
+path = "src/main.rs"
+
+[dependencies]
+ansi_term.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+cpal.workspace = true
+env_logger.workspace = true
+gbrs.workspace = true
+log.workspace = true
+pixels.workspace = true
+png.workspace = true
+ringbuf.workspace = true
+rustyline.workspace = true
+winit.workspace = true
+zip.workspace = true

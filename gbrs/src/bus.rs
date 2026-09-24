@@ -7,7 +7,7 @@ use crate::{
     joypad::Joypad, timer::Timer,
 };
 
-const BOOT_ROM_DATA: &[u8] = include_bytes!("../assets/dmg_boot.bin");
+const BOOT_ROM_DATA: &[u8] = include_bytes!("../../assets/dmg_boot.bin");
 
 // Memory Map
 const BOOT_ROM: RangeInclusive<u16> = 0x0000..=0x00FF;

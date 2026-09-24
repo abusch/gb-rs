@@ -1,22 +1,17 @@
 [workspace]
-members = ["gbrs_core"]
+resolver = "3"
+members = ["gbrs", "gbrs_frontend", "gbrs_retro"]
 
 [workspace.package]
-version = "0.1.0"
 edition = "2024"
-
-[package]
-name = "gb-rs"
-version.workspace = true
-edition.workspace = true
-authors = ["Antoine Büsch <antoine.busch@gmail.com>"]
 description = "A Gameboy emulator"
-repository = "https://github.com/abusch/gb-rs"
-homepage = "https://github.com/abusch/gb-rs"
-keywords = ["emulator", "gameboy"]
 readme = "README.md"
+homepage = "https://github.com/abusch/gb-rs"
+repository = "https://github.com/abusch/gb-rs"
+license = "MIT OR Apache-2.0"
+keywords = ["emulator", "gameboy"]
 
-[dependencies]
+[workspace.dependencies]
 ansi_term = "0.12"
 anyhow = "1.0"
 bitflags = "2.8"
@@ -24,14 +19,17 @@ bitvec = "1.0"
 byteorder = "1.4"
 clap = { version = "4.0", features = ["derive"] }
 cpal = "0.18"
-log = { version = "0.4", features = ["release_max_level_info"] }
 env_logger = "0.11"
+libretro = { package = "libretro-core", version = "1" }
+log = { version = "0.4", features = ["release_max_level_info"] }
 pixels = "0.17.1"
 png = "0.18"
 ringbuf = "0.5"
 rustyline = "18"
 winit = "0.30"
 zip = "8.6.0"
+
+gbrs = { path = "gbrs/", version = "0.2.0" }
 
 [profile.release]
 debug = true
