@@ -1,6 +1,7 @@
 /target
 /test_roms
 /roms
+/.agents
 flamegraph.svg
 perf.data
 perf.data.old
