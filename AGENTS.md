@@ -12,6 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `--enable-soft-break`: treat `LD B,B` as a breakpoint trigger (useful for some test ROMs).
   - `--boot-rom <PATH>`: run the given DMG boot ROM before the game.
 - Logging is configured in `main.rs` via `env_logger` with hardcoded filters `gb_rs=debug,gb_rs::apu=info`. The `release_max_level_info` feature on the `log` crate caps release-build logs at `info` regardless of filter.
+- Benchmark/profile the core with `cargo run --release --example headless -p gbrs -- <ROM> [FRAMES]`: it runs without a frontend and prints the speed plus hashes of the video and audio output, so optimisations can be checked for behaviour changes.
 - Release profile has `debug = true` and `incremental = true` — debugging a release build is intentionally supported (emulation needs release-level perf).
 
 ## Architecture
@@ -33,7 +34,7 @@ The binary provides concrete implementations: `MostRecentFrameSink` (just keeps 
 - Each update computes `target_cycles = elapsed_ns / 238` and steps the Game Boy until `emulated_cycles >= target_cycles` or the CPU is paused.
 - When resuming from the debugger, `start_time_ns` is rebased so that `elapsed - emulated_cycles*238` is preserved — otherwise a long pause would cause a catch-up burst.
 
-`GameBoy::step()` runs one CPU instruction, then for each of the resulting M-cycles ticks the `Bus` once and lets the CPU handle interrupts. So peripherals (GPU/APU/Timer) advance in lockstep with the CPU at cycle granularity — not per-instruction.
+`GameBoy::step()` runs one CPU instruction, then for each of the resulting M-cycles ticks the `Bus` once (with 4 T-cycles) and lets the CPU handle interrupts. So peripherals (GPU/APU/Timer) advance in lockstep with the CPU at M-cycle granularity — not per-instruction.
 
 ### Bus & memory map
 
@@ -49,7 +50,7 @@ ROMs and cart saves: the core does no file I/O. `Cartridge::load_bytes` and `Boo
 
 ### PPU (`src/gfx.rs`)
 
-Cycle-accurate-ish PPU driven by `dots(cycles, frame_sink)`. It tracks `dots` (cycles since frame start), a `running_mode` state machine (OAM scan / drawing / HBlank / VBlank), and per-scanline `LineDrawingState`. LCDC is decomposed into individual boolean fields rather than kept as a bitmask — when you touch `0xFF40`, update both the raw-register write path and the boolean fields.
+Cycle-accurate-ish PPU driven by `dots(cycles, frame_sink)`. It tracks `line_dot` (dots since the start of the line), `ly` and `running_mode` (OAM scan / drawing / HBlank / VBlank). The mode only changes at fixed dots (`MODE3_START_DOT`, `MODE0_START_DOT`, end of line), and a whole scanline is rendered by `draw_scan_line` when mode 3 starts. `dots` runs the first dot of each call in full and then skips ahead to the next mode change, since nothing else can happen in between: keep that invariant if you add per-dot behaviour. STAT interrupt sources and conditions are `STAT_*` bitmasks; the STAT interrupt fires on a rising edge of `stat_sources & stat_conditions`. LCDC is decomposed into individual boolean fields rather than kept as a bitmask — when you touch `0xFF40`, update both the raw-register write path and the boolean fields.
 
 ### APU (`src/apu/`)
 

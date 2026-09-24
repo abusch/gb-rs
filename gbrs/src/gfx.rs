@@ -27,6 +27,21 @@ const OBP1_REG: u16 = 0xFF49;
 const WY_REG: u16 = 0xFF4A;
 const WX_REG: u16 = 0xFF4B;
 
+// STAT interrupt sources, as laid out in the STAT register
+const STAT_HBLANK: u8 = 1 << 3;
+const STAT_VBLANK: u8 = 1 << 4;
+const STAT_OAM: u8 = 1 << 5;
+const STAT_LYC: u8 = 1 << 6;
+const STAT_SOURCES: u8 = STAT_HBLANK | STAT_VBLANK | STAT_OAM | STAT_LYC;
+
+const DOTS_PER_LINE: u16 = 456;
+/// 144 visible scanlines followed by 10 of VBlank
+const LINES_PER_FRAME: u8 = 154;
+/// Mode 2 (OAM scan) runs for the first 80 dots of a visible line, then mode 3 (drawing).
+const MODE3_START_DOT: u16 = 80;
+/// Mode 0 (HBlank) runs from here until the end of the line.
+const MODE0_START_DOT: u16 = 252;
+
 /// Colours used for the 4 DMG shades (white to black) unless a frontend picks its own.
 pub const DEFAULT_DMG_PALETTE: [Rgb555; 4] = [
     Rgb555::from_rgb888(0xe0, 0xf8, 0xd0),
@@ -47,10 +62,9 @@ pub struct Gfx {
     /// Colours the 4 DMG shades are rendered with.
     dmg_palette: [Rgb555; 4],
 
-    /// Number of clock cycles since we began rendering the current frame
-    dots: usize,
+    /// Number of clock cycles since we began rendering the current scanline
+    line_dot: u16,
     running_mode: Mode,
-    line_drawing_state: LineDrawingState,
 
     // LCDC individual flags:
     /// LCDC.7
@@ -85,17 +99,10 @@ pub struct Gfx {
     /// WX (Window X Position + 7)
     wx: u8,
 
-    // STAT interrupt sources
-    stat_lyc_eq_ly_itr_source: bool,
-    stat_oam_itr_source: bool,
-    stat_vblank_itr_source: bool,
-    stat_hblank_itr_source: bool,
-
-    // STAT interrupt values
-    stat_lyc_eq_ly_active: bool,
-    stat_oam_active: bool,
-    stat_vblank_active: bool,
-    stat_hblank_active: bool,
+    /// STAT interrupt sources that are enabled, as `STAT_*` bits
+    stat_sources: u8,
+    /// STAT interrupt conditions that currently hold, as `STAT_*` bits
+    stat_conditions: u8,
 
     /// BG Palette
     bgp: Palette,
@@ -115,9 +122,8 @@ impl Gfx {
             oam_ram: vec![0; 0xA0].into_boxed_slice(),
             lcd: vec![Rgb555::default(); SCREEN_WIDTH * SCREEN_HEIGHT].into_boxed_slice(),
             dmg_palette: DEFAULT_DMG_PALETTE,
-            dots: 0,
+            line_dot: 0,
             running_mode: Mode::Mode2,
-            line_drawing_state: LineDrawingState::Idle,
             // TODO should it be exploded into individual flags?
             lcd_and_ppu_enabled: false,
             window_tile_map_area: false,
@@ -136,14 +142,8 @@ impl Gfx {
             lyc: 0,
             wy: 0,
             wx: 0,
-            stat_lyc_eq_ly_itr_source: false,
-            stat_oam_itr_source: false,
-            stat_vblank_itr_source: false,
-            stat_hblank_itr_source: false,
-            stat_lyc_eq_ly_active: false,
-            stat_oam_active: false,
-            stat_vblank_active: false,
-            stat_hblank_active: false,
+            stat_sources: 0,
+            stat_conditions: 0,
             window_internal_line_counter: 0,
         }
     }
@@ -296,8 +296,7 @@ impl Gfx {
             // FF43 SCX
             self.scx = b;
         } else if addr == LY_REG {
-            // FF44 LY
-            self.ly = b;
+            // FF44 LY is read-only
         } else if addr == LYC_REG {
             // FF45 LYC
             self.lyc = b;
@@ -324,40 +323,41 @@ impl Gfx {
 
     /// Return the value of the STAT register (FF41)
     fn stat(&self) -> u8 {
-        let mut byte = 0b10000000_u8; // bit 7 is always 1
-        let bits = byte.view_bits_mut::<Lsb0>();
-
-        // interrupt sources
-        bits.set(6, self.stat_lyc_eq_ly_itr_source);
-        bits.set(5, self.stat_oam_itr_source);
-        bits.set(4, self.stat_vblank_itr_source);
-        bits.set(3, self.stat_hblank_itr_source);
-
-        bits.set(2, self.ly == self.lyc);
-
-        let mode = self.running_mode as u8;
-        let mode_bits = mode.view_bits::<Lsb0>();
-        bits.set(1, mode_bits[1]);
-        bits.set(0, mode_bits[0]);
-
-        bits.load()
+        // bit 7 is always 1
+        let lyc_eq_ly = if self.ly == self.lyc { 0b100 } else { 0 };
+        0x80 | self.stat_sources | lyc_eq_ly | self.running_mode as u8
     }
 
     fn set_stat(&mut self, stat: u8) {
-        let bits = stat.view_bits::<Lsb0>();
-        self.stat_lyc_eq_ly_itr_source = bits[6];
-        self.stat_oam_itr_source = bits[5];
-        self.stat_vblank_itr_source = bits[4];
-        self.stat_hblank_itr_source = bits[3];
+        self.stat_sources = stat & STAT_SOURCES;
     }
 
     pub(crate) fn dots(&mut self, cycles: u8, frame_sink: &mut dyn FrameSink) -> InterruptFlag {
         let mut interrupt = InterruptFlag::empty();
-        for _ in 0..cycles {
+        let mut remaining = cycles as u16;
+        while remaining > 0 {
+            // The first dot picks up any register writes made since the last call.
             interrupt |= self.dot(frame_sink);
+            remaining -= 1;
+            // After that, dots before the next mode change only advance the dot counter: LY, LYC
+            // and the mode all stay put, so the STAT line can't rise either.
+            let skip = (self.next_mode_change_dot() - self.line_dot - 1).min(remaining);
+            self.line_dot += skip;
+            remaining -= skip;
         }
 
         interrupt
+    }
+
+    /// The next value of `line_dot` at which `dot` changes mode or starts a new line.
+    fn next_mode_change_dot(&self) -> u16 {
+        if self.ly >= SCREEN_HEIGHT as u8 || self.line_dot >= MODE0_START_DOT {
+            DOTS_PER_LINE
+        } else if self.line_dot >= MODE3_START_DOT {
+            MODE0_START_DOT
+        } else {
+            MODE3_START_DOT
+        }
     }
 
     /// Run the graphics subsystem for one clock cycle (or _dot_)
@@ -366,70 +366,41 @@ impl Gfx {
         let mut interrupts = InterruptFlag::empty();
         let stat_line = self.stat_line();
 
-        self.dots += 1;
-        // Each scanline takes 456 dots
-        let mut scanline = (self.dots / 456) as u8;
-        let line_dot = (self.dots % 456) as u16;
-
-        // A whole frame (drawing + VSync) is 153 scanlines
-        if scanline > 153 {
-            self.dots = line_dot as usize;
-            scanline = 0;
-        }
-        self.ly = scanline;
-        self.stat_lyc_eq_ly_active = self.ly == self.lyc;
-
-        if scanline > 143 {
-            self.running_mode = Mode::Mode1;
-        } else {
-            self.running_mode = match line_dot {
-                0..=79 => Mode::Mode2,
-                80..=251 => Mode::Mode3,
-                252..=455 => Mode::Mode0,
-                // unreachable as we pattern match on the result of a modulo 456 operation
-                _ => unreachable!("This shouldn't happen!"),
-            }
-        }
-
-        self.stat_hblank_active = self.running_mode == Mode::Mode0;
-        self.stat_vblank_active = self.running_mode == Mode::Mode1;
-        self.stat_oam_active = self.running_mode == Mode::Mode2;
-        match self.running_mode {
-            // HBlank
-            Mode::Mode0 => {
-                if self.line_drawing_state == LineDrawingState::Drawing {
-                    self.line_drawing_state = LineDrawingState::Idle;
+        // The mode only ever changes at a handful of fixed dots, so only do work at those.
+        self.line_dot += 1;
+        if self.line_dot == DOTS_PER_LINE {
+            self.line_dot = 0;
+            self.ly = if self.ly == LINES_PER_FRAME - 1 {
+                0
+            } else {
+                self.ly + 1
+            };
+            if self.ly == SCREEN_HEIGHT as u8 {
+                // VBlank
+                self.running_mode = Mode::Mode1;
+                if self.lcd_and_ppu_enabled {
+                    frame_sink.push_frame(&self.lcd);
                 }
+                interrupts |= InterruptFlag::VBLANK;
+                // Reset the window internal line counter
+                self.window_internal_line_counter = 0;
+            } else if self.ly < SCREEN_HEIGHT as u8 {
+                // OAM scan
+                self.running_mode = Mode::Mode2;
             }
-            // VBlank
-            Mode::Mode1 => {
-                if self.line_drawing_state == LineDrawingState::Idle {
-                    if self.lcd_and_ppu_enabled {
-                        frame_sink.push_frame(&self.lcd);
-                    }
-                    interrupts |= InterruptFlag::VBLANK;
-                    self.line_drawing_state = LineDrawingState::FramePushed;
-                    // Reset the window internal line counter
-                    self.window_internal_line_counter = 0;
-                }
-            }
-            // OAM Scan
-            Mode::Mode2 => {
-                if self.line_drawing_state == LineDrawingState::Idle
-                    || self.line_drawing_state == LineDrawingState::FramePushed
-                {
-                    // OAM scan
-                    self.line_drawing_state = LineDrawingState::OamScan;
-                }
-            }
-            // Drawing
-            Mode::Mode3 => {
-                if self.line_drawing_state == LineDrawingState::OamScan {
-                    self.line_drawing_state = LineDrawingState::Drawing;
-                    self.draw_scan_line();
-                }
+        } else if self.ly < SCREEN_HEIGHT as u8 {
+            if self.line_dot == MODE3_START_DOT {
+                // Drawing
+                self.running_mode = Mode::Mode3;
+                self.draw_scan_line();
+            } else if self.line_dot == MODE0_START_DOT {
+                // HBlank
+                self.running_mode = Mode::Mode0;
             }
         }
+
+        let lyc_eq_ly = if self.ly == self.lyc { STAT_LYC } else { 0 };
+        self.stat_conditions = self.running_mode.stat_condition() | lyc_eq_ly;
 
         let new_stat_line = self.stat_line();
         // A STAT interrupt will be triggered by a rising edge (transition from low to high) on the
@@ -447,6 +418,9 @@ impl Gfx {
         }
     }
 
+    // Only runs once per line: keep it out of `dots`, which runs every M-cycle and would otherwise
+    // pay for this function's register and stack usage on every call.
+    #[inline(never)]
     fn draw_scan_line(&mut self) {
         let mut drawn_from_window = false;
         let bg_tilemap_area = if self.bg_tile_map_area {
@@ -459,8 +433,11 @@ impl Gfx {
         } else {
             0x9800
         };
-        // Get the first 10 sprites that match the current line
-        let sprites = self.get_sprites_for_scanline(self.ly);
+        let sprite_pixels = if self.obj_enabled {
+            self.sprite_pixels_for_scanline(self.ly)
+        } else {
+            [None; SCREEN_WIDTH]
+        };
 
         // Render a line of pixels
         for x in 0..SCREEN_WIDTH as u8 {
@@ -488,66 +465,16 @@ impl Gfx {
                     bg_tilemap_area,
                 )
             };
-            // Coordinates in "tilemap space" (i.e. 32x32)
-            let (tilemap_x, tilemap_y) = (bg_x / 8, bg_y / 8);
 
-            let tile_id =
-                self.read_vram_internal(tilemap_area + (tilemap_y as u16 * 32 + tilemap_x as u16));
-
-            // Now that we've got the tileid, look up the tile data in the appropriate location.
-
-            // Coordinates in "tile space" (i.e. which pixel of an 8x8 tile to draw)
-            let (tile_col, tile_row) = (bg_x % 8, bg_y % 8);
-
-            let mut tile_offset: u16 = if self.bg_and_window_tile_data_area {
-                let base = VRAM_TILE_DATA_BLOCK_0_ADDR;
-                // treat tile id as unsigned
-                base + 16 * tile_id as u16
+            let color_byte = if self.bg_and_window_enable {
+                self.bg_pixel(tilemap_area, bg_x, bg_y)
             } else {
-                let base = VRAM_TILE_DATA_BLOCK_2_ADDR;
-                // treat tile id as *signed*, so sign-extend it to 16 bits
-                let signed_id = tile_id as i8 as i16;
-                let offset = (16 * signed_id) as u16;
-
-                base.wrapping_add(offset)
-                // (base + 16 * signed_id as i16) as u16
+                0
             };
-            tile_offset += 2 * tile_row as u16;
 
-            let lo_byte = self.read_vram_internal(tile_offset);
-            let hi_byte = self.read_vram_internal(tile_offset + 1);
-
-            let mut color_byte = 0u8;
-            if self.bg_and_window_enable {
-                let color_bits = color_byte.view_bits_mut::<Lsb0>();
-                // Use Msb0 order here as pixel 0 is the leftmost bit (bit 7).
-                color_bits.set(1, hi_byte.view_bits::<Msb0>()[tile_col as usize]);
-                color_bits.set(0, lo_byte.view_bits::<Msb0>()[tile_col as usize]);
-            }
-            // Background / window pixel
-            // let color = if self.bg_and_window_enable {
-            //     self.bgp[color_byte as usize]
-            // } else {
-            //     Color::White
-            // };
-
-            // Potential sprite pixel
-            let sprite_pixel_and_bg_has_priority = sprites.iter().find_map(|s| {
-                self.get_sprite_pixel(s, lcd_x, lcd_y)
-                    .map(|p| (p, s.bg_has_priority()))
-            });
-
-            let final_color = match (self.obj_enabled, sprite_pixel_and_bg_has_priority) {
-                (true, Some((p, true))) => {
-                    if color_byte != 0 {
-                        self.bgp[color_byte as usize]
-                    } else {
-                        p
-                    }
-                }
-                (true, Some((p, false))) => p,
-                (true, None) => self.bgp[color_byte as usize],
-                (false, _) => self.bgp[color_byte as usize],
+            let final_color = match sprite_pixels[x as usize] {
+                Some((p, bg_has_priority)) if !(bg_has_priority && color_byte != 0) => p,
+                _ => self.bgp[color_byte as usize],
             };
 
             self.write_pixel(x, self.ly, final_color);
@@ -558,66 +485,124 @@ impl Gfx {
         }
     }
 
-    fn get_block0_tile_data(&self, tile_id: u8, tile_row: u8) -> (u8, u8) {
-        let base = VRAM_TILE_DATA_BLOCK_0_ADDR;
-        // treat tile id as unsigned
-        let mut tile_offset = base + 16 * tile_id as u16;
-        tile_offset += 2 * tile_row as u16;
-        let hi_byte = self.read_vram_internal(tile_offset);
-        let lo_byte = self.read_vram_internal(tile_offset + 1);
+    /// Colour index (0-3) of the background/window pixel at the given coordinates in the 256x256
+    /// area covered by the tilemap at `tilemap_area`.
+    fn bg_pixel(&self, tilemap_area: u16, bg_x: u8, bg_y: u8) -> u8 {
+        // Coordinates in "tilemap space" (i.e. 32x32)
+        let (tilemap_x, tilemap_y) = (bg_x / 8, bg_y / 8);
+        let tile_id =
+            self.read_vram_internal(tilemap_area + (tilemap_y as u16 * 32 + tilemap_x as u16));
 
-        (lo_byte, hi_byte)
+        // Now that we've got the tileid, look up the tile data in the appropriate location.
+
+        // Coordinates in "tile space" (i.e. which pixel of an 8x8 tile to draw)
+        let (tile_col, tile_row) = (bg_x % 8, bg_y % 8);
+
+        let tile_offset: u16 = if self.bg_and_window_tile_data_area {
+            let base = VRAM_TILE_DATA_BLOCK_0_ADDR;
+            // treat tile id as unsigned
+            base + 16 * tile_id as u16
+        } else {
+            let base = VRAM_TILE_DATA_BLOCK_2_ADDR;
+            // treat tile id as *signed*, so sign-extend it to 16 bits
+            let signed_id = tile_id as i8 as i16;
+            let offset = (16 * signed_id) as u16;
+
+            base.wrapping_add(offset)
+        };
+        let row = self.tile_row_at(tile_offset + 2 * tile_row as u16);
+        tile_pixel(row, tile_col)
     }
 
-    fn get_sprites_for_scanline(&self, y: u8) -> Vec<Sprite> {
-        let mut sprites = self
-            .oam_ram
-            .chunks(4)
-            .map(Sprite::new)
-            .filter(|sprite| sprite.matches_scanline(y, self.obj_size))
-            .collect::<Vec<_>>();
-
-        // Order the sprites by smallest `x` as they have higher priority
-        sprites[..].sort_by_key(|s1| s1.x);
-        // Return the first 10 sprites
-        sprites.into_iter().take(10).collect()
+    /// The two bitplanes (low, high) of the tile row at `addr`.
+    fn tile_row_at(&self, addr: u16) -> (u8, u8) {
+        (
+            self.read_vram_internal(addr),
+            self.read_vram_internal(addr + 1),
+        )
     }
 
-    fn get_sprite_pixel(&self, sprite: &Sprite, x: u8, y: u8) -> Option<Color> {
-        sprite
-            .get_tile_coordinates(x, y, self.obj_size)
-            .and_then(|(tile_x, tile_y)| self.get_sprite_color(sprite, tile_x, tile_y))
+    /// The two bitplanes (low, high) of the given row of a sprite's tile(s).
+    fn sprite_tile_row(&self, sprite: &Sprite, tile_y: u8) -> (u8, u8) {
+        let (tile_index, tile_y) = if self.obj_size {
+            // 8x16 sprites use an upper tile and a lower tile
+            if tile_y < 8 {
+                (sprite.tile_index & 0xFE, tile_y)
+            } else {
+                (sprite.tile_index | 0x01, tile_y - 8)
+            }
+        } else {
+            (sprite.tile_index, tile_y)
+        };
+        // Sprites always use block 0 with an unsigned tile id
+        self.tile_row_at(VRAM_TILE_DATA_BLOCK_0_ADDR + 16 * tile_index as u16 + 2 * tile_y as u16)
+    }
+
+    /// The sprite pixel (if any) to draw at each x of line `y`, along with whether the background
+    /// has priority over it.
+    fn sprite_pixels_for_scanline(&self, y: u8) -> [Option<(Color, bool)>; SCREEN_WIDTH] {
+        let mut sprites = [Sprite::default(); 40];
+        let mut count = 0;
+        for data in self.oam_ram.as_chunks::<4>().0 {
+            let sprite = Sprite::new(data);
+            if sprite.matches_scanline(y, self.obj_size) {
+                sprites[count] = sprite;
+                count += 1;
+            }
+        }
+        // Order the sprites by smallest `x` as they have higher priority, and only draw the first
+        // 10.
+        let sprites = &mut sprites[..count];
+        sprites.sort_by_key(|s| s.x);
+
+        let y_size = if self.obj_size { 16 } else { 8 };
+        let mut pixels = [None; SCREEN_WIDTH];
+        for sprite in sprites.iter().take(10) {
+            let mut tile_y = y + 16 - sprite.y;
+            if sprite.is_y_flip() {
+                tile_y = y_size - 1 - tile_y;
+            }
+            let row = self.sprite_tile_row(sprite, tile_y);
+            let palette = self.sprite_palette(sprite);
+
+            // Sprite x is offset by 8, so that sprites can be partially off the left edge.
+            for tile_x in 0..8u8 {
+                let lcd_x = sprite.x as usize + tile_x as usize;
+                let Some(lcd_x) = lcd_x.checked_sub(8).filter(|&x| x < SCREEN_WIDTH) else {
+                    continue;
+                };
+                // A higher priority sprite already has an opaque pixel here
+                if pixels[lcd_x].is_some() {
+                    continue;
+                }
+                let x = if sprite.is_x_flip() {
+                    7 - tile_x
+                } else {
+                    tile_x
+                };
+                // Color index 0 is transparent for sprites
+                let color = tile_pixel(row, x);
+                if color != 0 {
+                    pixels[lcd_x] = Some((palette[color as usize], sprite.bg_has_priority()));
+                }
+            }
+        }
+        pixels
+    }
+
+    fn sprite_palette(&self, sprite: &Sprite) -> &Palette {
+        if sprite.obp1_palette() {
+            &self.obp1
+        } else {
+            &self.obp0
+        }
     }
 
     fn get_sprite_color(&self, sprite: &Sprite, tile_x: u8, tile_y: u8) -> Option<Color> {
-        let (lo_byte, hi_byte) = if self.obj_size {
-            // upper tile
-            let tile_idx_1 = sprite.tile_index & 0xFE;
-            // lower tile
-            let tile_idx_2 = sprite.tile_index | 0x01;
-
-            if tile_y < 8 {
-                self.get_block0_tile_data(tile_idx_1, tile_y)
-            } else {
-                self.get_block0_tile_data(tile_idx_2, tile_y - 8)
-            }
-        } else {
-            self.get_block0_tile_data(sprite.tile_index, tile_y)
-        };
-
-        let mut color_byte = 0u8;
-        let color_bits = color_byte.view_bits_mut::<Lsb0>();
-        // Use Msb0 order here as pixel 0 is the leftmost bit (bit 7).
-        color_bits.set(1, lo_byte.view_bits::<Msb0>()[tile_x as usize]);
-        color_bits.set(0, hi_byte.view_bits::<Msb0>()[tile_x as usize]);
-
         // Color index 0 is transparent for sprites
-        if color_byte == 0 {
-            None
-        } else if sprite.obp1_palette() {
-            Some(self.obp1[color_byte as usize])
-        } else {
-            Some(self.obp0[color_byte as usize])
+        match tile_pixel(self.sprite_tile_row(sprite, tile_y), tile_x) {
+            0 => None,
+            color => Some(self.sprite_palette(sprite)[color as usize]),
         }
     }
 
@@ -691,11 +676,15 @@ impl Gfx {
     /// enable bit is turned on.
     #[inline(always)]
     fn stat_line(&self) -> bool {
-        (self.stat_oam_itr_source && self.stat_oam_active)
-            || (self.stat_lyc_eq_ly_itr_source && self.stat_lyc_eq_ly_active)
-            || (self.stat_hblank_itr_source && self.stat_hblank_active)
-            || (self.stat_vblank_itr_source && self.stat_vblank_active)
+        self.stat_sources & self.stat_conditions != 0
     }
+}
+
+/// Colour index (0-3) of pixel `x` (0 being the leftmost) of a tile row, given as its two
+/// bitplanes (low, high).
+fn tile_pixel((lo, hi): (u8, u8), x: u8) -> u8 {
+    let bit = 7 - x;
+    (((hi >> bit) & 1) << 1) | ((lo >> bit) & 1)
 }
 
 fn get_palette_as_byte(palette: &[Color; 4]) -> u8 {
@@ -773,14 +762,19 @@ enum Mode {
     Mode3 = 3,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LineDrawingState {
-    Idle,
-    OamScan,
-    Drawing,
-    FramePushed,
+impl Mode {
+    /// The STAT interrupt condition that holds while in this mode, as a `STAT_*` bit.
+    fn stat_condition(self) -> u8 {
+        match self {
+            Mode::Mode0 => STAT_HBLANK,
+            Mode::Mode1 => STAT_VBLANK,
+            Mode::Mode2 => STAT_OAM,
+            Mode::Mode3 => 0,
+        }
+    }
 }
 
+#[derive(Clone, Copy, Default)]
 struct Sprite {
     x: u8,
     y: u8,
@@ -809,30 +803,6 @@ impl Sprite {
         };
 
         (effective_y >= top_y) && (effective_y <= bottom_y)
-    }
-
-    /// Convert the given coordinates (in LCD space) into tile-space coordinates.
-    pub fn get_tile_coordinates(&self, x: u8, y: u8, double_size: bool) -> Option<(u8, u8)> {
-        let y_size = if double_size { 16 } else { 8 };
-        let effective_x = x + 8;
-        let effective_y = y + 16;
-        let left_x = self.x;
-        let right_x = self.x + 7;
-        if (effective_x >= left_x) && (effective_x <= right_x) {
-            let mut tile_x = effective_x - self.x;
-            let mut tile_y = effective_y - self.y;
-
-            if self.is_x_flip() {
-                tile_x = 7 - tile_x;
-            }
-            if self.is_y_flip() {
-                tile_y = y_size - 1 - tile_y;
-            }
-
-            Some((tile_x, tile_y))
-        } else {
-            None
-        }
     }
 
     pub fn obp1_palette(&self) -> bool {

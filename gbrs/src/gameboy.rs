@@ -36,8 +36,12 @@ impl GameBoy {
 
     pub fn step(&mut self, frame_sink: &mut dyn FrameSink, audio_sink: &mut dyn AudioSink) -> u64 {
         let cycles = self.cpu.step(&mut self.bus);
-        for _ in 0..cycles {
-            self.bus.cycle(1, frame_sink, audio_sink);
+        debug_assert!(
+            cycles.is_multiple_of(4),
+            "{cycles} cycles is not a whole number of M-cycles"
+        );
+        for _ in 0..cycles / 4 {
+            self.bus.cycle(4, frame_sink, audio_sink);
             self.cpu.handle_interrupt(&mut self.bus);
         }
 
