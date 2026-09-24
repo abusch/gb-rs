@@ -1459,7 +1459,7 @@ impl Cpu {
     /// Test bit n of register r
     fn bit_n_hl(&mut self, n: u8, bus: &mut Bus) -> u8 {
         self.bit_n_value(n, bus.read_byte(*self.regs.hl));
-        16
+        12
     }
 
     fn bit_n_value(&mut self, n: u8, value: u8) -> u8 {
@@ -1739,7 +1739,7 @@ impl Cpu {
     fn add_d8(&mut self, bus: &mut Bus) -> u8 {
         let d8 = self.fetch(bus);
         self.add(d8);
-        4
+        8
     }
 
     fn add(&mut self, value: u8) -> u8 {
@@ -1775,7 +1775,7 @@ impl Cpu {
     fn adc_d8(&mut self, bus: &mut Bus) -> u8 {
         let d8 = self.fetch(bus);
         self.adc(d8, true);
-        4
+        8
     }
 
     fn adc(&mut self, value: u8, with_carry: bool) -> u8 {
@@ -1791,7 +1791,7 @@ impl Cpu {
         self.regs
             .flag_h()
             .set_value((reg_a & 0x0f) + (value & 0x0f) + c > 0x0f);
-        8
+        4
     }
 
     /// SBC (HL)
@@ -1810,7 +1810,7 @@ impl Cpu {
     fn sbc_d8(&mut self, bus: &mut Bus) -> u8 {
         let d8 = self.fetch(bus);
         self.sbc(d8, true);
-        4
+        8
     }
 
     /// SUB (HL)
@@ -1850,7 +1850,7 @@ impl Cpu {
         self.regs
             .flag_h()
             .set_value((reg_a & 0x0f) < (value & 0x0f) + c);
-        8
+        4
     }
 
     fn cp_hl(&mut self, bus: &mut Bus) -> u8 {
@@ -1892,7 +1892,7 @@ impl Cpu {
         self.regs.set(Reg::A, !self.regs.get(Reg::A));
         self.regs.flag_n().set();
         self.regs.flag_h().set();
-        8
+        4
     }
 
     fn swap_hl(&mut self, bus: &mut Bus) -> u8 {
@@ -2064,6 +2064,28 @@ impl Cpu {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::Cartridge;
+
+    /// Number of cycles taken by the first instruction of `program`.
+    fn cycles(program: &[u8]) -> u8 {
+        let mut rom = vec![0; 0x8000];
+        rom[..program.len()].copy_from_slice(program);
+        let cartridge = Cartridge::load_bytes(rom).unwrap();
+        let mut bus = Bus::new(8 * 1024, cartridge, 48_000, None);
+        Cpu::default().step(&mut bus)
+    }
+
+    #[test]
+    fn instruction_timings() {
+        assert_eq!(cycles(&[0x80]), 4, "ADD A,B");
+        assert_eq!(cycles(&[0x88]), 4, "ADC A,B");
+        assert_eq!(cycles(&[0x98]), 4, "SBC A,B");
+        assert_eq!(cycles(&[0xC6, 0x01]), 8, "ADD A,d8");
+        assert_eq!(cycles(&[0xCE, 0x01]), 8, "ADC A,d8");
+        assert_eq!(cycles(&[0xDE, 0x01]), 8, "SBC A,d8");
+        assert_eq!(cycles(&[0x2F]), 4, "CPL");
+        assert_eq!(cycles(&[0xCB, 0x46]), 12, "BIT 0,(HL)");
+    }
 
     #[test]
     fn test_rl() {
