@@ -118,9 +118,10 @@ impl Core for GbrsCore {
         self.boot_rom = runtime
             .environment()
             .system_directory()
-            .and_then(|dir| BootRom::load_file(Path::new(&dir).join(BOOT_ROM_FILE)).ok());
+            .and_then(|dir| std::fs::read(Path::new(&dir).join(BOOT_ROM_FILE)).ok())
+            .and_then(|content| BootRom::load_bytes(content).ok());
         // No save file: the frontend loads/saves `.srm` through `memory_region(SaveRam)`.
-        match Cartridge::load_bytes(data.to_vec(), None) {
+        match Cartridge::load_bytes(data.to_vec()) {
             Ok(cartridge) => {
                 self.power_on(cartridge);
                 true

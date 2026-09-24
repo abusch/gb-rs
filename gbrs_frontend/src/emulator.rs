@@ -1,7 +1,7 @@
 use std::{
-    fs::File,
-    io::BufWriter,
-    path::Path,
+    fs::{self, File},
+    io::{BufReader, BufWriter, Read},
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicU32, AtomicU64, Ordering},
@@ -9,8 +9,8 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::Result;
-use log::info;
+use anyhow::{Context, Result};
+use log::{info, warn};
 
 use gbrs::{
     AudioSink, BootRom, FrameSink, Rgb555, SCREEN_HEIGHT, SCREEN_WIDTH, cartridge::Cartridge,
@@ -36,6 +36,55 @@ const NS_PER_SEC: u64 = 1_000_000_000;
 fn cycles_to_ns(cycles: u64) -> u64 {
     (cycles as u128 * NS_PER_SEC as u128 / CPU_HZ as u128) as u64
 }
+
+/// Read a ROM image from `path`, which is either a raw ROM or a ZIP archive containing one.
+fn read_rom(path: &Path) -> Result<Vec<u8>> {
+    let mut file = BufReader::new(File::open(path).context("Failed to open rom file")?);
+    let mut content = Vec::new();
+    if path.extension().is_some_and(|ext| ext == "zip") {
+        let mut zip = zip::ZipArchive::new(file).context("Failed to open zip archive")?;
+        let file_name = zip
+            .file_names()
+            .find(|&name| name.ends_with(".gb"))
+            .context("No ROM found in ZIP file")?
+            .to_owned();
+        let mut rom = zip
+            .by_name(&file_name)
+            .context("Failed to read ROM from ZIP file")?;
+        rom.read_to_end(&mut content)
+            .context("Failed to read rom file")?;
+    } else {
+        file.read_to_end(&mut content)
+            .context("Failed to read rom file")?;
+    };
+    info!("Loaded {} bytes from rom file", content.len());
+    Ok(content)
+}
+
+/// Restore the cartridge's battery-backed RAM from `save_file`, if both exist.
+fn load_save_ram(gb: &mut GameBoy, save_file: &Path) -> Result<()> {
+    let Some(ram) = gb.save_ram_mut() else {
+        return Ok(());
+    };
+    if !save_file.exists() {
+        info!("No RAM file found.");
+        return Ok(());
+    }
+    let content = fs::read(save_file).context("Failed to load RAM file")?;
+    if content.len() != ram.len() {
+        warn!(
+            "RAM file {} has size {}, expected {}. Ignoring...",
+            save_file.display(),
+            content.len(),
+            ram.len()
+        );
+    } else {
+        info!("Loading RAM file {}...", save_file.display());
+        ram.copy_from_slice(&content);
+    }
+    Ok(())
+}
+
 pub type ProducerF32 = Caching<Arc<SharedRb<Heap<f32>>>, true, false>;
 
 const STATS_LOG_INTERVAL: Duration = Duration::from_secs(1);
@@ -51,6 +100,8 @@ pub struct AudioStats {
 /// with actual input/outputs.
 pub struct Emulator {
     gb: GameBoy,
+    /// Where the cartridge's battery-backed RAM is persisted.
+    save_file: PathBuf,
     start_time_ns: Instant,
     emulated_cycles: u64,
     debugger: Debugger,
@@ -70,7 +121,9 @@ impl Emulator {
         enable_soft_break: bool,
         sample_rate: u32,
     ) -> Result<Self> {
-        let cartridge = Cartridge::load_file(rom)?;
+        let rom = rom.as_ref();
+        let cartridge =
+            Cartridge::load_bytes(read_rom(rom)?).context("Failed to load cartridge from bytes")?;
         info!("Title is {}", cartridge.title());
         info!("Licensee code is {}", cartridge.licensee_code());
         info!("Cartridge type is {}", cartridge.cartridge_type());
@@ -78,17 +131,20 @@ impl Emulator {
         info!("RAM size is ${:02x}", cartridge.get_ram_size());
         info!("CGB flag: {}", cartridge.cgb_flag());
         info!("SGB flag: {}", cartridge.sgb_flag());
-        let gb = GameBoy::new(
+        let mut gb = GameBoy::new(
             cartridge,
             boot_rom,
             breakpoint,
             enable_soft_break,
             sample_rate,
         );
+        let save_file = rom.with_extension("sav");
+        load_save_ram(&mut gb, &save_file)?;
 
         let now = Instant::now();
         Ok(Self {
             gb,
+            save_file,
             start_time_ns: now,
             emulated_cycles: 0,
             debugger: Debugger::new()?,
@@ -148,7 +204,15 @@ impl Emulator {
     }
 
     pub fn finish(&mut self) {
-        self.gb.save();
+        if let Some(ram) = self.gb.save_ram()
+            && let Err(e) = fs::write(&self.save_file, ram)
+        {
+            warn!(
+                "Failed to save RAM file {}: {}",
+                self.save_file.display(),
+                e
+            );
+        }
     }
 
     /// Re-anchor the wall-clock so `update()` doesn't try to "catch up" after a pause

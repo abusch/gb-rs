@@ -1,12 +1,5 @@
-use std::{
-    fs::File,
-    io::{BufReader, Read},
-    path::{Path, PathBuf},
-};
-
-use anyhow::{Context, Result};
-use log::{debug, info, trace, warn};
-use zip::ZipArchive;
+use anyhow::Result;
+use log::{debug, trace, warn};
 
 pub struct Cartridge {
     data: Box<[u8]>,
@@ -14,78 +7,26 @@ pub struct Cartridge {
     selected_rom_bank: u8,
     secondary_bank_register: u8,
     banking_mode_1: bool,
-    save_file: Option<PathBuf>,
 }
 
 impl Cartridge {
-    pub fn load_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let mut file =
-            BufReader::new(File::open(path.as_ref()).context("Failed to open rom file")?);
-        let mut content = Vec::new();
-        if path.as_ref().extension().is_some_and(|ext| ext == "zip") {
-            let mut zip = ZipArchive::new(file).context("Failed to open zip archive")?;
-            let file_name = zip
-                .file_names()
-                .find(|&name| name.ends_with(".gb"))
-                .context("No ROM found in ZIP file")?
-                .to_owned();
-            let mut rom = zip
-                .by_name(&file_name)
-                .context("Failed to read ROM from ZIP file")?;
-            rom.read_to_end(&mut content)
-                .context("Failed to read rom file")?;
-        } else {
-            file.read_to_end(&mut content)
-                .context("Failed to read rom file")?;
-        };
-        info!("Loaded {} bytes from rom file", content.len());
-
-        let mut save_file_path = PathBuf::from(path.as_ref());
-        save_file_path.set_extension("sav");
-
-        Self::load_bytes(content, Some(save_file_path))
-            .context("Failed to load cartridge from bytes")
-    }
-
-    pub fn load_bytes(content: Vec<u8>, save_file: Option<PathBuf>) -> Result<Self> {
+    /// Create a cartridge from a raw ROM image, with its external RAM zeroed. Battery-backed RAM
+    /// can be restored afterwards through [`Cartridge::save_ram_mut`].
+    pub fn load_bytes(content: Vec<u8>) -> Result<Self> {
         // The header ends at 0x014F; everything below indexes into it unconditionally.
         anyhow::ensure!(
             content.len() >= 0x150,
             "ROM is too small ({} bytes) to contain a cartridge header",
             content.len()
         );
-        let mut cart = Self {
+        Ok(Self {
             data: content.into_boxed_slice(),
             // Allocate the most RAM a cart can have
             ram: vec![0; 64 * 1024].into_boxed_slice(),
             selected_rom_bank: 0x01,
             secondary_bank_register: 0x00,
             banking_mode_1: false,
-            save_file,
-        };
-
-        if let Some(save_file) = &cart.save_file
-            && let Some(expected_size) = cart.get_num_ram_banks().map(|s| s as usize * 8192)
-        {
-            if save_file.exists() {
-                let ram = std::fs::read(save_file).context("Failed to load RAM file")?;
-                if ram.len() != expected_size {
-                    warn!(
-                        "RAM file {} has size {}, expected {}. Ignoring...",
-                        save_file.display(),
-                        ram.len(),
-                        expected_size
-                    );
-                } else {
-                    info!("Loading RAM file {}...", save_file.display());
-                    cart.ram[..expected_size].copy_from_slice(&ram[..]);
-                }
-            } else {
-                info!("No RAM file found.");
-            }
-        }
-
-        Ok(cart)
+        })
     }
 
     pub fn cgb_flag(&self) -> bool {
@@ -258,15 +199,6 @@ impl Cartridge {
         self.ram[addr as usize] = b;
     }
 
-    pub fn save(&self) {
-        if let Some(save_file) = &self.save_file
-            && let Some(ram_size) = self.get_num_ram_banks().map(|s| s as usize * 8192)
-            && let Err(e) = std::fs::write(save_file, &self.ram[..ram_size])
-        {
-            warn!("Failed to save RAM file {}: {}", save_file.display(), e);
-        }
-    }
-
     /// Reset the memory bank controller to its power-on state, leaving RAM untouched.
     pub fn reset_mapper(&mut self) {
         self.selected_rom_bank = 0x01;
@@ -276,6 +208,12 @@ impl Cartridge {
 
     /// The battery-backed external RAM, sized to what the cartridge header declares, or `None`
     /// if the cartridge has no RAM.
+    pub fn save_ram(&self) -> Option<&[u8]> {
+        let ram_size = self.get_num_ram_banks()? as usize * 8192;
+        Some(&self.ram[..ram_size])
+    }
+
+    /// Mutable version of [`Cartridge::save_ram`].
     pub fn save_ram_mut(&mut self) -> Option<&mut [u8]> {
         let ram_size = self.get_num_ram_banks()? as usize * 8192;
         Some(&mut self.ram[..ram_size])

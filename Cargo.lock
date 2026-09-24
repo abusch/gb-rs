@@ -928,7 +928,6 @@ dependencies = [
  "bitvec",
  "byteorder",
  "log",
- "zip",
 ]
 
 [[package]]

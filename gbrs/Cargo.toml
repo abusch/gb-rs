@@ -10,4 +10,3 @@ bitflags.workspace = true
 bitvec.workspace = true
 byteorder.workspace = true
 log.workspace = true
-zip.workspace = true

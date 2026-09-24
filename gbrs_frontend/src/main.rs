@@ -70,7 +70,13 @@ fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
-    let boot_rom = cli.boot_rom.map(BootRom::load_file).transpose()?;
+    let boot_rom = cli
+        .boot_rom
+        .map(|path| {
+            let content = std::fs::read(&path).context("Failed to read boot rom file")?;
+            BootRom::load_bytes(content)
+        })
+        .transpose()?;
 
     // Pick the output device and its preferred config so the APU can decimate directly to
     // the device sample rate. For `--quiet`, fall back to a sensible constant since no

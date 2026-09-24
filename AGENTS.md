@@ -41,7 +41,7 @@ The binary provides concrete implementations: `MostRecentFrameSink` (just keeps 
 
 Boot-ROM handling: if a `BootRom` was given, addresses `0x0000..=0x00FF` return its bytes until a non-zero write to `0xFF50` drops it (`boot_rom = None`). After that, cart ROM is visible in that range. Without a boot ROM, `GameBoy::new` calls the `skip_boot` methods (`Cpu`, `Bus`, and through it `Gfx`/`Apu`/`Timer`) to reproduce the state the boot ROM leaves behind (registers, IO, logo in VRAM; see Pan Docs "Power Up Sequence"). If you change what a peripheral's power-on state looks like, check that `skip_boot` still matches.
 
-Cart saves: `Cartridge::load` looks for a `.sav` sibling of the ROM and loads it into external RAM if present; `GameBoy::save()` (called on exit via `Emulator::finish()`) writes it back. If you add new MBC support, wire the save/load paths through the same mechanism.
+ROMs and cart saves: the core does no file I/O. `Cartridge::load_bytes` and `BootRom::load_bytes` take raw bytes, and frontends read the files, including unpacking `.zip` ROMs (`read_rom` in `gbrs_frontend/src/emulator.rs`). Battery-backed RAM is exposed as `GameBoy::save_ram`/`save_ram_mut`. The desktop frontend restores it from a `.sav` sibling of the ROM in `Emulator::new` and writes it back in `Emulator::finish()`. The libretro core hands it to RetroArch as `SaveRam`. If you add new MBC support, make its RAM available through `save_ram`.
 
 ### CPU
 

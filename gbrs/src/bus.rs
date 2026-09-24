@@ -1,6 +1,6 @@
-use std::{fs, ops::RangeInclusive, path::Path};
+use std::ops::RangeInclusive;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use log::{info, trace};
 
 use crate::{
@@ -16,11 +16,6 @@ pub const BOOT_ROM_SIZE: usize = 0x100;
 pub struct BootRom(Box<[u8; BOOT_ROM_SIZE]>);
 
 impl BootRom {
-    pub fn load_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let content = fs::read(path.as_ref()).context("Failed to read boot rom file")?;
-        Self::load_bytes(content)
-    }
-
     pub fn load_bytes(content: Vec<u8>) -> Result<Self> {
         let len = content.len();
         let data = content.into_boxed_slice().try_into().map_err(|_| {

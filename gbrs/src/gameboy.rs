@@ -109,10 +109,6 @@ impl GameBoy {
         self.bus.set_button_pressed(button, is_pressed);
     }
 
-    pub fn save(&self) {
-        self.bus.cartridge.save();
-    }
-
     /// Power off the Game Boy and pull out its cartridge, as it would be on a fresh power-on.
     /// External RAM keeps both its contents and its heap allocation.
     pub fn eject(self) -> Cartridge {
@@ -124,6 +120,10 @@ impl GameBoy {
     /// Set the colours used for the 4 DMG shades, from lightest to darkest.
     pub fn set_dmg_palette(&mut self, palette: [Rgb555; 4]) {
         self.bus.gfx.set_dmg_palette(palette);
+    }
+
+    pub fn save_ram(&self) -> Option<&[u8]> {
+        self.bus.cartridge.save_ram()
     }
 
     pub fn save_ram_mut(&mut self) -> Option<&mut [u8]> {
@@ -162,7 +162,7 @@ mod tests {
         rom[0x014D] = rom[0x0134..0x014D]
             .iter()
             .fold(0u8, |x, b| x.wrapping_sub(*b).wrapping_sub(1));
-        Cartridge::load_bytes(rom, None).unwrap()
+        Cartridge::load_bytes(rom).unwrap()
     }
 
     /// The state reached by skipping the boot ROM should match the one after actually running
