@@ -94,6 +94,7 @@ impl WaveChannel {
 
     pub(crate) fn set_nr33(&mut self, b: u8) {
         self.freq.view_bits_mut::<Lsb0>()[0..=7].store(b);
+        self.update_period();
     }
 
     pub(crate) fn nr34(&self) -> u8 {
@@ -107,6 +108,7 @@ impl WaveChannel {
     pub(crate) fn set_nr34(&mut self, b: u8) {
         let bits = b.view_bits::<Lsb0>();
         self.freq.view_bits_mut::<Lsb0>()[8..=10].store::<u8>(bits[0..=2].load::<u8>());
+        self.update_period();
 
         if bits[6] {
             self.length_counter.enable();
@@ -120,9 +122,15 @@ impl WaveChannel {
                 self.enabled = true;
             }
             self.position = 0;
-            self.freq_timer.period = (2048 - self.freq) * 2;
+            self.freq_timer.reset();
             self.length_counter.trigger();
         }
+    }
+
+    /// Set the frequency timer's period from NR33/NR34. Like on hardware, it only takes effect
+    /// the next time the timer reloads.
+    fn update_period(&mut self) {
+        self.freq_timer.period = (2048 - self.freq) * 2;
     }
 
     pub(crate) fn read_wav(&self, idx: usize) -> u8 {
@@ -191,5 +199,25 @@ impl OutputLevel {
             OutputLevel::Half => value >> 1,
             OutputLevel::Quarter => value >> 2,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frequency_change_applies_without_trigger() {
+        let mut channel = WaveChannel::new();
+        channel.set_nr30(0x80); // DAC on
+        channel.set_nr33(0x00);
+        channel.set_nr34(0x87); // trigger with frequency 0x700
+        assert_eq!(channel.freq_timer.period, (2048 - 0x700) * 2);
+
+        channel.set_nr33(0x80);
+        assert_eq!(channel.freq_timer.period, (2048 - 0x780) * 2);
+        channel.set_nr34(0x06);
+        assert_eq!(channel.freq_timer.period, (2048 - 0x680) * 2);
+        assert!(channel.enabled());
     }
 }

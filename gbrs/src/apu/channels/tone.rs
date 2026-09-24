@@ -61,7 +61,7 @@ impl<const N: u8> ToneChannel<N> {
                     // The new frequency is written back to NRx3/NRx4
                     self.freq_lo = f as u8;
                     self.freq_hi = (f >> 8) as u8;
-                    self.freq_timer.period = (2048 - f) * 4;
+                    self.update_period();
                 }
                 FrequencySweepResult::Disable => self.enabled = false,
                 FrequencySweepResult::Nop => (),
@@ -162,6 +162,7 @@ impl<const N: u8> ToneChannel<N> {
     pub(crate) fn set_nrx3(&mut self, b: u8) {
         trace!("setting NRx3 to {:08b}", b);
         self.freq_lo = b;
+        self.update_period();
     }
 
     pub(crate) fn nrx4(&self) -> u8 {
@@ -187,18 +188,14 @@ impl<const N: u8> ToneChannel<N> {
             self.length_counter.disable();
         }
         self.freq_hi = bits[0..=2].load::<u8>();
+        self.update_period();
 
         if bits[7] {
             debug!("Channel {N}: Tone channel triggered");
             // Trigger
             self.enabled = true;
             self.length_counter.trigger();
-            let freq = ((self.freq_hi as u16) << 8) + self.freq_lo as u16;
-            // if freq == 0 {
-            //     // should we do this?
-            //     self.enabled = false;
-            // }
-            self.freq_timer.period = (2048 - freq) * 4;
+            let freq = self.frequency();
             self.freq_timer.reset();
             // Reset volume envelope
             self.volume_envelope.trigger();
@@ -213,6 +210,17 @@ impl<const N: u8> ToneChannel<N> {
             //     self.enabled = false;
             // }
         }
+    }
+
+    /// The 11-bit frequency from NRx3/NRx4.
+    fn frequency(&self) -> u16 {
+        ((self.freq_hi as u16) << 8) | self.freq_lo as u16
+    }
+
+    /// Set the frequency timer's period from NRx3/NRx4. Like on hardware, it only takes effect
+    /// the next time the timer reloads, so changing the frequency doesn't restart the waveform.
+    fn update_period(&mut self) {
+        self.freq_timer.period = (2048 - self.frequency()) * 4;
     }
 
     /// Drop the current volume to 0, as if the envelope had fully decayed.
@@ -439,6 +447,21 @@ mod tests {
         sweep.load(period, negate, shift);
         assert!(!sweep.trigger(freq), "overflow on trigger");
         sweep
+    }
+
+    #[test]
+    fn frequency_change_applies_without_trigger() {
+        let mut channel = ToneChannel::<2>::new(false);
+        channel.set_nrx2(0xF0); // DAC on
+        channel.set_nrx3(0x00);
+        channel.set_nrx4(0x87); // trigger with frequency 0x700
+        assert_eq!(channel.freq_timer.period, (2048 - 0x700) * 4);
+
+        channel.set_nrx3(0x80);
+        assert_eq!(channel.freq_timer.period, (2048 - 0x780) * 4);
+        channel.set_nrx4(0x06);
+        assert_eq!(channel.freq_timer.period, (2048 - 0x680) * 4);
+        assert!(channel.enabled());
     }
 
     #[test]
