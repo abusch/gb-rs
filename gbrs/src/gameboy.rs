@@ -1,5 +1,5 @@
 use crate::bus::{BootRom, Bus};
-use crate::cartridge::Cartridge;
+use crate::cartridge::{Cartridge, RTC_SAVE_SIZE};
 use crate::cpu::Cpu;
 use crate::disasm::Disassembler;
 use crate::joypad::Button;
@@ -132,6 +132,20 @@ impl GameBoy {
 
     pub fn save_ram_mut(&mut self) -> Option<&mut [u8]> {
         self.bus.cartridge.save_ram_mut()
+    }
+
+    pub fn has_rtc(&self) -> bool {
+        self.bus.cartridge.has_rtc()
+    }
+
+    /// See [`Cartridge::save_rtc`].
+    pub fn save_rtc(&self, unix_time: u64) -> Option<[u8; RTC_SAVE_SIZE]> {
+        self.bus.cartridge.save_rtc(unix_time)
+    }
+
+    /// See [`Cartridge::load_rtc`].
+    pub fn load_rtc(&mut self, data: &[u8], unix_time: u64) -> anyhow::Result<()> {
+        self.bus.cartridge.load_rtc(data, unix_time)
     }
 
     pub fn poke(&mut self, addr: u16, value: u8) {

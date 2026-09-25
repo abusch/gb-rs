@@ -44,6 +44,12 @@ Boot-ROM handling: if a `BootRom` was given, addresses `0x0000..=0x00FF` return 
 
 ROMs and cart saves: the core does no file I/O. `Cartridge::load_bytes` and `BootRom::load_bytes` take raw bytes, and frontends read the files, including unpacking `.zip` ROMs (`read_rom` in `gbrs_frontend/src/emulator.rs`). Battery-backed RAM is exposed as `GameBoy::save_ram`/`save_ram_mut`. The desktop frontend restores it from a `.sav` sibling of the ROM in `Emulator::new` and writes it back in `Emulator::finish()`. The libretro core hands it to RetroArch as `SaveRam`. If you add new MBC support, make its RAM available through `save_ram`.
 
+### Cartridge & MBCs (`src/cartridge/`)
+
+`Cartridge` holds the ROM, a 64KiB RAM buffer, and an `Mbc` enum with one variant per memory bank controller, each in its own file (`mbc1.rs`, `mbc3.rs`). `Cartridge` dispatches `read_rom`/`write_rom` (the bus sends every write to 0000-7FFF there, as that's where the MBC registers live) and `read_ram`/`write_ram` to it. Only MBC1 and MBC3 are implemented; every other cartridge type falls back to `Mbc1`, which is what the emulator did before MBCs were split out, so adding an MBC means adding a variant and a `load_bytes` match arm. Keep the MBC1 fallback's quirks (e.g. `bank_0_selects_1`) until the types relying on it get their own mapper.
+
+The MBC3 real-time clock (`rtc.rs`) runs on emulated time: `Bus::cycle` calls `Cartridge::step`, and the seconds counter ticks every 4194304 cycles. Its edge cases (out-of-range values wrap without carrying, writing seconds resets the sub-second counter, halting freezes it) are checked by `test_roms/rtc3test`. Time passed while switched off is applied when loading a save: `GameBoy::save_rtc`/`load_rtc` use BGB/VBA-M's 48-byte format stamped with a Unix time from the frontend, and the desktop frontend appends it to the `.sav` file after the RAM. The libretro core doesn't persist the RTC yet.
+
 ### CPU
 
 `src/cpu/mod.rs` — SM83 interpreter. Key state: `regs` (see `cpu/register.rs` for the `Reg`/`RegPair` abstraction), `sp`, `pc`, `halted`, `ime` (Interrupt Master Enable), plus three debug-only fields (`breakpoint`, `paused`, `enable_soft_break`) and a `halt_bug` flag for emulating the HALT bug. Interrupt vectors live at the top of the file as `ITR_VBLANK`/`ITR_STAT`/`ITR_TIMER`/`ITR_SERIAL`/`ITR_JOYP`. Interrupt delivery happens in `handle_interrupt`, called after every M-cycle batch from `GameBoy::step`.

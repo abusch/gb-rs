@@ -61,26 +61,45 @@ fn read_rom(path: &Path) -> Result<Vec<u8>> {
     Ok(content)
 }
 
-/// Restore the cartridge's battery-backed RAM from `save_file`, if both exist.
-fn load_save_ram(gb: &mut GameBoy, save_file: &Path) -> Result<()> {
-    let Some(ram) = gb.save_ram_mut() else {
+/// Current time in seconds since the Unix epoch, which the RTC's save data is stamped with.
+fn unix_time() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// Restore the cartridge's battery-backed RAM, and RTC if it has one, from `save_file`.
+///
+/// Like BGB and VBA-M, the RTC state is stored after the RAM, so their save files can be used.
+fn load_save_file(gb: &mut GameBoy, save_file: &Path) -> Result<()> {
+    let ram_len = gb.save_ram().map_or(0, <[u8]>::len);
+    if ram_len == 0 && !gb.has_rtc() {
         return Ok(());
-    };
+    }
     if !save_file.exists() {
         info!("No RAM file found.");
         return Ok(());
     }
     let content = fs::read(save_file).context("Failed to load RAM file")?;
-    if content.len() != ram.len() {
+    let (ram, rtc) = content.split_at(ram_len.min(content.len()));
+    if ram.len() != ram_len || (!rtc.is_empty() && !gb.has_rtc()) {
         warn!(
             "RAM file {} has size {}, expected {}. Ignoring...",
             save_file.display(),
             content.len(),
-            ram.len()
+            ram_len
         );
-    } else {
-        info!("Loading RAM file {}...", save_file.display());
-        ram.copy_from_slice(&content);
+        return Ok(());
+    }
+    info!("Loading RAM file {}...", save_file.display());
+    if let Some(save_ram) = gb.save_ram_mut() {
+        save_ram.copy_from_slice(ram);
+    }
+    // Save files from emulators without RTC support just leave the clock at 0.
+    if !rtc.is_empty()
+        && let Err(e) = gb.load_rtc(rtc, unix_time())
+    {
+        warn!("Ignoring RTC state in {}: {e}", save_file.display());
     }
     Ok(())
 }
@@ -139,7 +158,7 @@ impl Emulator {
             sample_rate,
         );
         let save_file = rom.with_extension("sav");
-        load_save_ram(&mut gb, &save_file)?;
+        load_save_file(&mut gb, &save_file)?;
 
         let now = Instant::now();
         Ok(Self {
@@ -204,8 +223,12 @@ impl Emulator {
     }
 
     pub fn finish(&mut self) {
-        if let Some(ram) = self.gb.save_ram()
-            && let Err(e) = fs::write(&self.save_file, ram)
+        let mut content = self.gb.save_ram().unwrap_or_default().to_vec();
+        if let Some(rtc) = self.gb.save_rtc(unix_time()) {
+            content.extend_from_slice(&rtc);
+        }
+        if !content.is_empty()
+            && let Err(e) = fs::write(&self.save_file, content)
         {
             warn!(
                 "Failed to save RAM file {}: {}",

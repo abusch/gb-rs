@@ -133,6 +133,7 @@ impl Bus {
     ) {
         self.interrupt_flag |= self.gfx.dots(cycles, frame_sink);
         self.apu.step(cycles, audio_sink);
+        self.cartridge.step(cycles);
         if self.timer.cycle(cycles) {
             self.interrupt_flag |= InterruptFlag::TIMER;
         }
@@ -190,28 +191,8 @@ impl Bus {
     pub fn write_byte(&mut self, addr: u16, b: u8) {
         if BOOT_ROM.contains(&addr) && self.boot_rom.is_some() {
             panic!("Tried to write into boot ROM during the boot sequence!");
-        } else if CART_BANK_00.contains(&addr) {
-            if (0x0000..=0x1FFF).contains(&addr) {
-                if b & 0x0A == 0x0A {
-                    trace!("Enabling external RAM");
-                } else {
-                    trace!("Disabling external RAM");
-                }
-            } else if (0x2000..0x3FFF).contains(&addr) {
-                self.cartridge.select_rom_bank(b);
-                // } else {
-                //     // ROM Bank Number register
-                //     // self.cartridge.select_rom_bank(b);
-                //     debug!("Not implemented: select 9th bit of ROM bank number");
-            }
-        } else if CART_BANK_MAPPED.contains(&addr) {
-            if (0x4000..=0x5FFF).contains(&addr) {
-                trace!("Selecting external RAM bank {:02X}", b);
-                self.cartridge.set_secondary_bank_register(b);
-            } else {
-                // Select banking mode
-                self.cartridge.select_banking_mode(b);
-            }
+        } else if CART_BANK_00.contains(&addr) || CART_BANK_MAPPED.contains(&addr) {
+            self.cartridge.write_rom(addr, b);
         } else if VRAM.contains(&addr) {
             self.gfx.write_vram(addr, b);
         } else if EXT_RAM.contains(&addr) {
