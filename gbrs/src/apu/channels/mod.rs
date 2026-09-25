@@ -4,12 +4,13 @@ mod wave;
 
 use log::debug;
 pub(crate) use noise::NoiseChannel;
+use serde::{Deserialize, Serialize};
 pub(crate) use tone::ToneChannel;
 pub(crate) use wave::WaveChannel;
 
 use super::Timer;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct HighPassFilter {
     capacitor: f32,
 }
@@ -47,7 +48,7 @@ pub fn dac(digital: u8) -> f32 {
     -(((digital << 1) as f32) / 15.0 - 1.0)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct LengthCounter {
     length_enabled: bool,
     length_counter: u16,
@@ -96,7 +97,7 @@ impl LengthCounter {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct VolumeEnvelope<const N: u8> {
     start_volume: u8,
     volume: u8,

@@ -2,6 +2,7 @@ use std::ops::RangeInclusive;
 
 use anyhow::Result;
 use log::{info, trace};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     AudioSink, FrameSink, apu::Apu, cartridge::Cartridge, gfx::Gfx, interrupt::InterruptFlag,
@@ -12,7 +13,9 @@ pub const BOOT_ROM_SIZE: usize = 0x100;
 
 /// Image of the DMG boot ROM, which is mapped over the start of the cartridge until it disables
 /// itself.
-#[derive(Clone)]
+// Serialised as a `Vec`, since serde doesn't support arrays that large.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(try_from = "Vec<u8>", into = "Vec<u8>")]
 pub struct BootRom(Box<[u8; BOOT_ROM_SIZE]>);
 
 impl BootRom {
@@ -22,6 +25,20 @@ impl BootRom {
             anyhow::anyhow!("Boot ROM should be {BOOT_ROM_SIZE} bytes, but got {len} bytes")
         })?;
         Ok(Self(data))
+    }
+}
+
+impl TryFrom<Vec<u8>> for BootRom {
+    type Error = anyhow::Error;
+
+    fn try_from(content: Vec<u8>) -> Result<Self> {
+        Self::load_bytes(content)
+    }
+}
+
+impl From<BootRom> for Vec<u8> {
+    fn from(boot_rom: BootRom) -> Self {
+        boot_rom.0.to_vec()
     }
 }
 
@@ -58,6 +75,7 @@ const IO_RANGE_LCD: RangeInclusive<u16> = 0xFF40..=0xFF4F;
 /// Disable Boot ROM
 const IO_RANGE_DBR: RangeInclusive<u16> = 0xFF50..=0xFF50;
 
+#[derive(Serialize, Deserialize)]
 pub struct Bus {
     ram: Box<[u8]>,
     hram: Box<[u8]>,
@@ -117,6 +135,15 @@ impl Bus {
         self.timer.set_div_counter(0xABCC);
         // The boot ROM waits for VBlank with interrupts disabled, so this stays pending
         self.interrupt_flag = InterruptFlag::VBLANK;
+    }
+
+    /// Carry over what save states leave out from the `Bus` this one replaces. On error, `previous`
+    /// is left untouched.
+    pub(crate) fn restore_unsaved(&mut self, previous: &mut Self) -> Result<()> {
+        self.cartridge.restore_unsaved(&mut previous.cartridge)?;
+        self.gfx.restore_unsaved(&previous.gfx);
+        self.apu.restore_unsaved(&previous.apu);
+        Ok(())
     }
 
     /// The header checksum, which the boot ROM verifies (and leaves traces of in the CPU flags).

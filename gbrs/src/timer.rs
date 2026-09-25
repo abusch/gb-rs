@@ -1,6 +1,8 @@
 use bitvec::{field::BitField, order::Lsb0, view::BitView};
 use log::trace;
+use serde::{Deserialize, Serialize};
 
+#[derive(Serialize, Deserialize)]
 pub struct Timer {
     /// FF04 - DIV - Divider Register
     /// This register is incremented at a rate of 16384Hz (~16779Hz on SGB). In other words, it is
@@ -142,7 +144,7 @@ impl Timer {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 enum ClockSpeed {
     Speed0 = 0,

@@ -5,6 +5,7 @@ use std::{
 
 use bitvec::prelude::*;
 use log::trace;
+use serde::{Deserialize, Serialize};
 
 use crate::{FrameSink, Rgb555, SCREEN_HEIGHT, SCREEN_WIDTH, interrupt::InterruptFlag};
 
@@ -50,7 +51,7 @@ pub const DEFAULT_DMG_PALETTE: [Rgb555; 4] = [
     Rgb555::from_rgb888(0x08, 0x18, 0x20),
 ];
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Gfx {
     vram: Box<[u8]>,
     oam_ram: Box<[u8]>,
@@ -60,6 +61,8 @@ pub struct Gfx {
     /// Each pixel is a 15-bit colour, so the same buffer can hold CGB output later on.
     lcd: Box<[Rgb555]>,
     /// Colours the 4 DMG shades are rendered with.
+    /// A frontend setting, so not part of save states.
+    #[serde(skip)]
     dmg_palette: [Rgb555; 4],
 
     /// Number of clock cycles since we began rendering the current scanline
@@ -614,6 +617,11 @@ impl Gfx {
         self.dmg_palette[color.as_u8() as usize]
     }
 
+    /// Carry over what save states leave out from the `Gfx` this one replaces.
+    pub(crate) fn restore_unsaved(&mut self, previous: &Self) {
+        self.dmg_palette = previous.dmg_palette;
+    }
+
     pub(crate) fn set_dmg_palette(&mut self, palette: [Rgb555; 4]) {
         self.dmg_palette = palette;
     }
@@ -718,7 +726,7 @@ fn set_palette_data(palette: &mut Palette, b: u8) {
     trace!("BG Palette is now {:?}", palette);
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum Color {
     White = 0,
     LightGray = 1,
@@ -749,7 +757,7 @@ impl From<u8> for Color {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 enum Mode {
     /// HSync
@@ -832,7 +840,7 @@ impl Debug for Sprite {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Palette([Color; 4]);
 
 impl Palette {

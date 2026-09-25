@@ -1,4 +1,5 @@
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct FrameSequencer(u8);
 
 impl FrameSequencer {

@@ -4,6 +4,7 @@
 //! sub-second counter follows what rtc3test checks.
 
 use anyhow::{Result, bail};
+use serde::{Deserialize, Serialize};
 
 /// Size of the RTC state appended to save files, in the format used by BGB and VBA-M.
 pub const RTC_SAVE_SIZE: usize = 48;
@@ -28,7 +29,7 @@ const CYCLES_PER_SECOND: u32 = 4_194_304;
 
 const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Rtc {
     /// The counters, in register order.
     live: [u8; 5],

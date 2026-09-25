@@ -1,8 +1,10 @@
 use log::trace;
+use serde::{Deserialize, Serialize};
 
 /// MBC5 mapper: up to 8MiB of ROM and 128KiB of RAM, optionally with a rumble motor.
 ///
 /// See <https://gbdev.io/pandocs/MBC5.html>.
+#[derive(Serialize, Deserialize)]
 pub(super) struct Mbc5 {
     /// Number of 16KiB ROM banks, rounded up to a power of 2 so it can be used as a mask.
     rom_banks: usize,

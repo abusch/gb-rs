@@ -1,10 +1,12 @@
 use log::trace;
+use serde::{Deserialize, Serialize};
 
 use super::rtc::Rtc;
 
 /// MBC3 mapper: up to 2MiB of ROM and 32KiB of RAM, optionally with a real-time clock.
 ///
 /// See <https://gbdev.io/pandocs/MBC3.html>.
+#[derive(Serialize, Deserialize)]
 pub(super) struct Mbc3 {
     /// Number of 16KiB ROM banks, rounded up to a power of 2 so it can be used as a mask.
     rom_banks: usize,

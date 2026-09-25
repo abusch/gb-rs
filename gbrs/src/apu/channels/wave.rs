@@ -1,10 +1,11 @@
 use bitvec::{field::BitField, order::Lsb0, view::BitView};
+use serde::{Deserialize, Serialize};
 
 use crate::apu::{Timer, frame_sequencer::FrameSequencer};
 
 use super::{LengthCounter, dac};
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct WaveChannel {
     // Wave table containing 32 4-bit samples
     wav: [u8; 16],
@@ -182,7 +183,7 @@ impl WaveChannel {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 enum OutputLevel {
     Mute = 0,

@@ -1,4 +1,5 @@
 use log::trace;
+use serde::{Deserialize, Serialize};
 
 /// Size of the MBC2's built-in RAM, in half-bytes (stored one per byte).
 pub(super) const MBC2_RAM_SIZE: usize = 512;
@@ -6,6 +7,7 @@ pub(super) const MBC2_RAM_SIZE: usize = 512;
 /// MBC2 mapper: up to 256KiB of ROM, and 512 half-bytes of RAM built into the chip.
 ///
 /// See <https://gbdev.io/pandocs/MBC2.html>.
+#[derive(Serialize, Deserialize)]
 pub(super) struct Mbc2 {
     /// Number of 16KiB ROM banks, rounded up to a power of 2 so it can be used as a mask.
     rom_banks: usize,

@@ -1,6 +1,7 @@
 use bitvec::{field::BitField, order::Lsb0, view::BitView};
 use channels::HighPassFilter;
 use log::debug;
+use serde::{Deserialize, Serialize};
 
 use crate::AudioSink;
 
@@ -44,7 +45,7 @@ const CPU_CYCLES_PER_SECOND: u32 = 4194304;
 // Period for the main 512Hz timer
 const TIMER_PERIOD: u16 = 8192;
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Apu {
     /// Main on/off switch for the whole APU. Comes from NR52 (bit 7).
     apu_enabled: bool,
@@ -64,6 +65,8 @@ pub struct Apu {
     right_hpf: HighPassFilter,
 
     /// Output sample rate, in Hz.
+    /// A frontend setting, so not part of save states.
+    #[serde(skip)]
     sample_rate: u32,
     /// Accumulates `sample_rate` every cycle: a sample is due each time it reaches
     /// `CPU_CYCLES_PER_SECOND`.
@@ -83,6 +86,11 @@ pub struct Apu {
 }
 
 impl Apu {
+    /// Carry over what save states leave out from the `Apu` this one replaces.
+    pub(crate) fn restore_unsaved(&mut self, previous: &Self) {
+        self.sample_rate = previous.sample_rate;
+    }
+
     pub fn new(sample_rate: u32) -> Self {
         Self {
             apu_enabled: true,
@@ -395,7 +403,7 @@ impl Apu {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Timer {
     period: u16,
     counter: u16,

@@ -1,9 +1,11 @@
 use log::trace;
+use serde::{Deserialize, Serialize};
 
 /// MBC1 mapper: up to 2MiB of ROM and 32KiB of RAM. Also used as a fallback for the cartridge
 /// types that aren't supported yet.
 ///
 /// See <https://gbdev.io/pandocs/MBC1.html>.
+#[derive(Serialize, Deserialize)]
 pub(super) struct Mbc1 {
     /// Number of 16KiB ROM banks, rounded up to a power of 2 so it can be used as a mask.
     rom_banks: usize,

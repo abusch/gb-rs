@@ -1,12 +1,13 @@
 use bitvec::{field::BitField, order::Lsb0, view::BitView};
 use log::debug;
+use serde::{Deserialize, Serialize};
 
 use crate::apu::{Timer, frame_sequencer::FrameSequencer};
 
 use super::{LengthCounter, VolumeEnvelope, dac};
 
 /// Linear Feedback Shift Register
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Lsfr {
     reg: u16,
     width_mode: bool,
@@ -39,7 +40,7 @@ impl Lsfr {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct NoiseChannel {
     dac_enabled: bool,
     enabled: bool,

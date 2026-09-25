@@ -1,6 +1,7 @@
 use bitvec::{order::Lsb0, view::BitView};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Joypad {
     action_selected: bool,
     direction_selected: bool,

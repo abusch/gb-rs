@@ -6,6 +6,7 @@ mod rtc;
 
 use anyhow::Result;
 use log::warn;
+use serde::{Deserialize, Serialize};
 
 use mbc1::Mbc1;
 use mbc2::{MBC2_RAM_SIZE, Mbc2};
@@ -14,6 +15,7 @@ use mbc5::Mbc5;
 pub use rtc::RTC_SAVE_SIZE;
 
 /// The memory bank controller, which maps the cartridge's ROM and RAM into the address space.
+#[derive(Serialize, Deserialize)]
 enum Mbc {
     /// No MBC: 32KiB of ROM mapped as is, and optionally up to 8KiB of RAM.
     None,
@@ -23,7 +25,10 @@ enum Mbc {
     Mbc5(Mbc5),
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct Cartridge {
+    /// The ROM isn't part of save states: it doesn't change, and is already there to load one.
+    #[serde(skip)]
     data: Box<[u8]>,
     ram: Box<[u8]>,
     mbc: Mbc,
@@ -232,6 +237,24 @@ impl Cartridge {
         if let Mbc::Mbc3(Mbc3 { rtc: Some(rtc), .. }) = &mut self.mbc {
             rtc.step(cycles);
         }
+    }
+
+    /// The header and global checksums, which save states record to tell games apart.
+    pub(crate) fn checksums(&self) -> [u8; 3] {
+        [self.data[0x014D], self.data[0x014E], self.data[0x014F]]
+    }
+
+    /// Carry over what save states leave out (the ROM) from the cartridge this one replaces,
+    /// checking that the state is for the same kind of cartridge. On error, `previous` is left
+    /// untouched.
+    pub(crate) fn restore_unsaved(&mut self, previous: &mut Self) -> Result<()> {
+        anyhow::ensure!(
+            std::mem::discriminant(&self.mbc) == std::mem::discriminant(&previous.mbc)
+                && self.ram.len() == previous.ram.len(),
+            "Save state is for a different cartridge"
+        );
+        self.data = std::mem::take(&mut previous.data);
+        Ok(())
     }
 
     /// Reset the memory bank controller to its power-on state, leaving RAM and the RTC untouched.

@@ -6,7 +6,9 @@ edition.workspace = true
 [dependencies]
 ansi_term.workspace = true
 anyhow.workspace = true
-bitflags.workspace = true
+bitflags = { workspace = true, features = ["serde"] }
 bitvec.workspace = true
 byteorder.workspace = true
 log.workspace = true
+postcard.workspace = true
+serde.workspace = true

@@ -2,6 +2,7 @@ mod register;
 
 use bitvec::{order::Lsb0, view::BitView};
 use log::{info, trace, warn};
+use serde::{Deserialize, Serialize};
 
 use self::register::{Reg, RegPair, Registers};
 use crate::{bus::Bus, interrupt::InterruptFlag};
@@ -12,6 +13,7 @@ const ITR_TIMER: u16 = 0x0050;
 const ITR_SERIAL: u16 = 0x0058;
 const ITR_JOYP: u16 = 0x0060;
 
+#[derive(Serialize, Deserialize)]
 pub struct Cpu {
     regs: Registers,
 
@@ -22,10 +24,13 @@ pub struct Cpu {
     /// IME - Interrupt Master Enable Flag
     ime: bool,
 
-    // for debugging
+    // for debugging, so not part of save states
+    #[serde(skip)]
     breakpoint: u16,
+    #[serde(skip)]
     paused: bool,
     // Pause cpu if LD B,B is encountered
+    #[serde(skip)]
     enable_soft_break: bool,
 
     // Flag for the HALT bug
@@ -2048,6 +2053,14 @@ impl Cpu {
 
     pub fn set_pause(&mut self, pause: bool) {
         self.paused = pause;
+    }
+
+    /// Carry over what save states leave out (the debugger's state) from the `Cpu` this one
+    /// replaces.
+    pub(crate) fn restore_unsaved(&mut self, previous: &Self) {
+        self.breakpoint = previous.breakpoint;
+        self.paused = previous.paused;
+        self.enable_soft_break = previous.enable_soft_break;
     }
 
     /// Set the cpu's breakpoint.

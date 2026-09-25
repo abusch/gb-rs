@@ -3,9 +3,11 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
+use serde::{Deserialize, Serialize};
+
 // TODO don't think this is a great design... maybe we need a `Register` struct for a single
 // register.
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub(super) struct Registers {
     pub(super) af: Register,
     pub(super) bc: Register,
@@ -123,7 +125,7 @@ impl Debug for Registers {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Register(u16);
 
 impl Register {

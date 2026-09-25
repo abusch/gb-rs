@@ -1,10 +1,11 @@
 use bitvec::{field::BitField, order::Lsb0, view::BitView};
 use log::{debug, trace};
+use serde::{Deserialize, Serialize};
 
 use crate::apu::{Timer, frame_sequencer::FrameSequencer};
 
 use super::{LengthCounter, VolumeEnvelope, dac};
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct ToneChannel<const N: u8> {
     dac_enabled: bool,
     enabled: bool,
@@ -261,7 +262,7 @@ impl<const N: u8> ToneChannel<N> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct SquareWaveGenerator {
     duty: Duty,
     step: u8,
@@ -298,7 +299,7 @@ impl SquareWaveGenerator {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 enum Duty {
     Duty0 = 0,
@@ -329,7 +330,7 @@ enum FrequencySweepResult {
     Nop,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct FrequencySweep {
     enabled: bool,
     shadow_register: u16,

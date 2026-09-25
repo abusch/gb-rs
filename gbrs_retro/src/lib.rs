@@ -27,6 +27,11 @@ const CYCLES_PER_FRAME: u64 = 154 * 456;
 /// ~59.73 Hz: the DMG does not run at exactly 60 fps.
 const FPS: f64 = CPU_HZ as f64 / CYCLES_PER_FRAME as f64;
 
+/// Room left in save states for their size to vary. The emulator's state is almost fixed-size, but
+/// small integers are encoded in fewer bytes, and the size libretro asks for can't grow while a
+/// game is loaded. In practice, it varies by about 10 bytes.
+const SAVE_STATE_SLACK: usize = 1024;
+
 const BUTTON_MAP: [(JoypadButton, Button); 8] = [
     (JoypadButton::Up, Button::Up),
     (JoypadButton::Down, Button::Down),
@@ -48,6 +53,8 @@ struct GbrsCore {
     /// Cycles the last instruction of the previous frame overshot `CYCLES_PER_FRAME` by.
     cycle_carry: u64,
     rtc: RtcRegion,
+    /// What `serialize_size` returns, fixed when the game gets loaded.
+    save_state_size: usize,
 }
 
 impl Default for GbrsCore {
@@ -61,6 +68,7 @@ impl Default for GbrsCore {
             audio: RetroAudioSink::default(),
             cycle_carry: 0,
             rtc: RtcRegion::default(),
+            save_state_size: 0,
         }
     }
 }
@@ -80,6 +88,14 @@ impl GbrsCore {
         if let Some(gb) = &mut self.emulator {
             self.rtc.sync(gb);
         }
+    }
+
+    /// Fix what `serialize_size` returns for the game that was just loaded.
+    fn set_save_state_size(&mut self) {
+        // `cycle_carry` goes first in save states.
+        self.save_state_size = self.emulator.as_ref().map_or(0, |gb| {
+            size_of::<u64>() + gb.save_state().len() + SAVE_STATE_SLACK
+        });
     }
 }
 
@@ -134,6 +150,7 @@ impl Core for GbrsCore {
         match Cartridge::load_bytes(data.to_vec()) {
             Ok(cartridge) => {
                 self.power_on(cartridge);
+                self.set_save_state_size();
                 true
             }
             Err(_) => false,
@@ -142,6 +159,7 @@ impl Core for GbrsCore {
 
     fn unload_game(&mut self) {
         self.emulator = None;
+        self.save_state_size = 0;
     }
 
     fn reset(&mut self) {
@@ -184,6 +202,43 @@ impl Core for GbrsCore {
             &self.audio.samples,
         );
         self.audio.samples.clear();
+    }
+
+    fn serialize_size(&self) -> usize {
+        self.save_state_size
+    }
+
+    fn serialize(&self, data: &mut [u8]) -> bool {
+        let Some(gb) = &self.emulator else {
+            return false;
+        };
+        // The frame's overshoot has to be restored too, so that replaying from a state (e.g. for
+        // rewind or run-ahead) runs the exact same cycles.
+        let state = gb.save_state();
+        let Some((carry, rest)) = data.split_first_chunk_mut::<8>() else {
+            return false;
+        };
+        let Some((state_data, padding)) = rest.split_at_mut_checked(state.len()) else {
+            return false;
+        };
+        *carry = self.cycle_carry.to_le_bytes();
+        state_data.copy_from_slice(&state);
+        padding.fill(0);
+        true
+    }
+
+    fn unserialize(&mut self, data: &[u8]) -> bool {
+        let Some(gb) = &mut self.emulator else {
+            return false;
+        };
+        let Some((carry, state)) = data.split_first_chunk::<8>() else {
+            return false;
+        };
+        if gb.load_state(state).is_err() {
+            return false;
+        }
+        self.cycle_carry = u64::from_le_bytes(*carry);
+        true
     }
 
     fn memory_region(&mut self, region: MemoryRegion) -> Option<CoreMemory<'_>> {
@@ -299,6 +354,33 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs()
+    }
+
+    #[test]
+    fn test_serialize() {
+        let mut core = GbrsCore::default();
+        core.power_on(game_boy(0x03).eject());
+        core.set_save_state_size();
+        core.cycle_carry = 12;
+
+        let mut data = vec![0xAA; core.serialize_size()];
+        assert!(core.serialize(&mut data));
+        let state = core.emulator.as_ref().unwrap().save_state();
+        assert_eq!(data[..8], 12u64.to_le_bytes());
+        assert_eq!(data[8..8 + state.len()], state);
+        assert!(data[8 + state.len()..].iter().all(|b| *b == 0));
+
+        core.cycle_carry = 0;
+        assert!(core.unserialize(&data));
+        assert_eq!(core.cycle_carry, 12);
+        assert_eq!(core.emulator.as_ref().unwrap().save_state(), state);
+
+        // Buffers that are too small, and data that isn't a save state, are rejected.
+        assert!(!core.serialize(&mut data[..state.len()]));
+        assert!(!core.serialize(&mut data[..4]));
+        assert!(!core.unserialize(&data[..4]));
+        assert!(!core.unserialize(&[0; 100]));
+        assert_eq!(core.cycle_carry, 12);
     }
 
     #[test]

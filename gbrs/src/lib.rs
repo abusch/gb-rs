@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 mod apu;
 mod bus;
 pub mod cartridge;
@@ -18,9 +20,12 @@ pub const SCREEN_HEIGHT: usize = 144;
 /// A 15-bit colour in the Game Boy Color's native layout: `0bxBBBBBGGGGGRRRRR`.
 ///
 /// This is what CGB palette RAM holds, so it can represent every colour either model can show.
+///
+/// In save states, it's always 2 bytes rather than a varint, so that the size of the framebuffer
+/// doesn't depend on what's on screen.
 #[repr(transparent)]
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct Rgb555(pub u16);
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Rgb555(#[serde(with = "postcard::fixint::le")] pub u16);
 
 impl Rgb555 {
     /// Build a colour from 8-bit channels, dropping the 3 low bits of each.
