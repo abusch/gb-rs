@@ -19,7 +19,7 @@ Current keybindings:
 
 ## Current status
 
-Seems to work fine with most MBC1+RAM games that I've tried. MBC2, MBC3 (including its real-time clock) and MBC5 are supported too.
+Seems to work fine with most MBC1+RAM games that I've tried. MBC1 multicarts, MBC2, MBC3 (including its real-time clock) and MBC5 are supported too.
 
 ## Still to do
 - [x] Allow building/running without the boot rom

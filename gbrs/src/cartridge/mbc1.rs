@@ -17,13 +17,23 @@ pub(super) struct Mbc1 {
     /// and to map a higher bank at 0000-3FFF too.
     bank2: u8,
     mode_1: bool,
+    /// Where BANK2 goes in the ROM bank number, and which bits of BANK1 are used. An MBC1M
+    /// multicart wires BANK2 as bits 4-5 instead of 5-6, so each game gets 16 banks and bit 4 of
+    /// BANK1 goes unused.
+    bank2_shift: u8,
+    bank1_mask: u8,
     /// Whether writing 0 to BANK1 selects bank 1, as on a real MBC1. It doesn't for ROM-only
     /// carts and the types falling back to this mapper, to keep their behaviour unchanged.
     bank_0_selects_1: bool,
 }
 
 impl Mbc1 {
-    pub(super) fn new(rom_len: usize, ram_banks: usize, bank_0_selects_1: bool) -> Self {
+    pub(super) fn new(
+        rom_len: usize,
+        ram_banks: usize,
+        bank_0_selects_1: bool,
+        multicart: bool,
+    ) -> Self {
         Self {
             rom_banks: rom_len.div_ceil(0x4000).next_power_of_two(),
             ram_banks,
@@ -31,6 +41,8 @@ impl Mbc1 {
             bank1: 1,
             bank2: 0,
             mode_1: false,
+            bank2_shift: if multicart { 4 } else { 5 },
+            bank1_mask: if multicart { 0x0F } else { 0x1F },
             bank_0_selects_1,
         }
     }
@@ -69,11 +81,11 @@ impl Mbc1 {
     }
 
     pub(super) fn read_rom(&self, rom: &[u8], addr: u16) -> u8 {
+        let bank2 = self.bank2 << self.bank2_shift;
         let (bank, offset) = if addr < 0x4000 {
-            let bank = if self.mode_1 { self.bank2 << 5 } else { 0 };
-            (bank, addr)
+            (if self.mode_1 { bank2 } else { 0 }, addr)
         } else {
-            ((self.bank2 << 5) | self.bank1, addr - 0x4000)
+            (bank2 | (self.bank1 & self.bank1_mask), addr - 0x4000)
         };
         // Bank numbers wrap around to the size of the ROM, since the higher bits aren't wired.
         let offset = (bank as usize & (self.rom_banks - 1)) * 0x4000 + offset as usize;

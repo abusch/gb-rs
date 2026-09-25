@@ -40,7 +40,7 @@ impl Cartridge {
         let mut cartridge = Self {
             data: content.into_boxed_slice(),
             ram: Box::default(),
-            mbc: Mbc::Mbc1(Mbc1::new(0, 0, false)),
+            mbc: Mbc::Mbc1(Mbc1::new(0, 0, false, false)),
         };
         let rom_len = cartridge.data.len();
         let ram_banks = cartridge.get_num_ram_banks().unwrap_or(0) as usize;
@@ -53,13 +53,18 @@ impl Cartridge {
             }
             0x0F..=0x13 => Mbc::Mbc3(Mbc3::new(rom_len, ram_banks, cartridge.has_rtc())),
             t @ 0x19..=0x1E => Mbc::Mbc5(Mbc5::new(rom_len, ram_banks, t >= 0x1C)),
-            t @ 0x00..=0x03 => Mbc::Mbc1(Mbc1::new(rom_len, ram_banks, t != 0x00)),
+            t @ 0x00..=0x03 => Mbc::Mbc1(Mbc1::new(
+                rom_len,
+                ram_banks,
+                t != 0x00,
+                t != 0x00 && cartridge.is_multicart(),
+            )),
             _ => {
                 warn!(
                     "Unsupported cartridge type {}, falling back to MBC1",
                     cartridge.cartridge_type()
                 );
-                Mbc::Mbc1(Mbc1::new(rom_len, ram_banks, false))
+                Mbc::Mbc1(Mbc1::new(rom_len, ram_banks, false, false))
             }
         };
         cartridge.ram = vec![0; ram_size].into_boxed_slice();
@@ -144,6 +149,16 @@ impl Cartridge {
                 | 0x22
                 | 0xFF
         )
+    }
+
+    /// Whether this is an MBC1M multicart. Their headers don't say so, but they're 1MiB carts
+    /// holding several games, so the second game's header (with its Nintendo logo) is found at
+    /// bank 0x10.
+    fn is_multicart(&self) -> bool {
+        const LOGO: std::ops::Range<usize> = 0x0104..0x0134;
+        const GAME_2: usize = 0x10 * 0x4000;
+        self.data.len() == 1024 * 1024
+            && self.data[GAME_2 + LOGO.start..GAME_2 + LOGO.end] == self.data[LOGO]
     }
 
     /// Whether the cartridge has an MBC3 real-time clock.
@@ -329,6 +344,40 @@ mod tests {
         assert_eq!(cart.read_rom(0x4000), 0x05);
         cart.write_rom(0x6000, 0x01);
         assert_eq!(cart.read_rom(0x0000), 0x00);
+    }
+
+    #[test]
+    fn test_mbc1_multicart() {
+        // 1MiB, with a second game's header in bank 0x10
+        let multicart = |second_logo: bool| {
+            let mut rom: Vec<u8> = (0..64u8).flat_map(|bank| [bank; 0x4000]).collect();
+            rom[0x0147] = 0x01;
+            rom[0x0148] = 0x05;
+            rom[0x0104..0x0134].fill(0xCE);
+            if second_logo {
+                rom[0x40104..0x40134].fill(0xCE);
+            }
+            Cartridge::load_bytes(rom).unwrap()
+        };
+
+        let mut cart = multicart(true);
+        // BANK2 provides bits 4-5 of the bank number, and bit 4 of BANK1 is ignored
+        cart.write_rom(0x4000, 0x01);
+        cart.write_rom(0x2000, 0x12);
+        assert_eq!(cart.read_rom(0x4000), 0x12);
+        cart.write_rom(0x6000, 0x01);
+        assert_eq!(cart.read_rom(0x1000), 0x10);
+        // Bit 4 still counts for the bank 0 check, so this maps each game's first bank.
+        cart.write_rom(0x2000, 0x10);
+        assert_eq!(cart.read_rom(0x4000), 0x10);
+        cart.write_rom(0x4000, 0x00);
+        assert_eq!(cart.read_rom(0x4000), 0x00);
+
+        // Without the second header, it's a regular MBC1 cart.
+        let mut cart = multicart(false);
+        cart.write_rom(0x4000, 0x01);
+        cart.write_rom(0x2000, 0x12);
+        assert_eq!(cart.read_rom(0x4000), 0x32);
     }
 
     #[test]
