@@ -1,5 +1,6 @@
 mod mbc1;
 mod mbc3;
+mod mbc5;
 mod rtc;
 
 use anyhow::Result;
@@ -7,12 +8,14 @@ use log::warn;
 
 use mbc1::Mbc1;
 use mbc3::Mbc3;
+use mbc5::Mbc5;
 pub use rtc::RTC_SAVE_SIZE;
 
 /// The memory bank controller, which maps the cartridge's ROM and RAM into the address space.
 enum Mbc {
     Mbc1(Mbc1),
     Mbc3(Mbc3),
+    Mbc5(Mbc5),
 }
 
 pub struct Cartridge {
@@ -40,6 +43,7 @@ impl Cartridge {
         let mut ram_banks = cartridge.get_num_ram_banks().unwrap_or(0) as usize;
         cartridge.mbc = match cartridge.data[0x0147] {
             0x0F..=0x13 => Mbc::Mbc3(Mbc3::new(rom_len, ram_banks, cartridge.has_rtc())),
+            t @ 0x19..=0x1E => Mbc::Mbc5(Mbc5::new(rom_len, ram_banks, t >= 0x1C)),
             t @ 0x00..=0x03 => Mbc::Mbc1(Mbc1::new(rom_len, ram_banks, t != 0x00)),
             _ => {
                 warn!(
@@ -154,6 +158,7 @@ impl Cartridge {
         match &self.mbc {
             Mbc::Mbc1(mbc) => mbc.read_rom(&self.data, addr),
             Mbc::Mbc3(mbc) => mbc.read_rom(&self.data, addr),
+            Mbc::Mbc5(mbc) => mbc.read_rom(&self.data, addr),
         }
     }
 
@@ -163,6 +168,7 @@ impl Cartridge {
         match &mut self.mbc {
             Mbc::Mbc1(mbc) => mbc.write_register(addr, b),
             Mbc::Mbc3(mbc) => mbc.write_register(addr, b),
+            Mbc::Mbc5(mbc) => mbc.write_register(addr, b),
         }
     }
 
@@ -174,6 +180,7 @@ impl Cartridge {
         match &self.mbc {
             Mbc::Mbc1(mbc) => mbc.read_ram(&self.ram, addr),
             Mbc::Mbc3(mbc) => mbc.read_ram(&self.ram, addr),
+            Mbc::Mbc5(mbc) => mbc.read_ram(&self.ram, addr),
         }
     }
 
@@ -185,6 +192,7 @@ impl Cartridge {
         match &mut self.mbc {
             Mbc::Mbc1(mbc) => mbc.write_ram(&mut self.ram, addr, b),
             Mbc::Mbc3(mbc) => mbc.write_ram(&mut self.ram, addr, b),
+            Mbc::Mbc5(mbc) => mbc.write_ram(&mut self.ram, addr, b),
         }
     }
 
@@ -200,6 +208,7 @@ impl Cartridge {
         match &mut self.mbc {
             Mbc::Mbc1(mbc) => mbc.reset(),
             Mbc::Mbc3(mbc) => mbc.reset(),
+            Mbc::Mbc5(mbc) => mbc.reset(),
         }
     }
 
@@ -336,6 +345,65 @@ mod tests {
 
         cart.write_rom(0x0000, 0x00);
         assert_eq!(cart.read_ram(0x0000), 0xFF);
+    }
+
+    #[test]
+    fn test_mbc5_rom_banking() {
+        // 8MiB, so all 9 bits of the bank number are used. Banks start with their number.
+        let mut rom = vec![0; 512 * 0x4000];
+        for bank in 0..512 {
+            rom[bank * 0x4000..][..2].copy_from_slice(&(bank as u16).to_le_bytes());
+        }
+        rom[0x0147] = 0x19;
+        rom[0x0148] = 0x08;
+        let mut cart = Cartridge::load_bytes(rom).unwrap();
+        let bank =
+            |cart: &Cartridge| u16::from_le_bytes([cart.read_rom(0x4000), cart.read_rom(0x4001)]);
+
+        assert_eq!(bank(&cart), 1);
+        cart.write_rom(0x2000, 0x34);
+        cart.write_rom(0x3000, 0x01);
+        assert_eq!(bank(&cart), 0x134);
+        // Each register only sets its own bits
+        cart.write_rom(0x2FFF, 0xFF);
+        assert_eq!(bank(&cart), 0x1FF);
+        cart.write_rom(0x3FFF, 0xFE);
+        assert_eq!(bank(&cart), 0x0FF);
+        // Bank 0 can be mapped at 4000-7FFF
+        cart.write_rom(0x2000, 0x00);
+        assert_eq!(bank(&cart), 0);
+        // 6000-7FFF does nothing
+        cart.write_rom(0x6000, 0x01);
+        assert_eq!(cart.read_rom(0x0000), 0);
+    }
+
+    #[test]
+    fn test_mbc5_ram_banking() {
+        // 1MiB of ROM, 128KiB of RAM
+        let mut cart = cartridge(0x1B, 0x05, 0x04);
+        cart.write_ram(0x0000, 0x42);
+        assert_eq!(cart.read_ram(0x0000), 0xFF);
+
+        cart.write_rom(0x0000, 0x0A);
+        for bank in 0..16 {
+            cart.write_rom(0x4000, bank);
+            cart.write_ram(0x1FFF, 0x10 + bank);
+        }
+        for bank in 0..16 {
+            cart.write_rom(0x4000, bank);
+            assert_eq!(cart.read_ram(0x1FFF), 0x10 + bank);
+        }
+        assert_eq!(cart.save_ram().unwrap()[15 * 0x2000 + 0x1FFF], 0x1F);
+        // ROM banks beyond the end wrap around
+        cart.write_rom(0x2000, 0x45);
+        assert_eq!(cart.read_rom(0x4000), 0x05);
+
+        // On rumble carts, bit 3 drives the motor rather than selecting RAM.
+        let mut cart = cartridge(0x1E, 0x05, 0x04);
+        cart.write_rom(0x0000, 0x0A);
+        cart.write_rom(0x4000, 0x0B);
+        cart.write_ram(0x0000, 0x42);
+        assert_eq!(cart.save_ram().unwrap()[3 * 0x2000], 0x42);
     }
 
     #[test]

@@ -17,8 +17,8 @@ pub(super) struct Mbc1 {
     /// and to map a higher bank at 0000-3FFF too.
     bank2: u8,
     mode_1: bool,
-    /// Whether writing 0 to BANK1 selects bank 1, as on a real MBC1. Other cartridge types
-    /// falling back to this mapper (e.g. MBC5) can map bank 0 there.
+    /// Whether writing 0 to BANK1 selects bank 1, as on a real MBC1. It doesn't for ROM-only
+    /// carts and the types falling back to this mapper, to keep their behaviour unchanged.
     bank_0_selects_1: bool,
 }
 
