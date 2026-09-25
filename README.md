@@ -17,6 +17,12 @@ Current keybindings:
 - <kbd>D</kbd>: interrupt the program and start the command-line debugger
 - <kbd>S</kbd>: Take a screenshot
 
+Gamepads work too, and can be plugged in while the emulator runs (you can also use the keyboard at the same time):
+- D-pad or left stick: Joypad
+- Right face button (<kbd>B</kbd> on Xbox pads, <kbd>A</kbd> on Nintendo ones): A
+- Bottom face button (<kbd>A</kbd> on Xbox pads, <kbd>B</kbd> on Nintendo ones): B
+- Start / Select (or Menu / View): Start / Select
+
 ## Current status
 
 Seems to work fine with most MBC1+RAM games that I've tried. MBC1 multicarts, MBC2, MBC3 (including its real-time clock) and MBC5 are supported too.

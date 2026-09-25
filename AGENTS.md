@@ -64,6 +64,10 @@ Cycle-accurate-ish PPU driven by `dots(cycles, frame_sink)`. It tracks `line_dot
 
 The APU runs lazily: `Apu::step` only accumulates `pending_cycles`, which are run when a frame sequencer step or a sample is due, or before a register write (`catch_up`). In between, the channels' `Timer`s are advanced arithmetically (`Timer::advance`), not cycle by cycle. So if you add anything that observes channel state from outside at other times (e.g. wave RAM reads while the channel is playing), call `catch_up` first.
 
+### Input (`gbrs_frontend/src/input.rs`)
+
+The keyboard and gamepads (through `gilrs`) each keep their own `Buttons` set, and `Emulator::set_buttons` only tells the Game Boy when their union changes, so releasing a key doesn't release a button still held on a gamepad. Gamepads are polled once per `Emulator::update`, from the current state of every connected pad rather than from individual events: a pad that disconnects releases its buttons, and stick jitter can't release a D-pad direction. A and B are mapped by position (right and bottom face buttons), as on the Game Boy.
+
 ### Debugger (`src/debugger.rs`)
 
 An in-process CLI debugger using `rustyline`. Pressing a designated key (see `README.md`) pauses the CPU and hands control to a prompt (`gb-rs> `). Commands: `next [N]`, `continue`, `cpu`, `mem <hex>`, `dis <hex>`, `br <hex>`, `oam`, `palettes`, `sprite <id>`, `quit`. The debugger is purely a `main` binary concern and is not in the library.

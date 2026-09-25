@@ -24,7 +24,10 @@ use winit::{
     keyboard::{KeyCode, PhysicalKey},
 };
 
-use crate::debugger::{Command, Debugger};
+use crate::{
+    debugger::{Command, Debugger},
+    input::{ALL_BUTTONS, Buttons, Gamepads},
+};
 
 // 4.194304 MHz CPU clock. We do not store a precomputed ns-per-cycle constant: at 238 ns
 // it rounds the period down by 0.18%, which makes the emulator run ~78 samples/s faster
@@ -128,6 +131,11 @@ pub struct Emulator {
     audio_sink: CpalAudioSink,
     audio_stats: Arc<AudioStats>,
     last_stats_log: Instant,
+    gamepads: Gamepads,
+    /// Buttons held on the keyboard and on gamepads. The Game Boy sees a button as held as long as
+    /// either of them holds it.
+    keyboard_buttons: Buttons,
+    gamepad_buttons: Buttons,
 }
 
 impl Emulator {
@@ -171,6 +179,9 @@ impl Emulator {
             audio_sink: CpalAudioSink::new(producer, Arc::clone(&audio_stats)),
             audio_stats,
             last_stats_log: now,
+            gamepads: Gamepads::new(),
+            keyboard_buttons: Buttons::default(),
+            gamepad_buttons: Buttons::default(),
         })
     }
 
@@ -184,6 +195,8 @@ impl Emulator {
 
     pub fn update(&mut self) -> bool {
         self.log_audio_stats();
+        let gamepad_buttons = self.gamepads.poll();
+        self.set_buttons(self.keyboard_buttons, gamepad_buttons);
 
         let elapsed_ns = self.start_time_ns.elapsed().as_nanos() as u64;
         let target_cycles = elapsed_ns.saturating_mul(CPU_HZ) / NS_PER_SEC;
@@ -314,33 +327,36 @@ impl Emulator {
             return;
         };
 
-        match keycode {
-            KeyCode::Enter => self
-                .gb
-                .set_button_pressed(Button::Start, key.state.is_pressed()),
-            KeyCode::Space => self
-                .gb
-                .set_button_pressed(Button::Select, key.state.is_pressed()),
-            KeyCode::KeyA => self
-                .gb
-                .set_button_pressed(Button::A, key.state.is_pressed()),
-            KeyCode::KeyB => self
-                .gb
-                .set_button_pressed(Button::B, key.state.is_pressed()),
-            KeyCode::ArrowUp => self
-                .gb
-                .set_button_pressed(Button::Up, key.state.is_pressed()),
-            KeyCode::ArrowDown => self
-                .gb
-                .set_button_pressed(Button::Down, key.state.is_pressed()),
-            KeyCode::ArrowLeft => self
-                .gb
-                .set_button_pressed(Button::Left, key.state.is_pressed()),
-            KeyCode::ArrowRight => self
-                .gb
-                .set_button_pressed(Button::Right, key.state.is_pressed()),
-            KeyCode::KeyD => self.start_debugger(),
-            _ => (),
+        let button = match keycode {
+            KeyCode::Enter => Button::Start,
+            KeyCode::Space => Button::Select,
+            KeyCode::KeyA => Button::A,
+            KeyCode::KeyB => Button::B,
+            KeyCode::ArrowUp => Button::Up,
+            KeyCode::ArrowDown => Button::Down,
+            KeyCode::ArrowLeft => Button::Left,
+            KeyCode::ArrowRight => Button::Right,
+            KeyCode::KeyD => {
+                self.start_debugger();
+                return;
+            }
+            _ => return,
+        };
+        let mut keyboard_buttons = self.keyboard_buttons;
+        keyboard_buttons.set(button, key.state.is_pressed());
+        self.set_buttons(keyboard_buttons, self.gamepad_buttons);
+    }
+
+    /// Update the buttons held on the keyboard and gamepads, and pass on the changes.
+    fn set_buttons(&mut self, keyboard: Buttons, gamepad: Buttons) {
+        let before = self.keyboard_buttons | self.gamepad_buttons;
+        let after = keyboard | gamepad;
+        self.keyboard_buttons = keyboard;
+        self.gamepad_buttons = gamepad;
+        for button in ALL_BUTTONS {
+            if before.contains(button) != after.contains(button) {
+                self.gb.set_button_pressed(button, after.contains(button));
+            }
         }
     }
 }

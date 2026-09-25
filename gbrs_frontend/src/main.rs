@@ -30,6 +30,7 @@ use winit::{
 
 mod debugger;
 mod emulator;
+mod input;
 
 #[derive(Parser)]
 #[command(about, version, author)]
