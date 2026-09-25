@@ -67,7 +67,7 @@ fn parse_addr(s: &str) -> Result<u16, ParseIntError> {
 fn main() -> Result<()> {
     // initialise logger
     env_logger::builder()
-        .parse_filters("gb_rs=debug,gb_rs::apu=info")
+        .parse_filters("gbrs=debug,gbrs::apu=info")
         .init();
 
     let cli = Cli::parse();

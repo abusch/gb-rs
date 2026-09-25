@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `-b <HEX>`: set initial breakpoint (address is parsed as hex, no `0x` prefix).
   - `--enable-soft-break`: treat `LD B,B` as a breakpoint trigger (useful for some test ROMs).
   - `--boot-rom <PATH>`: run the given DMG boot ROM before the game.
-- Logging is configured in `main.rs` via `env_logger` with hardcoded filters `gb_rs=debug,gb_rs::apu=info`. The `release_max_level_info` feature on the `log` crate caps release-build logs at `info` regardless of filter.
+- Logging is configured in `main.rs` via `env_logger` with hardcoded filters `gbrs=debug,gbrs::apu=info` (the frontend binary is also called `gbrs`, so this covers both crates). The `release_max_level_info` feature on the `log` crate caps release-build logs at `info` regardless of filter.
 - Benchmark/profile the core with `cargo run --release --example headless -p gbrs -- <ROM> [FRAMES]`: it runs without a frontend and prints the speed plus hashes of the video and audio output, so optimisations can be checked for behaviour changes.
 - Release profile has `debug = true` and `incremental = true` — debugging a release build is intentionally supported (emulation needs release-level perf).
 
