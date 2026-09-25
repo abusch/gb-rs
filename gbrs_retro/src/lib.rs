@@ -1,8 +1,13 @@
-use std::path::Path;
+use std::{
+    path::Path,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use gbrs::{
-    AudioSink, BootRom, FrameSink, Rgb555, SCREEN_HEIGHT, SCREEN_WIDTH, cartridge::Cartridge,
-    gameboy::GameBoy, joypad::Button,
+    AudioSink, BootRom, FrameSink, Rgb555, SCREEN_HEIGHT, SCREEN_WIDTH,
+    cartridge::{Cartridge, RTC_SAVE_SIZE},
+    gameboy::GameBoy,
+    joypad::Button,
 };
 use libretro::{
     ContentContract, ControllerDescription, ControllerDevice, ControllerInfo, Core, CoreMemory,
@@ -42,6 +47,7 @@ struct GbrsCore {
     audio: RetroAudioSink,
     /// Cycles the last instruction of the previous frame overshot `CYCLES_PER_FRAME` by.
     cycle_carry: u64,
+    rtc: RtcRegion,
 }
 
 impl Default for GbrsCore {
@@ -54,6 +60,7 @@ impl Default for GbrsCore {
             frame: RetroFrameSink::default(),
             audio: RetroAudioSink::default(),
             cycle_carry: 0,
+            rtc: RtcRegion::default(),
         }
     }
 }
@@ -70,6 +77,9 @@ impl GbrsCore {
         self.frame = RetroFrameSink::default();
         self.audio.samples.clear();
         self.cycle_carry = 0;
+        if let Some(gb) = &mut self.emulator {
+            self.rtc.sync(gb);
+        }
     }
 }
 
@@ -149,6 +159,8 @@ impl Core for GbrsCore {
             return;
         };
 
+        self.rtc.sync(gb);
+
         let buttons = runtime.joypad_buttons(self.port);
         for (retro_button, gb_button) in BUTTON_MAP {
             gb.set_button_pressed(gb_button, buttons.contains(retro_button));
@@ -182,7 +194,48 @@ impl Core for GbrsCore {
                 .as_mut()?
                 .save_ram_mut()
                 .map(CoreMemory::read_write),
+            // Same for the `.rtc` file, which the frontend keeps separately.
+            MemoryRegion::Rtc if self.emulator.as_ref()?.has_rtc() => {
+                Some(CoreMemory::read_write(&mut self.rtc.buf[..]))
+            }
             _ => None,
+        }
+    }
+}
+
+/// The cartridge's real-time clock, as exposed to the frontend through `MemoryRegion::Rtc`.
+///
+/// The frontend reads this buffer to save it, and writes a saved clock into it after loading the
+/// game, whenever it likes. So it's kept up to date every frame, and when it holds something else
+/// than what was last written to it, the frontend has restored a save.
+struct RtcRegion {
+    /// Boxed so it stays put while the frontend holds a pointer to it.
+    buf: Box<[u8; RTC_SAVE_SIZE]>,
+    /// What was last written to `buf`.
+    written: [u8; RTC_SAVE_SIZE],
+}
+
+impl Default for RtcRegion {
+    fn default() -> Self {
+        Self {
+            buf: Box::new([0; RTC_SAVE_SIZE]),
+            written: [0; RTC_SAVE_SIZE],
+        }
+    }
+}
+
+impl RtcRegion {
+    fn sync(&mut self, gb: &mut GameBoy) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        if *self.buf != self.written {
+            // If the save is invalid, keep the clock as it is: it gets written over just below.
+            let _ = gb.load_rtc(&self.buf[..], now);
+        }
+        if let Some(rtc) = gb.save_rtc(now) {
+            *self.buf = rtc;
+            self.written = rtc;
         }
     }
 }
@@ -224,3 +277,53 @@ impl AudioSink for RetroAudioSink {
 }
 
 libretro::export_core!(GbrsCore::default());
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn game_boy(cartridge_type: u8) -> GameBoy {
+        let mut rom = vec![0; 0x8000];
+        rom[0x0147] = cartridge_type;
+        GameBoy::new(
+            Cartridge::load_bytes(rom).unwrap(),
+            None,
+            None,
+            false,
+            48_000,
+        )
+    }
+
+    fn unix_time() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+
+    #[test]
+    fn test_rtc_region() {
+        let mut rtc = RtcRegion::default();
+        // Without an RTC, the buffer is left alone
+        rtc.sync(&mut game_boy(0x00));
+        assert_eq!(*rtc.buf, [0; RTC_SAVE_SIZE]);
+
+        // MBC3+TIMER+BATTERY
+        let mut gb = game_boy(0x0F);
+        rtc.sync(&mut gb);
+        assert_eq!(rtc.buf[..40], gb.save_rtc(0).unwrap()[..40]);
+
+        // The frontend restores a clock saved at 05:00:00 an hour ago
+        let mut saved = [0; RTC_SAVE_SIZE];
+        saved[8] = 5;
+        saved[40..].copy_from_slice(&(unix_time() - 3600).to_le_bytes());
+        *rtc.buf = saved;
+        rtc.sync(&mut gb);
+        let state = gb.save_rtc(0).unwrap();
+        assert_eq!(state[8], 6, "hours in {state:?}");
+        assert_eq!(state[4], 0, "minutes in {state:?}");
+        // and it's written back for the next save
+        assert_eq!(rtc.buf[..40], state[..40]);
+        assert_ne!(*rtc.buf, saved);
+    }
+}
