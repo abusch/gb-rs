@@ -22,18 +22,10 @@ pub(super) struct Mbc1 {
     /// BANK1 goes unused.
     bank2_shift: u8,
     bank1_mask: u8,
-    /// Whether writing 0 to BANK1 selects bank 1, as on a real MBC1. It doesn't for ROM-only
-    /// carts and the types falling back to this mapper, to keep their behaviour unchanged.
-    bank_0_selects_1: bool,
 }
 
 impl Mbc1 {
-    pub(super) fn new(
-        rom_len: usize,
-        ram_banks: usize,
-        bank_0_selects_1: bool,
-        multicart: bool,
-    ) -> Self {
+    pub(super) fn new(rom_len: usize, ram_banks: usize, multicart: bool) -> Self {
         Self {
             rom_banks: rom_len.div_ceil(0x4000).next_power_of_two(),
             ram_banks,
@@ -43,7 +35,6 @@ impl Mbc1 {
             mode_1: false,
             bank2_shift: if multicart { 4 } else { 5 },
             bank1_mask: if multicart { 0x0F } else { 0x1F },
-            bank_0_selects_1,
         }
     }
 
@@ -63,10 +54,7 @@ impl Mbc1 {
             }
             0x2000..=0x3FFF => {
                 // Only the 5 bits that exist are checked for 0, so e.g. 0x20 selects bank 1 too.
-                self.bank1 = b & 0x1F;
-                if self.bank1 == 0 && self.bank_0_selects_1 {
-                    self.bank1 = 1;
-                }
+                self.bank1 = (b & 0x1F).max(1);
                 trace!("BANK1: {:02x}", self.bank1);
             }
             0x4000..=0x5FFF => {

@@ -15,6 +15,8 @@ pub use rtc::RTC_SAVE_SIZE;
 
 /// The memory bank controller, which maps the cartridge's ROM and RAM into the address space.
 enum Mbc {
+    /// No MBC: 32KiB of ROM mapped as is, and optionally up to 8KiB of RAM.
+    None,
     Mbc1(Mbc1),
     Mbc2(Mbc2),
     Mbc3(Mbc3),
@@ -40,7 +42,7 @@ impl Cartridge {
         let mut cartridge = Self {
             data: content.into_boxed_slice(),
             ram: Box::default(),
-            mbc: Mbc::Mbc1(Mbc1::new(0, 0, false, false)),
+            mbc: Mbc::None,
         };
         let rom_len = cartridge.data.len();
         let ram_banks = cartridge.get_num_ram_banks().unwrap_or(0) as usize;
@@ -53,18 +55,14 @@ impl Cartridge {
             }
             0x0F..=0x13 => Mbc::Mbc3(Mbc3::new(rom_len, ram_banks, cartridge.has_rtc())),
             t @ 0x19..=0x1E => Mbc::Mbc5(Mbc5::new(rom_len, ram_banks, t >= 0x1C)),
-            t @ 0x00..=0x03 => Mbc::Mbc1(Mbc1::new(
-                rom_len,
-                ram_banks,
-                t != 0x00,
-                t != 0x00 && cartridge.is_multicart(),
-            )),
+            0x00 | 0x08 | 0x09 => Mbc::None,
+            0x01..=0x03 => Mbc::Mbc1(Mbc1::new(rom_len, ram_banks, cartridge.is_multicart())),
             _ => {
                 warn!(
                     "Unsupported cartridge type {}, falling back to MBC1",
                     cartridge.cartridge_type()
                 );
-                Mbc::Mbc1(Mbc1::new(rom_len, ram_banks, false, false))
+                Mbc::Mbc1(Mbc1::new(rom_len, ram_banks, false))
             }
         };
         cartridge.ram = vec![0; ram_size].into_boxed_slice();
@@ -177,6 +175,7 @@ impl Cartridge {
     /// Read a byte from the ROM area (0000-7FFF), through the memory bank controller.
     pub fn read_rom(&self, addr: u16) -> u8 {
         match &self.mbc {
+            Mbc::None => self.data.get(addr as usize).copied().unwrap_or(0xFF),
             Mbc::Mbc1(mbc) => mbc.read_rom(&self.data, addr),
             Mbc::Mbc2(mbc) => mbc.read_rom(&self.data, addr),
             Mbc::Mbc3(mbc) => mbc.read_rom(&self.data, addr),
@@ -188,6 +187,7 @@ impl Cartridge {
     /// registers.
     pub fn write_rom(&mut self, addr: u16, b: u8) {
         match &mut self.mbc {
+            Mbc::None => (),
             Mbc::Mbc1(mbc) => mbc.write_register(addr, b),
             Mbc::Mbc2(mbc) => mbc.write_register(addr, b),
             Mbc::Mbc3(mbc) => mbc.write_register(addr, b),
@@ -201,6 +201,7 @@ impl Cartridge {
     pub fn read_ram(&self, addr: u16) -> u8 {
         assert!(addr < 0x2000, "addr=0x{:04x}", addr);
         match &self.mbc {
+            Mbc::None => self.ram.get(addr as usize).copied().unwrap_or(0xFF),
             Mbc::Mbc1(mbc) => mbc.read_ram(&self.ram, addr),
             Mbc::Mbc2(mbc) => mbc.read_ram(&self.ram, addr),
             Mbc::Mbc3(mbc) => mbc.read_ram(&self.ram, addr),
@@ -214,6 +215,11 @@ impl Cartridge {
     pub fn write_ram(&mut self, addr: u16, b: u8) {
         assert!(addr < 0x2000);
         match &mut self.mbc {
+            Mbc::None => {
+                if let Some(byte) = self.ram.get_mut(addr as usize) {
+                    *byte = b;
+                }
+            }
             Mbc::Mbc1(mbc) => mbc.write_ram(&mut self.ram, addr, b),
             Mbc::Mbc2(mbc) => mbc.write_ram(&mut self.ram, addr, b),
             Mbc::Mbc3(mbc) => mbc.write_ram(&mut self.ram, addr, b),
@@ -231,6 +237,7 @@ impl Cartridge {
     /// Reset the memory bank controller to its power-on state, leaving RAM and the RTC untouched.
     pub fn reset_mapper(&mut self) {
         match &mut self.mbc {
+            Mbc::None => (),
             Mbc::Mbc1(mbc) => mbc.reset(),
             Mbc::Mbc2(mbc) => mbc.reset(),
             Mbc::Mbc3(mbc) => mbc.reset(),
@@ -318,6 +325,24 @@ mod tests {
     /// A 128KiB MBC3+TIMER+RAM+BATTERY cart with 32KiB of RAM.
     fn mbc3_cartridge() -> Cartridge {
         cartridge(0x10, 0x02, 0x03)
+    }
+
+    #[test]
+    fn test_rom_only() {
+        let mut cart = cartridge(0x00, 0x00, 0x00);
+        // Nothing to switch banks with
+        cart.write_rom(0x2000, 0x00);
+        assert_eq!(cart.read_rom(0x4000), 1);
+        cart.write_rom(0x2000, 0x02);
+        assert_eq!(cart.read_rom(0x7FFF), 1);
+        assert_eq!(cart.read_ram(0x0000), 0xFF);
+        assert!(cart.save_ram().is_none());
+
+        // ROM+RAM: 8KiB of RAM, always accessible
+        let mut cart = cartridge(0x09, 0x00, 0x02);
+        cart.write_ram(0x1FFF, 0x42);
+        assert_eq!(cart.read_ram(0x1FFF), 0x42);
+        assert_eq!(cart.save_ram().unwrap().len(), 0x2000);
     }
 
     #[test]
