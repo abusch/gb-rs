@@ -1,4 +1,5 @@
 mod mbc1;
+mod mbc2;
 mod mbc3;
 mod mbc5;
 mod rtc;
@@ -7,6 +8,7 @@ use anyhow::Result;
 use log::warn;
 
 use mbc1::Mbc1;
+use mbc2::{MBC2_RAM_SIZE, Mbc2};
 use mbc3::Mbc3;
 use mbc5::Mbc5;
 pub use rtc::RTC_SAVE_SIZE;
@@ -14,6 +16,7 @@ pub use rtc::RTC_SAVE_SIZE;
 /// The memory bank controller, which maps the cartridge's ROM and RAM into the address space.
 enum Mbc {
     Mbc1(Mbc1),
+    Mbc2(Mbc2),
     Mbc3(Mbc3),
     Mbc5(Mbc5),
 }
@@ -40,8 +43,14 @@ impl Cartridge {
             mbc: Mbc::Mbc1(Mbc1::new(0, 0, false)),
         };
         let rom_len = cartridge.data.len();
-        let mut ram_banks = cartridge.get_num_ram_banks().unwrap_or(0) as usize;
+        let ram_banks = cartridge.get_num_ram_banks().unwrap_or(0) as usize;
+        let mut ram_size = ram_banks * 0x2000;
         cartridge.mbc = match cartridge.data[0x0147] {
+            0x05 | 0x06 => {
+                // The RAM is built into the MBC, so the header doesn't declare it.
+                ram_size = MBC2_RAM_SIZE;
+                Mbc::Mbc2(Mbc2::new(rom_len))
+            }
             0x0F..=0x13 => Mbc::Mbc3(Mbc3::new(rom_len, ram_banks, cartridge.has_rtc())),
             t @ 0x19..=0x1E => Mbc::Mbc5(Mbc5::new(rom_len, ram_banks, t >= 0x1C)),
             t @ 0x00..=0x03 => Mbc::Mbc1(Mbc1::new(rom_len, ram_banks, t != 0x00)),
@@ -50,13 +59,10 @@ impl Cartridge {
                     "Unsupported cartridge type {}, falling back to MBC1",
                     cartridge.cartridge_type()
                 );
-                // MBC2 has built-in RAM that the header doesn't declare: keep some RAM mapped so
-                // it has somewhere to go.
-                ram_banks = ram_banks.max(1);
                 Mbc::Mbc1(Mbc1::new(rom_len, ram_banks, false))
             }
         };
-        cartridge.ram = vec![0; ram_banks * 0x2000].into_boxed_slice();
+        cartridge.ram = vec![0; ram_size].into_boxed_slice();
         Ok(cartridge)
     }
 
@@ -157,6 +163,7 @@ impl Cartridge {
     pub fn read_rom(&self, addr: u16) -> u8 {
         match &self.mbc {
             Mbc::Mbc1(mbc) => mbc.read_rom(&self.data, addr),
+            Mbc::Mbc2(mbc) => mbc.read_rom(&self.data, addr),
             Mbc::Mbc3(mbc) => mbc.read_rom(&self.data, addr),
             Mbc::Mbc5(mbc) => mbc.read_rom(&self.data, addr),
         }
@@ -167,6 +174,7 @@ impl Cartridge {
     pub fn write_rom(&mut self, addr: u16, b: u8) {
         match &mut self.mbc {
             Mbc::Mbc1(mbc) => mbc.write_register(addr, b),
+            Mbc::Mbc2(mbc) => mbc.write_register(addr, b),
             Mbc::Mbc3(mbc) => mbc.write_register(addr, b),
             Mbc::Mbc5(mbc) => mbc.write_register(addr, b),
         }
@@ -179,6 +187,7 @@ impl Cartridge {
         assert!(addr < 0x2000, "addr=0x{:04x}", addr);
         match &self.mbc {
             Mbc::Mbc1(mbc) => mbc.read_ram(&self.ram, addr),
+            Mbc::Mbc2(mbc) => mbc.read_ram(&self.ram, addr),
             Mbc::Mbc3(mbc) => mbc.read_ram(&self.ram, addr),
             Mbc::Mbc5(mbc) => mbc.read_ram(&self.ram, addr),
         }
@@ -191,6 +200,7 @@ impl Cartridge {
         assert!(addr < 0x2000);
         match &mut self.mbc {
             Mbc::Mbc1(mbc) => mbc.write_ram(&mut self.ram, addr, b),
+            Mbc::Mbc2(mbc) => mbc.write_ram(&mut self.ram, addr, b),
             Mbc::Mbc3(mbc) => mbc.write_ram(&mut self.ram, addr, b),
             Mbc::Mbc5(mbc) => mbc.write_ram(&mut self.ram, addr, b),
         }
@@ -207,6 +217,7 @@ impl Cartridge {
     pub fn reset_mapper(&mut self) {
         match &mut self.mbc {
             Mbc::Mbc1(mbc) => mbc.reset(),
+            Mbc::Mbc2(mbc) => mbc.reset(),
             Mbc::Mbc3(mbc) => mbc.reset(),
             Mbc::Mbc5(mbc) => mbc.reset(),
         }
@@ -232,17 +243,15 @@ impl Cartridge {
         }
     }
 
-    /// The battery-backed external RAM, sized to what the cartridge header declares, or `None`
-    /// if the cartridge has no RAM.
+    /// The battery-backed external RAM, sized to what the cartridge has, or `None` if it has no
+    /// RAM. For MBC2, that's 512 bytes each holding a half-byte.
     pub fn save_ram(&self) -> Option<&[u8]> {
-        let ram_size = self.get_num_ram_banks()? as usize * 8192;
-        Some(&self.ram[..ram_size])
+        (!self.ram.is_empty()).then_some(&self.ram[..])
     }
 
     /// Mutable version of [`Cartridge::save_ram`].
     pub fn save_ram_mut(&mut self) -> Option<&mut [u8]> {
-        let ram_size = self.get_num_ram_banks()? as usize * 8192;
-        Some(&mut self.ram[..ram_size])
+        (!self.ram.is_empty()).then_some(&mut self.ram[..])
     }
 
     #[allow(dead_code)]
@@ -345,6 +354,38 @@ mod tests {
 
         cart.write_rom(0x0000, 0x00);
         assert_eq!(cart.read_ram(0x0000), 0xFF);
+    }
+
+    #[test]
+    fn test_mbc2() {
+        // 256KiB, the most MBC2 can address
+        let mut cart = cartridge(0x06, 0x03, 0x00);
+        assert_eq!(cart.save_ram().unwrap().len(), 512);
+
+        // Bit 8 of the address picks the register: set for the ROM bank...
+        cart.write_rom(0x0100, 0x05);
+        assert_eq!(cart.read_rom(0x4000), 5);
+        cart.write_rom(0x3FFF, 0xF3);
+        assert_eq!(cart.read_rom(0x4000), 3);
+        cart.write_rom(0x2100, 0x00);
+        assert_eq!(cart.read_rom(0x4000), 1);
+        // ...clear for RAM enable.
+        assert_eq!(cart.read_ram(0x0000), 0xFF);
+        cart.write_rom(0x3EFF, 0x0A);
+        assert_eq!(cart.read_rom(0x4000), 1);
+        assert_eq!(cart.read_ram(0x0000), 0xF0);
+
+        // Only the low 4 bits are stored, and the 512 half-bytes are mirrored over A000-BFFF.
+        cart.write_ram(0x01FF, 0xAB);
+        assert_eq!(cart.read_ram(0x01FF), 0xFB);
+        assert_eq!(cart.read_ram(0x1FFF), 0xFB);
+        assert_eq!(cart.save_ram().unwrap()[0x1FF], 0x0B);
+
+        cart.write_rom(0x0000, 0x00);
+        assert_eq!(cart.read_ram(0x01FF), 0xFF);
+        // 4000-7FFF does nothing
+        cart.write_rom(0x4100, 0x02);
+        assert_eq!(cart.read_rom(0x4000), 1);
     }
 
     #[test]

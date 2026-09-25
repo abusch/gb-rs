@@ -19,11 +19,11 @@ Current keybindings:
 
 ## Current status
 
-Seems to work fine with most MBC1+RAM games that I've tried. MBC3 (including its real-time clock) and MBC5 are supported too.
+Seems to work fine with most MBC1+RAM games that I've tried. MBC2, MBC3 (including its real-time clock) and MBC5 are supported too.
 
 ## Still to do
 - [x] Allow building/running without the boot rom
-- [ ] Support other MBCs (MBC1, MBC3 and MBC5 are done)
+- [ ] Support other MBCs (MBC1, MBC2, MBC3 and MBC5 are done)
 - [x] Sound
 - [ ] Maybe compile to WASM?
 
