@@ -1,109 +1,105 @@
-use log::{debug, trace, warn};
+use log::trace;
 
-/// MBC1 mapper. Also used as a fallback for the cartridge types that aren't supported yet.
+/// MBC1 mapper: up to 2MiB of ROM and 32KiB of RAM. Also used as a fallback for the cartridge
+/// types that aren't supported yet.
+///
+/// See <https://gbdev.io/pandocs/MBC1.html>.
 pub(super) struct Mbc1 {
-    selected_rom_bank: u8,
-    secondary_bank_register: u8,
-    banking_mode_1: bool,
-    /// Whether the cart has 1MiB of ROM or more, so the secondary register selects ROM banks.
-    large_rom: bool,
-    /// Whether the cart has 32KiB of RAM or more, so the secondary register selects RAM banks.
-    large_ram: bool,
-    /// Whether writing 0 to the ROM bank register selects bank 1, as on a real MBC1. Other
-    /// cartridge types falling back to this mapper (e.g. MBC5) can map bank 0 there.
+    /// Number of 16KiB ROM banks, rounded up to a power of 2 so it can be used as a mask.
+    rom_banks: usize,
+    /// Number of 8KiB RAM banks.
+    ram_banks: usize,
+    /// Whether RAM can be accessed.
+    ram_enabled: bool,
+    /// BANK1: the low 5 bits of the ROM bank mapped at 4000-7FFF.
+    bank1: u8,
+    /// BANK2: 2 more bits, used as bits 5-6 of the ROM bank number, and in mode 1 as the RAM bank
+    /// and to map a higher bank at 0000-3FFF too.
+    bank2: u8,
+    mode_1: bool,
+    /// Whether writing 0 to BANK1 selects bank 1, as on a real MBC1. Other cartridge types
+    /// falling back to this mapper (e.g. MBC5) can map bank 0 there.
     bank_0_selects_1: bool,
 }
 
 impl Mbc1 {
-    pub(super) fn new(rom_size: u8, ram_size: u8, bank_0_selects_1: bool) -> Self {
+    pub(super) fn new(rom_len: usize, ram_banks: usize, bank_0_selects_1: bool) -> Self {
         Self {
-            selected_rom_bank: 0x01,
-            secondary_bank_register: 0x00,
-            banking_mode_1: false,
-            large_rom: rom_size >= 0x05,
-            large_ram: ram_size >= 0x03,
+            rom_banks: rom_len.div_ceil(0x4000).next_power_of_two(),
+            ram_banks,
+            ram_enabled: false,
+            bank1: 1,
+            bank2: 0,
+            mode_1: false,
             bank_0_selects_1,
         }
     }
 
     pub(super) fn reset(&mut self) {
-        self.selected_rom_bank = 0x01;
-        self.secondary_bank_register = 0x00;
-        self.banking_mode_1 = false;
+        self.ram_enabled = false;
+        self.bank1 = 1;
+        self.bank2 = 0;
+        self.mode_1 = false;
     }
 
     /// Write to one of the mapper's registers, which sit over the ROM area (0000-7FFF).
     pub(super) fn write_register(&mut self, addr: u16, b: u8) {
         match addr {
             0x0000..=0x1FFF => {
-                if b & 0x0A == 0x0A {
-                    trace!("Enabling external RAM");
-                } else {
-                    trace!("Disabling external RAM");
+                self.ram_enabled = b & 0x0F == 0x0A;
+                trace!("External RAM enabled: {}", self.ram_enabled);
+            }
+            0x2000..=0x3FFF => {
+                // Only the 5 bits that exist are checked for 0, so e.g. 0x20 selects bank 1 too.
+                self.bank1 = b & 0x1F;
+                if self.bank1 == 0 && self.bank_0_selects_1 {
+                    self.bank1 = 1;
                 }
+                trace!("BANK1: {:02x}", self.bank1);
             }
-            0x2000..=0x3FFF => self.select_rom_bank(b),
             0x4000..=0x5FFF => {
-                self.secondary_bank_register = b & 0x03;
-                trace!(
-                    "Secondary bank register: {:02x}",
-                    self.secondary_bank_register
-                );
+                self.bank2 = b & 0x03;
+                trace!("BANK2: {:02x}", self.bank2);
             }
-            _ => self.select_banking_mode(b),
-        }
-    }
-
-    fn select_rom_bank(&mut self, bank: u8) {
-        if bank == 0 && self.bank_0_selects_1 {
-            self.selected_rom_bank = 0x01;
-        } else {
-            self.selected_rom_bank = bank & 0x1f;
-        }
-        trace!("Selected ROM bank {}", self.selected_rom_bank);
-    }
-
-    fn select_banking_mode(&mut self, b: u8) {
-        if b == 0 {
-            self.banking_mode_1 = false;
-            debug!("Banking mode select 0");
-        } else if b == 1 {
-            self.banking_mode_1 = true;
-            debug!("Banking mode select 1");
-        } else {
-            warn!("Banking mode select set to unknown value: {:02x}", b);
+            _ => {
+                self.mode_1 = b & 0x01 != 0;
+                trace!("Banking mode 1: {}", self.mode_1);
+            }
         }
     }
 
     pub(super) fn read_rom(&self, rom: &[u8], addr: u16) -> u8 {
-        let mapped_addr = if addr < 0x4000 {
-            if self.banking_mode_1 && self.large_rom {
-                (self.secondary_bank_register << 5) as u32 * 0x4000 + addr as u32
-            } else {
-                addr as u32
-            }
+        let (bank, offset) = if addr < 0x4000 {
+            let bank = if self.mode_1 { self.bank2 << 5 } else { 0 };
+            (bank, addr)
         } else {
-            let bank_num = if self.large_rom {
-                (self.secondary_bank_register << 5) + self.selected_rom_bank
-            } else {
-                self.selected_rom_bank
-            };
-            0x4000 * (bank_num as u32) + (addr as u32 - 0x4000)
+            ((self.bank2 << 5) | self.bank1, addr - 0x4000)
         };
-        rom[mapped_addr as usize]
+        // Bank numbers wrap around to the size of the ROM, since the higher bits aren't wired.
+        let offset = (bank as usize & (self.rom_banks - 1)) * 0x4000 + offset as usize;
+        // ROM dumps whose size isn't a power of 2 leave some banks unbacked
+        rom.get(offset).copied().unwrap_or(0xFF)
     }
 
     pub(super) fn read_ram(&self, ram: &[u8], addr: u16) -> u8 {
-        let mapped_addr = if self.banking_mode_1 && self.large_ram {
-            0x2000 * self.secondary_bank_register as u16 + addr
-        } else {
-            addr
-        };
-        ram[mapped_addr as usize]
+        match self.ram_offset(addr) {
+            Some(offset) => ram[offset],
+            None => 0xFF,
+        }
     }
 
     pub(super) fn write_ram(&self, ram: &mut [u8], addr: u16, b: u8) {
-        let addr = 0x2000 * self.secondary_bank_register as u16 + addr;
-        ram[addr as usize] = b;
+        if let Some(offset) = self.ram_offset(addr) {
+            ram[offset] = b;
+        }
+    }
+
+    /// Where an access to A000-BFFF lands in RAM, if anywhere.
+    fn ram_offset(&self, addr: u16) -> Option<usize> {
+        if !self.ram_enabled || self.ram_banks == 0 {
+            return None;
+        }
+        let bank = if self.mode_1 { self.bank2 as usize } else { 0 };
+        Some((bank & (self.ram_banks - 1)) * 0x2000 + addr as usize)
     }
 }

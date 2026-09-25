@@ -33,30 +33,26 @@ impl Cartridge {
         );
         let mut cartridge = Self {
             data: content.into_boxed_slice(),
-            // Allocate the most RAM a cart can have
-            ram: vec![0; 64 * 1024].into_boxed_slice(),
+            ram: Box::default(),
             mbc: Mbc::Mbc1(Mbc1::new(0, 0, false)),
         };
+        let rom_len = cartridge.data.len();
+        let mut ram_banks = cartridge.get_num_ram_banks().unwrap_or(0) as usize;
         cartridge.mbc = match cartridge.data[0x0147] {
-            0x0F..=0x13 => Mbc::Mbc3(Mbc3::new(
-                cartridge.data.len(),
-                cartridge.get_num_ram_banks().unwrap_or(0) as usize,
-                cartridge.has_rtc(),
-            )),
-            t => {
-                if !matches!(t, 0x00..=0x03) {
-                    warn!(
-                        "Unsupported cartridge type {}, falling back to MBC1",
-                        cartridge.cartridge_type()
-                    );
-                }
-                Mbc::Mbc1(Mbc1::new(
-                    cartridge.get_rom_size(),
-                    cartridge.get_ram_size(),
-                    matches!(t, 0x01..=0x03),
-                ))
+            0x0F..=0x13 => Mbc::Mbc3(Mbc3::new(rom_len, ram_banks, cartridge.has_rtc())),
+            t @ 0x00..=0x03 => Mbc::Mbc1(Mbc1::new(rom_len, ram_banks, t != 0x00)),
+            _ => {
+                warn!(
+                    "Unsupported cartridge type {}, falling back to MBC1",
+                    cartridge.cartridge_type()
+                );
+                // MBC2 has built-in RAM that the header doesn't declare: keep some RAM mapped so
+                // it has somewhere to go.
+                ram_banks = ram_banks.max(1);
+                Mbc::Mbc1(Mbc1::new(rom_len, ram_banks, false))
             }
         };
+        cartridge.ram = vec![0; ram_banks * 0x2000].into_boxed_slice();
         Ok(cartridge)
     }
 
@@ -275,14 +271,85 @@ impl Cartridge {
 mod tests {
     use super::*;
 
-    /// A 128KiB MBC3+TIMER+RAM+BATTERY cart with 32KiB of RAM, each ROM bank filled with its
+    /// A cart of the given type and ROM/RAM size codes, with each ROM bank filled with its
     /// number.
-    fn mbc3_cartridge() -> Cartridge {
-        let mut rom: Vec<u8> = (0..8u8).flat_map(|bank| [bank; 0x4000]).collect();
-        rom[0x0147] = 0x10;
-        rom[0x0148] = 0x02;
-        rom[0x0149] = 0x03;
+    fn cartridge(cartridge_type: u8, rom_size: u8, ram_size: u8) -> Cartridge {
+        let banks = 2u16 << rom_size;
+        let mut rom: Vec<u8> = (0..banks).flat_map(|bank| [bank as u8; 0x4000]).collect();
+        rom[0x0147] = cartridge_type;
+        rom[0x0148] = rom_size;
+        rom[0x0149] = ram_size;
         Cartridge::load_bytes(rom).unwrap()
+    }
+
+    /// A 128KiB MBC3+TIMER+RAM+BATTERY cart with 32KiB of RAM.
+    fn mbc3_cartridge() -> Cartridge {
+        cartridge(0x10, 0x02, 0x03)
+    }
+
+    #[test]
+    fn test_mbc1_rom_banking() {
+        // 2MiB
+        let mut cart = cartridge(0x01, 0x06, 0x00);
+        assert_eq!(cart.read_rom(0x4000), 1);
+        // Only the low 5 bits are checked for bank 0
+        cart.write_rom(0x2000, 0x20);
+        assert_eq!(cart.read_rom(0x4000), 1);
+        cart.write_rom(0x2000, 0x05);
+        cart.write_rom(0x4000, 0x02);
+        assert_eq!(cart.read_rom(0x7FFF), 0x45);
+        // BANK2 only applies to 0000-3FFF in mode 1
+        assert_eq!(cart.read_rom(0x1000), 0x00);
+        cart.write_rom(0x6000, 0x01);
+        assert_eq!(cart.read_rom(0x1000), 0x40);
+        assert_eq!(cart.read_rom(0x4000), 0x45);
+
+        // Banks beyond the end of the ROM wrap around: 256KiB has 16 banks
+        let mut cart = cartridge(0x01, 0x03, 0x00);
+        cart.write_rom(0x2000, 0x15);
+        cart.write_rom(0x4000, 0x03);
+        assert_eq!(cart.read_rom(0x4000), 0x05);
+        cart.write_rom(0x6000, 0x01);
+        assert_eq!(cart.read_rom(0x0000), 0x00);
+    }
+
+    #[test]
+    fn test_mbc1_ram_banking() {
+        // 512KiB of ROM, 32KiB of RAM
+        let mut cart = cartridge(0x03, 0x04, 0x03);
+        // RAM is disabled on power-on
+        cart.write_ram(0x0000, 0x42);
+        assert_eq!(cart.read_ram(0x0000), 0xFF);
+        cart.write_rom(0x0000, 0x0A);
+        assert_eq!(cart.read_ram(0x0000), 0x00);
+
+        // In mode 0, BANK2 doesn't apply to RAM, for writes as well as reads.
+        cart.write_rom(0x4000, 0x02);
+        cart.write_ram(0x0000, 0xAA);
+        assert_eq!(cart.read_ram(0x0000), 0xAA);
+        assert_eq!(cart.save_ram().unwrap()[0], 0xAA);
+
+        cart.write_rom(0x6000, 0x01);
+        assert_eq!(cart.read_ram(0x0000), 0x00);
+        cart.write_ram(0x0000, 0xBB);
+        assert_eq!(cart.save_ram().unwrap()[2 * 0x2000], 0xBB);
+
+        cart.write_rom(0x0000, 0x00);
+        assert_eq!(cart.read_ram(0x0000), 0xFF);
+    }
+
+    #[test]
+    fn test_ram_sizes() {
+        // No RAM: reads are open bus
+        let mut cart = cartridge(0x01, 0x00, 0x00);
+        cart.write_rom(0x0000, 0x0A);
+        cart.write_ram(0x0000, 0x42);
+        assert_eq!(cart.read_ram(0x0000), 0xFF);
+        assert!(cart.save_ram().is_none());
+
+        // 128KiB, which is more than MBC1 can address
+        let cart = cartridge(0x03, 0x00, 0x04);
+        assert_eq!(cart.save_ram().unwrap().len(), 128 * 1024);
     }
 
     #[test]
