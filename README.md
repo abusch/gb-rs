@@ -16,6 +16,8 @@ Current keybindings:
 - <kbd>ESC</kbd>: Exit
 - <kbd>D</kbd>: interrupt the program and start the command-line debugger
 - <kbd>S</kbd>: Take a screenshot
+- <kbd>F5</kbd>: Save the state of the game (to a `.state` file next to the ROM)
+- <kbd>F7</kbd>: Load the saved state
 
 Gamepads work too, and can be plugged in while the emulator runs (you can also use the keyboard at the same time):
 - D-pad or left stick: Joypad

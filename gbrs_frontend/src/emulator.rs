@@ -124,6 +124,8 @@ pub struct Emulator {
     gb: GameBoy,
     /// Where the cartridge's battery-backed RAM is persisted.
     save_file: PathBuf,
+    /// Where the quick save state goes.
+    state_file: PathBuf,
     start_time_ns: Instant,
     emulated_cycles: u64,
     debugger: Debugger,
@@ -172,6 +174,7 @@ impl Emulator {
         Ok(Self {
             gb,
             save_file,
+            state_file: rom.with_extension("state"),
             start_time_ns: now,
             emulated_cycles: 0,
             debugger: Debugger::new()?,
@@ -317,6 +320,26 @@ impl Emulator {
         Ok(())
     }
 
+    fn save_state(&mut self) {
+        match fs::write(&self.state_file, self.gb.save_state()) {
+            Ok(()) => info!("Saved state to {}", self.state_file.display()),
+            Err(e) => warn!("Failed to save state to {}: {e}", self.state_file.display()),
+        }
+    }
+
+    fn load_state(&mut self) {
+        let result = fs::read(&self.state_file)
+            .context("Failed to read file")
+            .and_then(|state| self.gb.load_state(&state));
+        match result {
+            Ok(()) => info!("Loaded state from {}", self.state_file.display()),
+            Err(e) => warn!(
+                "Failed to load state from {}: {e:#}",
+                self.state_file.display()
+            ),
+        }
+    }
+
     pub fn handle_input(&mut self, key: KeyEvent) {
         // Ignore repeats
         if key.repeat {
@@ -338,6 +361,14 @@ impl Emulator {
             KeyCode::ArrowRight => Button::Right,
             KeyCode::KeyD => {
                 self.start_debugger();
+                return;
+            }
+            KeyCode::F5 if key.state.is_pressed() => {
+                self.save_state();
+                return;
+            }
+            KeyCode::F7 if key.state.is_pressed() => {
+                self.load_state();
                 return;
             }
             _ => return,
