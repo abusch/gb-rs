@@ -298,7 +298,6 @@ impl Emulator {
         }
     }
 
-    #[allow(dead_code)]
     pub fn screenshot(&mut self) -> Result<()> {
         let filename = format!(
             "gb-rs-screenshot_{}.png",
@@ -316,7 +315,7 @@ impl Emulator {
         let mut data = [0u8; SCREEN_WIDTH * SCREEN_HEIGHT * 4];
         self.sink.draw_current_frame(&mut data);
         writer.write_image_data(&data)?;
-        println!("Saved screenshot to {}", filename);
+        info!("Saved screenshot to {}", filename);
         Ok(())
     }
 
@@ -361,6 +360,12 @@ impl Emulator {
             KeyCode::ArrowRight => Button::Right,
             KeyCode::KeyD => {
                 self.start_debugger();
+                return;
+            }
+            KeyCode::KeyS if key.state.is_pressed() => {
+                if let Err(e) = self.screenshot() {
+                    warn!("Failed to save screenshot: {e}");
+                }
                 return;
             }
             KeyCode::F5 if key.state.is_pressed() => {
