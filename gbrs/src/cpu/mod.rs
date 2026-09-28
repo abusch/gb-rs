@@ -13,7 +13,7 @@ const ITR_TIMER: u16 = 0x0050;
 const ITR_SERIAL: u16 = 0x0058;
 const ITR_JOYP: u16 = 0x0060;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct Cpu {
     regs: Registers,
 
@@ -21,12 +21,13 @@ pub struct Cpu {
     pc: u16,
     halted: bool,
 
-    /// IME - Interrupt Master Enable Flag
+    /// IME - Interrupt Master Enable Flag. Interrupts are disabled at power-on, and the boot ROM
+    /// doesn't enable them either.
     ime: bool,
 
     // for debugging, so not part of save states
     #[serde(skip)]
-    breakpoint: u16,
+    breakpoint: Option<u16>,
     #[serde(skip)]
     paused: bool,
     // Pause cpu if LD B,B is encountered
@@ -37,28 +38,10 @@ pub struct Cpu {
     halt_bug: bool,
 }
 
-impl Default for Cpu {
-    fn default() -> Self {
-        Self {
-            regs: Registers::default(),
-            sp: Default::default(),
-            pc: Default::default(),
-            halted: false,
-            // Interrupts are disabled at power-on, and the boot ROM doesn't enable them either
-            ime: false,
-            // breakpoint: 0x0100,
-            breakpoint: 0xffff,
-            paused: Default::default(),
-            enable_soft_break: false,
-            halt_bug: false,
-        }
-    }
-}
-
 impl Cpu {
     pub fn with_breakpoint(breakpoint: Option<u16>, enable_soft_break: bool) -> Self {
         Self {
-            breakpoint: breakpoint.unwrap_or(0xffff),
+            breakpoint,
             enable_soft_break,
             ..Self::default()
         }
@@ -143,7 +126,7 @@ impl Cpu {
     /// Return the number of clock cycles used
     pub fn step(&mut self, bus: &mut Bus) -> u8 {
         // for debugging
-        if self.pc == self.breakpoint {
+        if self.breakpoint == Some(self.pc) {
             self.paused = true;
         }
         if self.halted {
@@ -2065,7 +2048,7 @@ impl Cpu {
 
     /// Set the cpu's breakpoint.
     pub fn set_breakpoint(&mut self, breakpoint: u16) {
-        self.breakpoint = breakpoint;
+        self.breakpoint = Some(breakpoint);
     }
 
     /// Get the cpu's halted.
