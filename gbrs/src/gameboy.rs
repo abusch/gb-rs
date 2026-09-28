@@ -116,11 +116,11 @@ impl GameBoy {
 
     pub fn pause(&mut self) {
         self.cpu.set_pause(true);
-        self.bus.gfx.disable();
+        self.bus.gfx.set_debugger_access(true);
     }
 
     pub fn resume(&mut self) {
-        self.bus.gfx.enable();
+        self.bus.gfx.set_debugger_access(false);
         self.cpu.set_pause(false);
     }
 
@@ -377,9 +377,9 @@ mod tests {
             );
         }
 
-        // Turn the LCD off so the PPU doesn't lock the CPU out of VRAM.
-        booted.bus.gfx.disable();
-        skipped.bus.gfx.disable();
+        // So that the PPU doesn't lock the CPU out of VRAM.
+        booted.bus.gfx.set_debugger_access(true);
+        skipped.bus.gfx.set_debugger_access(true);
         for addr in 0x8000..=0x9FFF {
             assert_eq!(
                 booted.bus.read_byte(addr),

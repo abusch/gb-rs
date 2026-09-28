@@ -116,6 +116,11 @@ pub struct Gfx {
 
     // Window internal line counter
     window_internal_line_counter: u8,
+
+    /// Gives the debugger access to VRAM and OAM whatever the PPU is doing. Not part of save
+    /// states.
+    #[serde(skip)]
+    debugger_access: bool,
 }
 
 impl Gfx {
@@ -126,7 +131,8 @@ impl Gfx {
             lcd: vec![Rgb555::default(); SCREEN_WIDTH * SCREEN_HEIGHT].into_boxed_slice(),
             dmg_palette: DEFAULT_DMG_PALETTE,
             line_dot: 0,
-            running_mode: Mode::Mode2,
+            // What STAT reports while the LCD is off
+            running_mode: Mode::Mode0,
             // TODO should it be exploded into individual flags?
             lcd_and_ppu_enabled: false,
             window_tile_map_area: false,
@@ -148,6 +154,7 @@ impl Gfx {
             stat_sources: 0,
             stat_conditions: 0,
             window_internal_line_counter: 0,
+            debugger_access: false,
         }
     }
 
@@ -187,11 +194,23 @@ impl Gfx {
     /// Note: when the PPU is active (mode 3), this area is locked to the CPU so reads will return
     /// 0xFF in that case.
     pub fn read_vram(&self, addr: u16) -> u8 {
-        if self.running_mode != Mode::Mode3 || !self.lcd_and_ppu_enabled {
+        if self.vram_accessible() {
             self.read_vram_internal(addr)
         } else {
             0xff
         }
+    }
+
+    /// The CPU can't access VRAM while the PPU draws a line (mode 3).
+    fn vram_accessible(&self) -> bool {
+        self.debugger_access || !self.lcd_and_ppu_enabled || self.running_mode != Mode::Mode3
+    }
+
+    /// The CPU can't access OAM while the PPU uses it (modes 2 and 3).
+    fn oam_accessible(&self) -> bool {
+        self.debugger_access
+            || !self.lcd_and_ppu_enabled
+            || !matches!(self.running_mode, Mode::Mode2 | Mode::Mode3)
     }
 
     /// Read access to the VRAM from within the PPU
@@ -200,15 +219,13 @@ impl Gfx {
     }
 
     pub fn write_vram(&mut self, addr: u16, b: u8) {
-        if self.running_mode != Mode::Mode3 || !self.lcd_and_ppu_enabled {
+        if self.vram_accessible() {
             self.vram[(addr - VRAM_START) as usize] = b;
         }
     }
 
     pub fn read_oam(&self, addr: u16) -> u8 {
-        if !self.lcd_and_ppu_enabled
-            || (self.running_mode != Mode::Mode2 && self.running_mode != Mode::Mode3)
-        {
+        if self.oam_accessible() {
             self.oam_ram[(addr - OAM_START) as usize]
         } else {
             0xff
@@ -216,9 +233,7 @@ impl Gfx {
     }
 
     pub fn write_oam(&mut self, addr: u16, b: u8) {
-        if !self.lcd_and_ppu_enabled
-            || (self.running_mode != Mode::Mode2 && self.running_mode != Mode::Mode3)
-        {
+        if self.oam_accessible() {
             self.oam_ram[(addr - OAM_START) as usize] = b;
         }
     }
@@ -285,10 +300,23 @@ impl Gfx {
             self.obj_enabled = bits[1];
             self.bg_and_window_enable = bits[0];
             trace!("LCDC reg = 0b{:b}", b);
-            if orig_lcd_state && !self.lcd_and_ppu_enabled {
-                trace!("LCD turned OFF!");
-            } else if !orig_lcd_state && self.lcd_and_ppu_enabled {
-                trace!("LCD turned ON!");
+            if orig_lcd_state != self.lcd_and_ppu_enabled {
+                trace!(
+                    "LCD turned {}",
+                    if self.lcd_and_ppu_enabled {
+                        "ON"
+                    } else {
+                        "OFF"
+                    }
+                );
+                // The PPU stops while the LCD is off, with LY at 0 and STAT in mode 0, and turning
+                // it back on starts a new frame. Mode 0 is also what STAT reports on the first line
+                // after that, instead of mode 2, until drawing starts.
+                self.ly = 0;
+                self.line_dot = 0;
+                self.running_mode = Mode::Mode0;
+                self.window_internal_line_counter = 0;
+                self.update_stat_conditions();
             }
         } else if addr == STAT_REG {
             self.set_stat(b);
@@ -337,6 +365,9 @@ impl Gfx {
 
     pub(crate) fn dots(&mut self, cycles: u8, frame_sink: &mut dyn FrameSink) -> InterruptFlag {
         let mut interrupt = InterruptFlag::empty();
+        if !self.lcd_and_ppu_enabled {
+            return interrupt;
+        }
         let mut remaining = cycles as u16;
         while remaining > 0 {
             // The first dot picks up any register writes made since the last call.
@@ -381,9 +412,7 @@ impl Gfx {
             if self.ly == SCREEN_HEIGHT as u8 {
                 // VBlank
                 self.running_mode = Mode::Mode1;
-                if self.lcd_and_ppu_enabled {
-                    frame_sink.push_frame(&self.lcd);
-                }
+                frame_sink.push_frame(&self.lcd);
                 interrupts |= InterruptFlag::VBLANK;
                 // Reset the window internal line counter
                 self.window_internal_line_counter = 0;
@@ -402,8 +431,7 @@ impl Gfx {
             }
         }
 
-        let lyc_eq_ly = if self.ly == self.lyc { STAT_LYC } else { 0 };
-        self.stat_conditions = self.running_mode.stat_condition() | lyc_eq_ly;
+        self.update_stat_conditions();
 
         let new_stat_line = self.stat_line();
         // A STAT interrupt will be triggered by a rising edge (transition from low to high) on the
@@ -413,12 +441,12 @@ impl Gfx {
             interrupts |= InterruptFlag::STAT;
         }
 
-        // Only raise interrupts requests if the LCD is on
-        if self.lcd_and_ppu_enabled {
-            interrupts
-        } else {
-            InterruptFlag::empty()
-        }
+        interrupts
+    }
+
+    fn update_stat_conditions(&mut self) {
+        let lyc_eq_ly = if self.ly == self.lyc { STAT_LYC } else { 0 };
+        self.stat_conditions = self.running_mode.stat_condition() | lyc_eq_ly;
     }
 
     // Only runs once per line: keep it out of `dots`, which runs every M-cycle and would otherwise
@@ -620,6 +648,7 @@ impl Gfx {
     /// Carry over what save states leave out from the `Gfx` this one replaces.
     pub(crate) fn restore_unsaved(&mut self, previous: &Self) {
         self.dmg_palette = previous.dmg_palette;
+        self.debugger_access = previous.debugger_access;
     }
 
     pub(crate) fn set_dmg_palette(&mut self, palette: [Rgb555; 4]) {
@@ -665,18 +694,9 @@ impl Gfx {
         println!("OBP1: {}", self.obp1.to_debug_str(&self.dmg_palette));
     }
 
-    /// Disable the LCD.
-    ///
-    /// This is meant to be called by the debugger to allow access to VRAM.
-    pub(crate) fn disable(&mut self) {
-        self.lcd_and_ppu_enabled = false;
-    }
-
-    /// Enable the LCD.
-    ///
-    /// This is meant to be called by the debugger before resuming normal running mode.
-    pub(crate) fn enable(&mut self) {
-        self.lcd_and_ppu_enabled = true;
+    /// Let the debugger access VRAM and OAM even while the PPU is using them.
+    pub(crate) fn set_debugger_access(&mut self, enabled: bool) {
+        self.debugger_access = enabled;
     }
 
     /// The various STAT interrupt sources (modes 0-2 and LYC=LY) have their state (inactive=low
