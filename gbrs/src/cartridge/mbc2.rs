@@ -1,6 +1,8 @@
 use log::trace;
 use serde::{Deserialize, Serialize};
 
+use super::{read_rom_bank, rom_bank_count};
+
 /// Size of the MBC2's built-in RAM, in half-bytes (stored one per byte).
 pub(super) const MBC2_RAM_SIZE: usize = 512;
 
@@ -20,7 +22,7 @@ pub(super) struct Mbc2 {
 impl Mbc2 {
     pub(super) fn new(rom_len: usize) -> Self {
         Self {
-            rom_banks: rom_len.div_ceil(0x4000).next_power_of_two(),
+            rom_banks: rom_bank_count(rom_len),
             ram_enabled: false,
             rom_bank: 1,
         }
@@ -48,13 +50,12 @@ impl Mbc2 {
     }
 
     pub(super) fn read_rom(&self, rom: &[u8], addr: u16) -> u8 {
-        let offset = if addr < 0x4000 {
-            addr as usize
+        let bank = if addr < 0x4000 {
+            0
         } else {
-            (self.rom_bank as usize & (self.rom_banks - 1)) * 0x4000 + (addr - 0x4000) as usize
+            self.rom_bank as usize
         };
-        // ROM dumps whose size isn't a power of 2 leave some banks unbacked
-        rom.get(offset).copied().unwrap_or(0xFF)
+        read_rom_bank(rom, self.rom_banks, bank, addr)
     }
 
     pub(super) fn read_ram(&self, ram: &[u8], addr: u16) -> u8 {

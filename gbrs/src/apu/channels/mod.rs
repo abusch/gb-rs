@@ -2,13 +2,12 @@ mod noise;
 mod tone;
 mod wave;
 
-use log::debug;
 pub(crate) use noise::NoiseChannel;
 use serde::{Deserialize, Serialize};
 pub(crate) use tone::ToneChannel;
 pub(crate) use wave::WaveChannel;
 
-use super::Timer;
+use super::{Timer, frame_sequencer::FrameSequencer};
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct HighPassFilter {
@@ -77,14 +76,21 @@ impl LengthCounter {
         self.length_counter = length;
     }
 
-    /// Handle a write to NRx4, which enables or disables length counting and can trigger the
-    /// channel. Return whether that disables the channel.
+    /// NRx4, where only the length enable bit (6) can be read back.
+    fn nrx4(&self) -> u8 {
+        0xBF | (self.length_enabled as u8) << 6
+    }
+
+    /// Handle a write to NRx4, which enables or disables length counting (bit 6) and can trigger
+    /// the channel (bit 7). Return whether that disables the channel.
     ///
     /// Enabling length counting when the frame sequencer's next step doesn't clock it clocks it
     /// once straight away, and a trigger loads a counter that reached 0 with the maximum, minus
     /// that extra clock. See <https://gbdev.io/pandocs/Audio_details.html#obscure-behavior>.
-    fn write_nrx4(&mut self, enable: bool, trigger: bool, next_step_clocks_length: bool) -> bool {
-        let extra_clock = enable && !next_step_clocks_length;
+    fn write_nrx4(&mut self, b: u8, frame_sequencer: &FrameSequencer) -> bool {
+        let enable = b & 0x40 != 0;
+        let trigger = b & 0x80 != 0;
+        let extra_clock = enable && !frame_sequencer.next_step_clocks_length();
         let mut disable = false;
         if extra_clock && !self.length_enabled && self.length_counter > 0 {
             self.length_counter -= 1;
@@ -107,14 +113,14 @@ impl LengthCounter {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct VolumeEnvelope<const N: u8> {
+struct VolumeEnvelope {
     start_volume: u8,
     volume: u8,
     volume_increase: bool,
     timer: Timer,
 }
 
-impl<const N: u8> VolumeEnvelope<N> {
+impl VolumeEnvelope {
     fn new() -> Self {
         Self {
             start_volume: 0,
@@ -124,21 +130,27 @@ impl<const N: u8> VolumeEnvelope<N> {
         }
     }
 
-    fn reload(&mut self, start_volume: u8, volume_increase: bool, envelope_period: u16) {
-        self.start_volume = start_volume;
-        self.volume_increase = volume_increase;
-        self.timer.period = envelope_period;
+    /// NRx2: the start volume, direction and period.
+    fn nrx2(&self) -> u8 {
+        self.start_volume << 4 | (self.volume_increase as u8) << 3 | self.timer.period as u8
+    }
+
+    /// Write NRx2. Return whether the channel's DAC is on, which it is unless both the start
+    /// volume and the direction are 0.
+    fn write_nrx2(&mut self, b: u8) -> bool {
+        self.start_volume = b >> 4;
+        self.volume_increase = b & 0x08 != 0;
+        self.timer.period = u16::from(b & 0x07);
         self.timer.reset();
+        b & 0xF8 != 0
     }
 
     fn tick(&mut self) {
         if self.timer.tick() {
             if self.volume_increase && self.volume < 15 {
                 self.volume += 1;
-                debug!("Channel {N}: increasing volume {}", self.volume);
             } else if !self.volume_increase && self.volume > 0 {
                 self.volume -= 1;
-                debug!("Channel {N} decreasing volume {}", self.volume);
             }
         }
     }

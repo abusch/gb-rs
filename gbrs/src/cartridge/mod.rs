@@ -14,6 +14,25 @@ use mbc3::Mbc3;
 use mbc5::Mbc5;
 pub use rtc::RTC_SAVE_SIZE;
 
+/// Number of 16KiB ROM banks, rounded up to a power of 2 so that it can mask bank numbers.
+fn rom_bank_count(rom_len: usize) -> usize {
+    rom_len.div_ceil(0x4000).next_power_of_two()
+}
+
+/// Read ROM at `addr` (0000-7FFF) with `bank` mapped at its 16KiB. Bank numbers wrap around to
+/// the size of the ROM, since their higher bits aren't wired, and banks past the end of ROM dumps
+/// whose size isn't a power of 2 read as 0xFF.
+fn read_rom_bank(rom: &[u8], rom_banks: usize, bank: usize, addr: u16) -> u8 {
+    let offset = (bank & (rom_banks - 1)) * 0x4000 + (addr as usize & 0x3FFF);
+    rom.get(offset).copied().unwrap_or(0xFF)
+}
+
+/// Where `addr` (0000-1FFF) of RAM bank `bank` is, wrapping the bank number around to the number
+/// of 8KiB banks.
+fn ram_bank_offset(ram_banks: usize, bank: usize, addr: u16) -> usize {
+    (bank & (ram_banks - 1)) * 0x2000 + addr as usize
+}
+
 /// The memory bank controller, which maps the cartridge's ROM and RAM into the address space.
 #[derive(Serialize, Deserialize)]
 enum Mbc {

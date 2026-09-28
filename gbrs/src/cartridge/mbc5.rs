@@ -1,6 +1,8 @@
 use log::trace;
 use serde::{Deserialize, Serialize};
 
+use super::{ram_bank_offset, read_rom_bank, rom_bank_count};
+
 /// MBC5 mapper: up to 8MiB of ROM and 128KiB of RAM, optionally with a rumble motor.
 ///
 /// See <https://gbdev.io/pandocs/MBC5.html>.
@@ -23,7 +25,7 @@ pub(super) struct Mbc5 {
 impl Mbc5 {
     pub(super) fn new(rom_len: usize, ram_banks: usize, has_rumble: bool) -> Self {
         Self {
-            rom_banks: rom_len.div_ceil(0x4000).next_power_of_two(),
+            rom_banks: rom_bank_count(rom_len),
             ram_banks,
             has_rumble,
             ram_enabled: false,
@@ -62,13 +64,12 @@ impl Mbc5 {
     }
 
     pub(super) fn read_rom(&self, rom: &[u8], addr: u16) -> u8 {
-        let offset = if addr < 0x4000 {
-            addr as usize
+        let bank = if addr < 0x4000 {
+            0
         } else {
-            (self.rom_bank as usize & (self.rom_banks - 1)) * 0x4000 + (addr - 0x4000) as usize
+            self.rom_bank as usize
         };
-        // ROM dumps whose size isn't a power of 2 leave some banks unbacked
-        rom.get(offset).copied().unwrap_or(0xFF)
+        read_rom_bank(rom, self.rom_banks, bank, addr)
     }
 
     pub(super) fn read_ram(&self, ram: &[u8], addr: u16) -> u8 {
@@ -89,6 +90,10 @@ impl Mbc5 {
         if !self.ram_enabled || self.ram_banks == 0 {
             return None;
         }
-        Some((self.ram_bank as usize & (self.ram_banks - 1)) * 0x2000 + addr as usize)
+        Some(ram_bank_offset(
+            self.ram_banks,
+            self.ram_bank as usize,
+            addr,
+        ))
     }
 }

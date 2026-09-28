@@ -1,4 +1,3 @@
-use bitvec::{field::BitField, order::Lsb0, view::BitView};
 use channels::HighPassFilter;
 use log::debug;
 use serde::{Deserialize, Serialize};
@@ -49,16 +48,10 @@ const TIMER_PERIOD: u16 = 8192;
 pub struct Apu {
     /// Main on/off switch for the whole APU. Comes from NR52 (bit 7).
     apu_enabled: bool,
-    /// NR51
-    sound_output_selection: u8,
-    /// Left volume. Comes from NR50.
-    left_volume: u8,
-    /// Right volume. Comes from NR50.
-    right_volume: u8,
-    /// Enable Vin into left output (comes from NR50)
-    left_vin_enabled: bool,
-    /// Enable Vin into right output (comes from NR50)
-    right_vin_enabled: bool,
+    /// NR50: the left (bits 4-6) and right (bits 0-2) volumes, and whether to mix in Vin
+    nr50: u8,
+    /// NR51: which channels go to the left (bits 4-7) and right (bits 0-3) outputs
+    nr51: u8,
 
     // Left high-pass filter
     left_hpf: HighPassFilter,
@@ -79,8 +72,8 @@ pub struct Apu {
     timer: Timer,
     frame_sequencer: FrameSequencer,
 
-    channel1: ToneChannel<1>,
-    channel2: ToneChannel<2>,
+    channel1: ToneChannel,
+    channel2: ToneChannel,
     channel3: WaveChannel,
     channel4: NoiseChannel,
 }
@@ -94,12 +87,9 @@ impl Apu {
     pub fn new(sample_rate: u32) -> Self {
         Self {
             apu_enabled: true,
-            sound_output_selection: 0,
-            left_vin_enabled: false,
-            left_volume: 0,
+            nr50: 0,
+            nr51: 0,
             left_hpf: HighPassFilter::default(),
-            right_vin_enabled: false,
-            right_volume: 0,
             right_hpf: HighPassFilter::default(),
 
             sample_rate,
@@ -238,37 +228,27 @@ impl Apu {
         let mut left = 0.0;
         let mut right = 0.0;
 
-        let nr51 = self.sound_output_selection.view_bits::<Lsb0>();
-
-        // Mix all the analog values
-        if nr51[7] {
-            left += self.channel4.output();
-        }
-        if nr51[6] {
-            left += self.channel3.output();
-        }
-        if nr51[5] {
-            left += self.channel2.output();
-        }
-        if nr51[4] {
-            left += self.channel1.output();
-        }
-        if nr51[3] {
-            right += self.channel4.output();
-        }
-        if nr51[2] {
-            right += self.channel3.output();
-        }
-        if nr51[1] {
-            right += self.channel2.output();
-        }
-        if nr51[0] {
-            right += self.channel1.output();
+        // Mix all the analog values, from channel 4 down to 1
+        let outputs = [
+            self.channel4.output(),
+            self.channel3.output(),
+            self.channel2.output(),
+            self.channel1.output(),
+        ];
+        for (i, output) in outputs.into_iter().enumerate() {
+            if self.nr51 & (0x80 >> i) != 0 {
+                left += output;
+            }
+            if self.nr51 & (0x08 >> i) != 0 {
+                right += output;
+            }
         }
 
         // Apply master volume
-        left *= 1.0 / ((8 - self.left_volume) as f32);
-        right *= 1.0 / ((8 - self.right_volume) as f32);
+        let left_volume = (self.nr50 >> 4) & 0x07;
+        let right_volume = self.nr50 & 0x07;
+        left *= 1.0 / ((8 - left_volume) as f32);
+        right *= 1.0 / ((8 - right_volume) as f32);
 
         (left, right)
     }
@@ -302,25 +282,15 @@ impl Apu {
             REG_NR43 => self.channel4.nr43(),
             REG_NR44 => self.channel4.nr44(),
             // sound control
-            REG_NR50 => {
-                let mut res = 0xFF;
-                let bits = res.view_bits_mut::<Lsb0>();
-                bits.set(7, self.left_vin_enabled);
-                bits[4..=6].store::<u8>(self.left_volume);
-                bits.set(3, self.right_vin_enabled);
-                bits[0..=2].store::<u8>(self.right_volume);
-                res
-            }
-            REG_NR51 => self.sound_output_selection,
+            REG_NR50 => self.nr50,
+            REG_NR51 => self.nr51,
+            // Bits 4-6 are unused, and read as 1
             REG_NR52 => {
-                let mut byte = 0xff;
-                let bits = byte.view_bits_mut::<Lsb0>();
-                bits.set(7, self.apu_enabled);
-                bits.set(3, self.channel4.enabled());
-                bits.set(2, self.channel3.enabled());
-                bits.set(1, self.channel2.enabled());
-                bits.set(0, self.channel1.enabled());
-                byte
+                0x70 | (self.apu_enabled as u8) << 7
+                    | (self.channel4.enabled() as u8) << 3
+                    | (self.channel3.enabled() as u8) << 2
+                    | (self.channel2.enabled() as u8) << 1
+                    | self.channel1.enabled() as u8
             }
             _ => panic!("Invalid sound register {:04x}", addr),
         }
@@ -330,18 +300,15 @@ impl Apu {
         self.catch_up();
         // While the APU is off, writes are ignored, except to NR52 and (on the DMG) to the length
         // counters.
-        if !self.apu_enabled {
+        if !self.apu_enabled && addr != REG_NR52 {
             match addr {
                 REG_NR11 => self.channel1.set_length(b),
                 REG_NR21 => self.channel2.set_length(b),
                 REG_NR31 => self.channel3.set_nr31(b),
                 REG_NR41 => self.channel4.set_nr41(b),
-                REG_NR52 => (),
-                _ => return,
+                _ => (),
             }
-            if addr != REG_NR52 {
-                return;
-            }
+            return;
         }
         let frame_sequencer = self.frame_sequencer;
 
@@ -371,28 +338,19 @@ impl Apu {
             REG_NR43 => self.channel4.set_nr43(b),
             REG_NR44 => self.channel4.set_nr44(b, &frame_sequencer),
             // sound control
-            REG_NR50 => {
-                let bits = b.view_bits::<Lsb0>();
-                self.left_vin_enabled = bits[7];
-                self.left_volume = bits[4..=6].load::<u8>();
-                self.right_vin_enabled = bits[3];
-                self.right_volume = bits[0..=2].load::<u8>();
-            }
-            REG_NR51 => self.sound_output_selection = b,
+            REG_NR50 => self.nr50 = b,
+            REG_NR51 => self.nr51 = b,
             REG_NR52 => {
                 let was_enabled = self.apu_enabled;
-                self.apu_enabled = b.view_bits::<Lsb0>()[7];
+                self.apu_enabled = b & 0x80 != 0;
                 if self.apu_enabled && !was_enabled {
                     debug!("Turning APU ON!");
                     self.frame_sequencer.restart();
                 } else if !self.apu_enabled {
                     debug!("Turning APU OFF!");
-                    self.left_vin_enabled = false;
-                    self.right_vin_enabled = false;
                     self.timer.reset();
-                    self.left_volume = 0;
-                    self.right_volume = 0;
-                    self.sound_output_selection = 0;
+                    self.nr50 = 0;
+                    self.nr51 = 0;
                     self.channel1.power_off();
                     self.channel2.power_off();
                     self.channel3.power_off();

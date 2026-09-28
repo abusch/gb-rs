@@ -1,62 +1,33 @@
-use bitvec::{order::Lsb0, view::BitView};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Joypad {
-    action_selected: bool,
-    direction_selected: bool,
-    select_pressed: bool,
-    start_pressed: bool,
-    a_pressed: bool,
-    b_pressed: bool,
-    up_pressed: bool,
-    down_pressed: bool,
-    left_pressed: bool,
-    right_pressed: bool,
-}
+/// P1 bit that is set while the direction buttons are *not* selected.
+const DIRECTIONS_DESELECTED: u8 = 1 << 4;
+/// P1 bit that is set while the action buttons are *not* selected.
+const ACTIONS_DESELECTED: u8 = 1 << 5;
 
-impl Default for Joypad {
-    fn default() -> Self {
-        Self {
-            action_selected: true,
-            direction_selected: true,
-            select_pressed: Default::default(),
-            start_pressed: Default::default(),
-            a_pressed: Default::default(),
-            b_pressed: Default::default(),
-            up_pressed: Default::default(),
-            down_pressed: Default::default(),
-            left_pressed: Default::default(),
-            right_pressed: Default::default(),
-        }
-    }
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct Joypad {
+    /// The group selection bits of P1 (`*_DESELECTED`). Both groups are selected at power-on.
+    select: u8,
+    /// The buttons held, one bit each (see `Button`).
+    pressed: u8,
 }
 
 impl Joypad {
     /// The P1/JOYP register. Bits 0-3 are the input lines, low when a button in a selected group
     /// is pressed. With both groups selected, a line is low if either of its buttons is pressed.
     pub fn read(&self) -> u8 {
-        let mut byte = 0xFFu8;
-        let bits = byte.view_bits_mut::<Lsb0>();
-        bits.set(4, !self.direction_selected);
-        bits.set(5, !self.action_selected);
-        byte & !self.pressed_lines()
+        0xC0 | self.select | (!self.pressed_lines() & 0x0F)
     }
 
     /// The input lines pulled low by pressed buttons in the selected groups, as a bitmask.
     fn pressed_lines(&self) -> u8 {
         let mut lines = 0;
-        if self.action_selected {
-            lines |= self.a_pressed as u8
-                | (self.b_pressed as u8) << 1
-                | (self.select_pressed as u8) << 2
-                | (self.start_pressed as u8) << 3;
+        if self.select & ACTIONS_DESELECTED == 0 {
+            lines |= self.pressed & 0x0F;
         }
-        if self.direction_selected {
-            lines |= self.right_pressed as u8
-                | (self.left_pressed as u8) << 1
-                | (self.up_pressed as u8) << 2
-                | (self.down_pressed as u8) << 3;
+        if self.select & DIRECTIONS_DESELECTED == 0 {
+            lines |= self.pressed >> 4;
         }
         lines
     }
@@ -66,9 +37,7 @@ impl Joypad {
     /// its buttons is held does.
     pub fn write(&mut self, b: u8) -> bool {
         let before = self.pressed_lines();
-        let bits = b.view_bits::<Lsb0>();
-        self.direction_selected = !bits[4];
-        self.action_selected = !bits[5];
+        self.select = b & (ACTIONS_DESELECTED | DIRECTIONS_DESELECTED);
         self.pressed_lines() & !before != 0
     }
 
@@ -76,45 +45,41 @@ impl Joypad {
     /// joypad interrupt: only pressing a button in a selected group does.
     pub fn set_button(&mut self, button: Button, is_pressed: bool) -> bool {
         let before = self.pressed_lines();
-
-        match button {
-            Button::Start => self.start_pressed = is_pressed,
-            Button::Select => self.select_pressed = is_pressed,
-            Button::A => self.a_pressed = is_pressed,
-            Button::B => self.b_pressed = is_pressed,
-            Button::Up => self.up_pressed = is_pressed,
-            Button::Down => self.down_pressed = is_pressed,
-            Button::Left => self.left_pressed = is_pressed,
-            Button::Right => self.right_pressed = is_pressed,
+        let bit = 1 << button as u8;
+        if is_pressed {
+            self.pressed |= bit;
+        } else {
+            self.pressed &= !bit;
         }
-
         self.pressed_lines() & !before != 0
     }
 }
 
+/// A Game Boy button. Each group's buttons are in the order of the input lines they pull low: the
+/// action buttons on lines 0-3, then the directions.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Button {
-    Start = 0,
-    Select,
-    A,
+    A = 0,
     B,
+    Select,
+    Start,
+    Right,
+    Left,
     Up,
     Down,
-    Left,
-    Right,
 }
 
 impl Button {
     pub const ALL: [Button; 8] = [
-        Button::Start,
-        Button::Select,
         Button::A,
         Button::B,
+        Button::Select,
+        Button::Start,
+        Button::Right,
+        Button::Left,
         Button::Up,
         Button::Down,
-        Button::Left,
-        Button::Right,
     ];
 }
 

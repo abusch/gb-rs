@@ -1,17 +1,18 @@
-use bitvec::{field::BitField, order::Lsb0, view::BitView};
 use log::{debug, trace};
 use serde::{Deserialize, Serialize};
 
 use crate::apu::{Timer, frame_sequencer::FrameSequencer};
 
 use super::{LengthCounter, VolumeEnvelope, dac};
+
+/// Channels 1 and 2: square waves, with a frequency sweep for channel 1.
 #[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct ToneChannel<const N: u8> {
+pub(crate) struct ToneChannel {
     dac_enabled: bool,
     enabled: bool,
     length_counter: LengthCounter,
 
-    volume_envelope: VolumeEnvelope<N>,
+    volume_envelope: VolumeEnvelope,
 
     freq_hi: u8,
     freq_lo: u8,
@@ -21,7 +22,7 @@ pub(crate) struct ToneChannel<const N: u8> {
     wave_generator: SquareWaveGenerator,
 }
 
-impl<const N: u8> ToneChannel<N> {
+impl ToneChannel {
     pub(crate) fn new(with_frequency_sweep: bool) -> Self {
         Self {
             dac_enabled: false,
@@ -31,12 +32,8 @@ impl<const N: u8> ToneChannel<N> {
             freq_hi: 0,
             freq_lo: 0,
             freq_timer: Timer::new(8192),
-            frequency_sweep: if with_frequency_sweep {
-                Some(FrequencySweep::new())
-            } else {
-                None
-            },
-            wave_generator: SquareWaveGenerator::new(),
+            frequency_sweep: with_frequency_sweep.then(FrequencySweep::new),
+            wave_generator: SquareWaveGenerator::default(),
         }
     }
 
@@ -70,48 +67,32 @@ impl<const N: u8> ToneChannel<N> {
         }
     }
 
+    /// NR10, which only channel 1 has: the sweep period, direction and shift.
     pub(crate) fn nrx0(&self) -> u8 {
-        let mut res = 0xFF;
-        let bits = res.view_bits_mut::<Lsb0>();
-        if let Some(ref sweep) = self.frequency_sweep {
-            // bit 7 is always set
-            bits.set(7, true);
-            bits[4..=6].store(sweep.period);
-            bits.set(3, sweep.should_negate);
-            bits[0..=2].store(sweep.shift);
+        match &self.frequency_sweep {
+            Some(sweep) => {
+                0x80 | sweep.period << 4 | (sweep.should_negate as u8) << 3 | sweep.shift
+            }
+            None => 0xFF,
         }
-
-        res
     }
 
     pub(crate) fn set_nrx0(&mut self, b: u8) {
-        if let Some(ref mut sweep) = self.frequency_sweep {
-            let bits = b.view_bits::<Lsb0>();
-            let sweep_time = bits[4..=6].load::<u8>();
-            let negate = bits[3];
-            let shift = bits[0..=2].load::<u8>();
-            if sweep.load(sweep_time, negate, shift) {
-                self.enabled = false;
-            }
+        if let Some(ref mut sweep) = self.frequency_sweep
+            && sweep.load((b >> 4) & 0x07, b & 0x08 != 0, b & 0x07)
+        {
+            self.enabled = false;
         }
     }
 
+    /// NRx1: the duty cycle can be read back, but not the length.
     pub(crate) fn nrx1(&self) -> u8 {
-        let mut res = 0xFF;
-        let bits = res.view_bits_mut::<Lsb0>();
-        bits[6..=7].store(self.wave_generator.duty as u8);
-
-        res
+        0x3F | self.wave_generator.duty << 6
     }
 
     pub(crate) fn set_nrx1(&mut self, b: u8) {
         trace!("setting NRx1 to {:08b}", b);
-        let bits = b.view_bits::<Lsb0>();
-
-        let duty = bits[6..=7].load::<u8>().into();
-        self.wave_generator.set_duty(duty);
-        trace!("duty = {:?}", duty);
-
+        self.wave_generator.duty = b >> 6;
         self.set_length(b);
     }
 
@@ -121,39 +102,13 @@ impl<const N: u8> ToneChannel<N> {
     }
 
     pub(crate) fn nrx2(&self) -> u8 {
-        let mut res = 0xFF;
-        let bits = res.view_bits_mut::<Lsb0>();
-
-        bits[4..=7].store(self.volume_envelope.start_volume);
-        bits.set(3, self.volume_envelope.volume_increase);
-        bits[0..=2].store(self.volume_envelope.timer.period);
-
-        res
+        self.volume_envelope.nrx2()
     }
 
     pub(crate) fn set_nrx2(&mut self, b: u8) {
         trace!("setting NRx2 to {:08b}", b);
-        let bits = b.view_bits::<Lsb0>();
-        let start_volume = bits[4..=7].load::<u8>();
-        let volume_increase = bits[3];
-        let envelope_period = bits[0..=2].load::<u8>() as u16;
-        // Not sure why the docs said to do this? This is wrong...
-        // if envelope_period == 0 {
-        //     envelope_period = 8;
-        // }
-        self.volume_envelope
-            .reload(start_volume, volume_increase, envelope_period);
-        debug!(
-            "Channel {N}: volume envelope = {start_volume}, {volume_increase}, {envelope_period}"
-        );
-        if start_volume != 0 || volume_increase {
-            if !self.dac_enabled {
-                debug!("Channel {N}: DAC turned on");
-                self.dac_enabled = true;
-            }
-        } else {
-            debug!("Channel {N}: DAC turned off, disabling channel");
-            self.dac_enabled = false;
+        self.dac_enabled = self.volume_envelope.write_nrx2(b);
+        if !self.dac_enabled {
             self.enabled = false;
         }
     }
@@ -170,31 +125,19 @@ impl<const N: u8> ToneChannel<N> {
     }
 
     pub(crate) fn nrx4(&self) -> u8 {
-        let mut res = 0xFF;
-        let bits = res.view_bits_mut::<Lsb0>();
-        // only bit 6 can be read back
-        bits.set(6, self.length_counter.length_enabled);
-        trace!("Returning {:08b} for NRx4", res);
-        res
+        self.length_counter.nrx4()
     }
 
     pub(crate) fn set_nrx4(&mut self, b: u8, frame_sequencer: &FrameSequencer) {
-        trace!("Channel {N}: setting NRx4 to {:08b}", b);
-        let bits = b.view_bits::<Lsb0>();
-
-        self.freq_hi = bits[0..=2].load::<u8>();
+        trace!("setting NRx4 to {:08b}", b);
+        self.freq_hi = b & 0x07;
         self.update_period();
 
-        let trigger = bits[7];
-        if self.length_counter.write_nrx4(
-            bits[6],
-            trigger,
-            frame_sequencer.next_step_clocks_length(),
-        ) {
+        if self.length_counter.write_nrx4(b, frame_sequencer) {
             self.enabled = false;
         }
-        if trigger {
-            debug!("Channel {N}: Tone channel triggered");
+        if b & 0x80 != 0 {
+            debug!("Tone channel triggered");
             // Trigger. The rest of it still happens if the DAC is off, but the channel stays off.
             self.enabled = self.is_dac_on();
             let freq = self.frequency();
@@ -257,7 +200,7 @@ impl<const N: u8> ToneChannel<N> {
         self.freq_hi = 0;
         self.freq_lo = 0;
         self.freq_timer.reset();
-        self.wave_generator.reset();
+        self.wave_generator = SquareWaveGenerator::default();
         if let Some(ref mut sweep) = self.frequency_sweep {
             sweep.reset()
         }
@@ -268,61 +211,24 @@ impl<const N: u8> ToneChannel<N> {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+/// The waveform of each duty cycle, over the 8 steps of a period: bit `n` is the output at step
+/// `n`.
+const DUTY_WAVEFORMS: [u8; 4] = [0b1000_0000, 0b1000_0001, 0b1110_0001, 0b0111_1110];
+
+#[derive(Debug, Default, Serialize, Deserialize)]
 struct SquareWaveGenerator {
-    duty: Duty,
+    /// Duty cycle, from NRx1: an index into `DUTY_WAVEFORMS`.
+    duty: u8,
     step: u8,
 }
 
 impl SquareWaveGenerator {
-    fn new() -> Self {
-        Self {
-            duty: Duty::Duty0,
-            step: 0,
-        }
-    }
-
-    pub fn advance(&mut self, steps: u16) {
+    fn advance(&mut self, steps: u16) {
         self.step = ((self.step as u16 + steps) % 8) as u8;
     }
 
-    pub fn set_duty(&mut self, duty: Duty) {
-        self.duty = duty;
-    }
-
-    pub fn output(&self) -> bool {
-        match self.duty {
-            Duty::Duty0 => self.step == 7,
-            Duty::Duty1 => self.step == 0 || self.step == 7,
-            Duty::Duty2 => self.step == 0 || self.step == 5 || self.step == 6 || self.step == 7,
-            Duty::Duty3 => self.step != 0 && self.step != 7,
-        }
-    }
-
-    pub fn reset(&mut self) {
-        self.duty = Duty::Duty0;
-        self.step = 0;
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[repr(u8)]
-enum Duty {
-    Duty0 = 0,
-    Duty1 = 1,
-    Duty2 = 2,
-    Duty3 = 3,
-}
-
-impl From<u8> for Duty {
-    fn from(d: u8) -> Self {
-        match d {
-            0 => Duty::Duty0,
-            1 => Duty::Duty1,
-            2 => Duty::Duty2,
-            3 => Duty::Duty3,
-            _ => panic!("Unsupported value for Duty enum: {}", d),
-        }
+    fn output(&self) -> bool {
+        DUTY_WAVEFORMS[self.duty as usize] >> self.step & 1 != 0
     }
 }
 
@@ -449,7 +355,7 @@ mod tests {
 
     #[test]
     fn frequency_change_applies_without_trigger() {
-        let mut channel = ToneChannel::<2>::new(false);
+        let mut channel = ToneChannel::new(false);
         channel.set_nrx2(0xF0); // DAC on
         channel.set_nrx3(0x00);
         channel.set_nrx4(0x87, &FrameSequencer::default()); // trigger with frequency 0x700
@@ -464,7 +370,7 @@ mod tests {
 
     #[test]
     fn nrx4_is_written_while_dac_is_off() {
-        let mut channel = ToneChannel::<2>::new(false);
+        let mut channel = ToneChannel::new(false);
         channel.set_nrx2(0x00); // DAC off
         channel.set_nrx4(0xC7, &FrameSequencer::default()); // trigger, with length enabled and frequency 0x700
         assert!(!channel.enabled());

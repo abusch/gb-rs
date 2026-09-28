@@ -1,7 +1,4 @@
-use std::{
-    fmt::Debug,
-    ops::{Deref, DerefMut},
-};
+use std::fmt::{Debug, Write};
 
 use bitvec::prelude::*;
 use log::trace;
@@ -27,6 +24,19 @@ const OBP0_REG: u16 = 0xFF48;
 const OBP1_REG: u16 = 0xFF49;
 const WY_REG: u16 = 0xFF4A;
 const WX_REG: u16 = 0xFF4B;
+
+// LCDC bits
+const LCDC_ENABLE: u8 = 1 << 7;
+const LCDC_WINDOW_TILE_MAP: u8 = 1 << 6;
+const LCDC_WINDOW_ENABLE: u8 = 1 << 5;
+/// Where the BG and window tiles are: block 0 with unsigned ids if set, block 2 with signed ones
+/// otherwise.
+const LCDC_TILE_DATA: u8 = 1 << 4;
+const LCDC_BG_TILE_MAP: u8 = 1 << 3;
+/// 8x16 sprites if set, 8x8 otherwise.
+const LCDC_OBJ_SIZE: u8 = 1 << 2;
+const LCDC_OBJ_ENABLE: u8 = 1 << 1;
+const LCDC_BG_WINDOW_ENABLE: u8 = 1 << 0;
 
 // STAT interrupt sources, as laid out in the STAT register
 const STAT_HBLANK: u8 = 1 << 3;
@@ -80,23 +90,8 @@ pub struct Gfx {
     line_dot: u16,
     running_mode: Mode,
 
-    // LCDC individual flags:
-    /// LCDC.7
-    lcd_and_ppu_enabled: bool,
-    /// LCDC.6
-    window_tile_map_area: bool,
-    /// LCDC.5
-    window_enable: bool,
-    /// LCDC.4
-    bg_and_window_tile_data_area: bool,
-    /// LCDC.3
-    bg_tile_map_area: bool,
-    /// LCDC.2
-    obj_size: bool,
-    /// LCDC.1
-    obj_enabled: bool,
-    /// LCDC.0
-    bg_and_window_enable: bool,
+    /// LCDC (LCD Control), made of the `LCDC_*` bits
+    lcdc: u8,
 
     /// SCY (Scroll Y)
     scy: u8,
@@ -115,20 +110,18 @@ pub struct Gfx {
 
     /// STAT interrupt sources that are enabled, as `STAT_*` bits
     stat_sources: u8,
-    /// STAT interrupt conditions that currently hold, as `STAT_*` bits
-    stat_conditions: u8,
     /// Level of the STAT interrupt line, whose rising edges request the interrupt.
     stat_line_high: bool,
     /// The LY=LYC comparison, as the STAT interrupt line sees it. It's only updated while the PPU
     /// runs, so it holds its value while the LCD is off.
     lyc_equal: bool,
 
-    /// BG Palette
-    bgp: Palette,
+    /// BG Palette: the shade of each colour index, 2 bits each (see `shade`)
+    bgp: u8,
     /// OBJ Palette 0
-    obp0: Palette,
+    obp0: u8,
     /// OBJ Palette 1
-    obp1: Palette,
+    obp1: u8,
 
     // Window internal line counter
     window_internal_line_counter: u8,
@@ -149,26 +142,17 @@ impl Gfx {
             line_dot: 0,
             // What STAT reports while the LCD is off
             running_mode: Mode::Mode0,
-            // TODO should it be exploded into individual flags?
-            lcd_and_ppu_enabled: false,
-            window_tile_map_area: false,
-            window_enable: false,
-            bg_and_window_tile_data_area: false,
-            bg_tile_map_area: false,
-            obj_size: false,
-            obj_enabled: false,
-            bg_and_window_enable: false,
+            lcdc: 0,
             scy: 0,
             scx: 0,
-            bgp: Palette([Color::White; 4]),
-            obp0: Palette([Color::White; 4]),
-            obp1: Palette([Color::White; 4]),
+            bgp: 0,
+            obp0: 0,
+            obp1: 0,
             ly: 0,
             lyc: 0,
             wy: 0,
             wx: 0,
             stat_sources: 0,
-            stat_conditions: 0,
             stat_line_high: false,
             lyc_equal: false,
             window_internal_line_counter: 0,
@@ -223,7 +207,12 @@ impl Gfx {
 
     /// Whether the CPU can access VRAM and OAM however busy the PPU is.
     fn cpu_access_unlocked(&self) -> bool {
-        self.debugger_access || !self.lcd_and_ppu_enabled
+        self.debugger_access || !self.lcdc(LCDC_ENABLE)
+    }
+
+    /// Whether the given `LCDC_*` bit is set.
+    fn lcdc(&self, bit: u8) -> bool {
+        self.lcdc & bit != 0
     }
 
     /// Whether the PPU is in the middle of its OAM scan, where it locks OAM writes.
@@ -267,121 +256,58 @@ impl Gfx {
     }
 
     pub fn read_reg(&self, addr: u16) -> u8 {
-        if addr == LCDC_REG {
-            let mut lcdc = 0u8;
-            let bits = lcdc.view_bits_mut::<Lsb0>();
-            bits.set(7, self.lcd_and_ppu_enabled);
-            bits.set(6, self.window_tile_map_area);
-            bits.set(5, self.window_enable);
-            bits.set(4, self.bg_and_window_tile_data_area);
-            bits.set(3, self.bg_tile_map_area);
-            bits.set(2, self.obj_size);
-            bits.set(1, self.obj_enabled);
-            bits.set(0, self.bg_and_window_enable);
-
-            lcdc
-        } else if addr == STAT_REG {
-            // FF41 STAT
-            self.stat()
-        } else if addr == SCY_REG {
-            // FF42 SCY
-            self.scy
-        } else if addr == SCX_REG {
-            // FF43 SCX
-            self.scx
-        } else if addr == LY_REG {
-            // FF44 LY
-            self.ly
-        } else if addr == LYC_REG {
-            // FF45 LYC
-            self.lyc
-        } else if addr == WY_REG {
-            // FF4A WY
-            self.wy
-        } else if addr == WX_REG {
-            // FF4B WX
-            self.wx
-        } else if addr == BGP_REG {
-            // FF47 - BGP (BG Palette Data)
-            get_palette_as_byte(&self.bgp)
-        } else if addr == OBP0_REG {
-            get_palette_as_byte(&self.obp0)
-        } else if addr == OBP1_REG {
-            get_palette_as_byte(&self.obp1)
-        } else {
+        match addr {
+            LCDC_REG => self.lcdc,
+            STAT_REG => self.stat(),
+            SCY_REG => self.scy,
+            SCX_REG => self.scx,
+            LY_REG => self.ly,
+            LYC_REG => self.lyc,
+            WY_REG => self.wy,
+            WX_REG => self.wx,
+            BGP_REG => self.bgp,
+            OBP0_REG => self.obp0,
+            OBP1_REG => self.obp1,
             // CGB-only registers, so just ignore for now
-            // warn!("unimplemented register 0x{:04x}", addr);
-            0xFF
+            _ => 0xFF,
         }
     }
 
     pub fn write_reg(&mut self, addr: u16, b: u8) {
-        if addr == LCDC_REG {
-            let orig_lcd_state = self.lcd_and_ppu_enabled;
-            let bits = b.view_bits::<Lsb0>();
-            self.lcd_and_ppu_enabled = bits[7];
-            self.window_tile_map_area = bits[6];
-            self.window_enable = bits[5];
-            self.bg_and_window_tile_data_area = bits[4];
-            self.bg_tile_map_area = bits[3];
-            self.obj_size = bits[2];
-            self.obj_enabled = bits[1];
-            self.bg_and_window_enable = bits[0];
-            trace!("LCDC reg = 0b{:b}", b);
-            if orig_lcd_state != self.lcd_and_ppu_enabled {
-                trace!(
-                    "LCD turned {}",
-                    if self.lcd_and_ppu_enabled {
-                        "ON"
-                    } else {
-                        "OFF"
+        match addr {
+            LCDC_REG => {
+                let was_enabled = self.lcdc(LCDC_ENABLE);
+                self.lcdc = b;
+                trace!("LCDC reg = 0b{:b}", b);
+                if was_enabled != self.lcdc(LCDC_ENABLE) {
+                    trace!("LCD turned {}", if was_enabled { "OFF" } else { "ON" });
+                    // The PPU stops while the LCD is off, with LY at 0 and STAT in mode 0. Turning
+                    // it back on starts a new frame, whose first line skips the OAM scan (it stays
+                    // in mode 0 until drawing starts) and starts where the scan would, which makes
+                    // it 4 dots shorter.
+                    self.ly = 0;
+                    self.line_dot = LINE_START_DOTS;
+                    self.running_mode = Mode::Mode0;
+                    self.window_internal_line_counter = 0;
+                    // The LY=LYC comparison stops with the PPU, and restarts straight away with it.
+                    if !was_enabled {
+                        self.compare_lyc();
                     }
-                );
-                // The PPU stops while the LCD is off, with LY at 0 and STAT in mode 0. Turning it
-                // back on starts a new frame, whose first line skips the OAM scan (it stays in
-                // mode 0 until drawing starts) and starts where the scan would, which makes it 4
-                // dots shorter.
-                self.ly = 0;
-                self.line_dot = LINE_START_DOTS;
-                self.running_mode = Mode::Mode0;
-                self.window_internal_line_counter = 0;
-                // The LY=LYC comparison stops with the PPU, and restarts straight away with it.
-                if self.lcd_and_ppu_enabled {
-                    self.compare_lyc();
                 }
-                self.update_stat_conditions();
             }
-        } else if addr == STAT_REG {
-            self.set_stat(b);
-        } else if addr == SCY_REG {
-            // FF42 SCY
-            self.scy = b;
-        } else if addr == SCX_REG {
-            // FF43 SCX
-            self.scx = b;
-        } else if addr == LY_REG {
-            // FF44 LY is read-only
-        } else if addr == LYC_REG {
-            // FF45 LYC
-            self.lyc = b;
-        } else if addr == WY_REG {
-            // FF4A WY
-            self.wy = b;
-            trace!("Setting WY={}", self.wy);
-        } else if addr == WX_REG {
-            // FF4B WX
-            self.wx = b;
-            trace!("Setting WX={}", self.wx);
-        } else if addr == BGP_REG {
-            // FF47 - BGP (BG Palette Data)
-            set_palette_data(&mut self.bgp, b);
-        } else if addr == OBP0_REG {
-            set_palette_data(&mut self.obp0, b);
-        } else if addr == OBP1_REG {
-            set_palette_data(&mut self.obp1, b);
-        } else {
+            STAT_REG => self.stat_sources = b & STAT_SOURCES,
+            SCY_REG => self.scy = b,
+            SCX_REG => self.scx = b,
+            // LY is read-only
+            LY_REG => (),
+            LYC_REG => self.lyc = b,
+            WY_REG => self.wy = b,
+            WX_REG => self.wx = b,
+            BGP_REG => self.bgp = b,
+            OBP0_REG => self.obp0 = b,
+            OBP1_REG => self.obp1 = b,
             // CGB-only registers, so just ignore for now
-            // warn!("unimplemented register 0x{:04x}", addr);
+            _ => (),
         }
     }
 
@@ -396,13 +322,9 @@ impl Gfx {
         0x80 | self.stat_sources | lyc_eq_ly | self.stat_mode() as u8
     }
 
-    fn set_stat(&mut self, stat: u8) {
-        self.stat_sources = stat & STAT_SOURCES;
-    }
-
     pub(crate) fn dots(&mut self, cycles: u8, frame_sink: &mut dyn FrameSink) -> InterruptFlag {
         let mut interrupt = InterruptFlag::empty();
-        if !self.lcd_and_ppu_enabled {
+        if !self.lcdc(LCDC_ENABLE) {
             return interrupt;
         }
         let mut remaining = cycles as u16;
@@ -475,7 +397,6 @@ impl Gfx {
         if self.line_dot >= LINE_START_DOTS {
             self.compare_lyc();
         }
-        self.update_stat_conditions();
 
         // A STAT interrupt is requested on a rising edge of the STAT interrupt line. On the DMG, the
         // mode 2 source also triggers one when VBlank starts, along with the VBlank source.
@@ -502,9 +423,10 @@ impl Gfx {
         }
     }
 
-    fn update_stat_conditions(&mut self) {
+    /// The STAT interrupt conditions that currently hold, as `STAT_*` bits.
+    fn stat_conditions(&self) -> u8 {
         let lyc_eq_ly = if self.lyc_equal { STAT_LYC } else { 0 };
-        self.stat_conditions = self.stat_mode().stat_condition() | lyc_eq_ly;
+        self.stat_mode().stat_condition() | lyc_eq_ly
     }
 
     // Only runs once per line: keep it out of `dots`, which runs every M-cycle and would otherwise
@@ -512,17 +434,17 @@ impl Gfx {
     #[inline(never)]
     fn draw_scan_line(&mut self) {
         let mut drawn_from_window = false;
-        let bg_tilemap_area = if self.bg_tile_map_area {
+        let bg_tilemap_area = if self.lcdc(LCDC_BG_TILE_MAP) {
             0x9C00
         } else {
             0x9800
         };
-        let win_tilemap_area = if self.window_tile_map_area {
+        let win_tilemap_area = if self.lcdc(LCDC_WINDOW_TILE_MAP) {
             0x9C00
         } else {
             0x9800
         };
-        let sprite_pixels = if self.obj_enabled {
+        let sprite_pixels = if self.lcdc(LCDC_OBJ_ENABLE) {
             self.sprite_pixels_for_scanline(self.ly)
         } else {
             [None; SCREEN_WIDTH]
@@ -533,8 +455,9 @@ impl Gfx {
             // Coordinates in "LCD space" (i.e 160x144)
             let (lcd_x, lcd_y) = (x, self.ly);
             // Coordinates in "Background area" space (i.e 256x256)
-            let (bg_x, bg_y, tilemap_area) = if self.bg_and_window_enable
-                && self.window_enable
+            let bg_and_window_enable = self.lcdc(LCDC_BG_WINDOW_ENABLE);
+            let (bg_x, bg_y, tilemap_area) = if bg_and_window_enable
+                && self.lcdc(LCDC_WINDOW_ENABLE)
                 && lcd_x + 7 >= self.wx
                 && lcd_y >= self.wy
             {
@@ -555,7 +478,7 @@ impl Gfx {
                 )
             };
 
-            let color_byte = if self.bg_and_window_enable {
+            let color_byte = if bg_and_window_enable {
                 self.bg_pixel(tilemap_area, bg_x, bg_y)
             } else {
                 0
@@ -563,7 +486,7 @@ impl Gfx {
 
             let final_color = match sprite_pixels[x as usize] {
                 Some((p, bg_has_priority)) if !(bg_has_priority && color_byte != 0) => p,
-                _ => self.bgp[color_byte as usize],
+                _ => shade(self.bgp, color_byte),
             };
 
             self.write_pixel(x, self.ly, final_color);
@@ -587,7 +510,7 @@ impl Gfx {
         // Coordinates in "tile space" (i.e. which pixel of an 8x8 tile to draw)
         let (tile_col, tile_row) = (bg_x % 8, bg_y % 8);
 
-        let tile_offset: u16 = if self.bg_and_window_tile_data_area {
+        let tile_offset: u16 = if self.lcdc(LCDC_TILE_DATA) {
             let base = VRAM_TILE_DATA_BLOCK_0_ADDR;
             // treat tile id as unsigned
             base + 16 * tile_id as u16
@@ -613,7 +536,7 @@ impl Gfx {
 
     /// The two bitplanes (low, high) of the given row of a sprite's tile(s).
     fn sprite_tile_row(&self, sprite: &Sprite, tile_y: u8) -> (u8, u8) {
-        let (tile_index, tile_y) = if self.obj_size {
+        let (tile_index, tile_y) = if self.lcdc(LCDC_OBJ_SIZE) {
             // 8x16 sprites use an upper tile and a lower tile
             if tile_y < 8 {
                 (sprite.tile_index & 0xFE, tile_y)
@@ -629,12 +552,12 @@ impl Gfx {
 
     /// The sprite pixel (if any) to draw at each x of line `y`, along with whether the background
     /// has priority over it.
-    fn sprite_pixels_for_scanline(&self, y: u8) -> [Option<(Color, bool)>; SCREEN_WIDTH] {
+    fn sprite_pixels_for_scanline(&self, y: u8) -> [Option<(u8, bool)>; SCREEN_WIDTH] {
         let mut sprites = [Sprite::default(); 40];
         let mut count = 0;
         for data in self.oam_ram.as_chunks::<4>().0 {
             let sprite = Sprite::new(data);
-            if sprite.matches_scanline(y, self.obj_size) {
+            if sprite.matches_scanline(y, self.lcdc(LCDC_OBJ_SIZE)) {
                 sprites[count] = sprite;
                 count += 1;
             }
@@ -644,7 +567,7 @@ impl Gfx {
         let sprites = &mut sprites[..count];
         sprites.sort_by_key(|s| s.x);
 
-        let y_size = if self.obj_size { 16 } else { 8 };
+        let y_size = self.sprite_height();
         let mut pixels = [None; SCREEN_WIDTH];
         for sprite in sprites.iter().take(10) {
             let mut tile_y = y + 16 - sprite.y;
@@ -672,35 +595,36 @@ impl Gfx {
                 // Color index 0 is transparent for sprites
                 let color = tile_pixel(row, x);
                 if color != 0 {
-                    pixels[lcd_x] = Some((palette[color as usize], sprite.bg_has_priority()));
+                    pixels[lcd_x] = Some((shade(palette, color), sprite.bg_has_priority()));
                 }
             }
         }
         pixels
     }
 
-    fn sprite_palette(&self, sprite: &Sprite) -> &Palette {
+    fn sprite_height(&self) -> u8 {
+        if self.lcdc(LCDC_OBJ_SIZE) { 16 } else { 8 }
+    }
+
+    fn sprite_palette(&self, sprite: &Sprite) -> u8 {
         if sprite.obp1_palette() {
-            &self.obp1
+            self.obp1
         } else {
-            &self.obp0
+            self.obp0
         }
     }
 
-    fn get_sprite_color(&self, sprite: &Sprite, tile_x: u8, tile_y: u8) -> Option<Color> {
+    /// The shade of a sprite's pixel, or `None` where it's transparent.
+    fn sprite_shade(&self, sprite: &Sprite, tile_x: u8, tile_y: u8) -> Option<u8> {
         // Color index 0 is transparent for sprites
         match tile_pixel(self.sprite_tile_row(sprite, tile_y), tile_x) {
             0 => None,
-            color => Some(self.sprite_palette(sprite)[color as usize]),
+            color => Some(shade(self.sprite_palette(sprite), color)),
         }
     }
 
-    fn write_pixel(&mut self, x: u8, y: u8, color: Color) {
-        self.lcd[y as usize * SCREEN_WIDTH + x as usize] = self.dmg_color(color);
-    }
-
-    fn dmg_color(&self, color: Color) -> Rgb555 {
-        self.dmg_palette[color.as_u8() as usize]
+    fn write_pixel(&mut self, x: u8, y: u8, shade: u8) {
+        self.lcd[y as usize * SCREEN_WIDTH + x as usize] = self.dmg_palette[shade as usize];
     }
 
     /// Carry over what save states leave out from the `Gfx` this one replaces.
@@ -735,21 +659,33 @@ impl Gfx {
 
         let sprite = Sprite::new(data);
 
-        let height = if self.obj_size { 16 } else { 8 };
-        for y in 0..height {
+        for y in 0..self.sprite_height() {
             for x in 0..8 {
-                let pixel = self.get_sprite_color(&sprite, x, y).unwrap_or(Color::White);
-                let (r, g, b) = self.dmg_color(pixel).to_rgb888();
-                print!("{}", ansi_term::Color::RGB(r, g, b).paint("██"));
+                let shade = self.sprite_shade(&sprite, x, y).unwrap_or(0);
+                print!("{}", self.shade_block(shade));
             }
             println!();
         }
     }
 
     pub fn dump_palettes(&self) {
-        println!("BGP:  {}", self.bgp.to_debug_str(&self.dmg_palette));
-        println!("OBP0: {}", self.obp0.to_debug_str(&self.dmg_palette));
-        println!("OBP1: {}", self.obp1.to_debug_str(&self.dmg_palette));
+        for (name, palette) in [
+            ("BGP: ", self.bgp),
+            ("OBP0:", self.obp0),
+            ("OBP1:", self.obp1),
+        ] {
+            let mut s = String::new();
+            for color in 0..4 {
+                write!(s, "{}", self.shade_block(shade(palette, color))).unwrap();
+            }
+            println!("{name} {s}");
+        }
+    }
+
+    /// A block of the given shade's colour, to print to the terminal.
+    fn shade_block(&self, shade: u8) -> impl std::fmt::Display {
+        let (r, g, b) = self.dmg_palette[shade as usize].to_rgb888();
+        ansi_term::Color::RGB(r, g, b).paint("██")
     }
 
     /// Let the debugger access VRAM and OAM even while the PPU is using them.
@@ -762,7 +698,7 @@ impl Gfx {
     /// enable bit is turned on.
     #[inline(always)]
     fn stat_line(&self) -> bool {
-        self.stat_sources & self.stat_conditions != 0
+        self.stat_sources & self.stat_conditions() != 0
     }
 }
 
@@ -773,66 +709,9 @@ fn tile_pixel((lo, hi): (u8, u8), x: u8) -> u8 {
     (((hi >> bit) & 1) << 1) | ((lo >> bit) & 1)
 }
 
-fn get_palette_as_byte(palette: &[Color; 4]) -> u8 {
-    let mut byte = 0u8;
-    let bits = byte.view_bits_mut::<Lsb0>();
-
-    bits.chunks_mut(2)
-        .zip(palette.iter())
-        .for_each(|(chunk, color)| {
-            let color_byte = color.as_u8();
-            let color_bits = color_byte.view_bits::<Lsb0>();
-            chunk.set(0, color_bits[0]);
-            chunk.set(1, color_bits[1]);
-        });
-
-    bits.load::<u8>()
-}
-
-fn set_palette_data(palette: &mut Palette, b: u8) {
-    trace!("Writing BG Palette with {:b}", b);
-    let bits = b.view_bits::<Msb0>();
-    let color0 = bits[6..=7].load::<u8>();
-    let color1 = bits[4..=5].load::<u8>();
-    let color2 = bits[2..=3].load::<u8>();
-    let color3 = bits[0..=1].load::<u8>();
-
-    palette[0] = Color::from(color0);
-    palette[1] = Color::from(color1);
-    palette[2] = Color::from(color2);
-    palette[3] = Color::from(color3);
-    trace!("BG Palette is now {:?}", palette);
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-enum Color {
-    White = 0,
-    LightGray = 1,
-    DarkGray = 2,
-    Black = 3,
-}
-
-impl Color {
-    fn as_u8(&self) -> u8 {
-        match self {
-            Color::White => 0,
-            Color::LightGray => 1,
-            Color::DarkGray => 2,
-            Color::Black => 3,
-        }
-    }
-}
-
-impl From<u8> for Color {
-    fn from(b: u8) -> Self {
-        match b {
-            0 => Self::White,
-            1 => Self::LightGray,
-            2 => Self::DarkGray,
-            3 => Self::Black,
-            _ => unreachable!(),
-        }
-    }
+/// The shade (0-3, lightest to darkest) a palette register maps a colour index to.
+fn shade(palette: u8, color: u8) -> u8 {
+    (palette >> (2 * color)) & 0b11
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -918,62 +797,17 @@ impl Debug for Sprite {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Palette([Color; 4]);
-
-impl Palette {
-    fn to_debug_str(&self, dmg_palette: &[Rgb555; 4]) -> String {
-        let mut s = String::new();
-        for c in self.0 {
-            let (r, g, b) = dmg_palette[c.as_u8() as usize].to_rgb888();
-            s.push_str(&format!("{}", ansi_term::Color::RGB(r, g, b).paint("██")));
-        }
-        s
-    }
-}
-
-impl Deref for Palette {
-    type Target = [Color; 4];
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for Palette {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_bitvec() {
-        let b: u8 = 0b00000110;
-        let bits = b.view_bits::<Lsb0>();
-
-        // 0b10
-        assert_eq!(bits[0..=1].load::<u8>(), 2);
-        // 0b110
-        assert_eq!(bits[0..=2].load::<u8>(), 6);
-        // 0b11
-        assert_eq!(bits[1..=2].load::<u8>(), 3);
-        // 0b011
-        assert_eq!(bits[1..=3].load::<u8>(), 3);
-    }
-
-    #[test]
-    fn test_get_palette_data() {
-        let palette = [
-            Color::White,
-            Color::LightGray,
-            Color::DarkGray,
-            Color::Black,
-        ];
-
-        assert_eq!(0b11100100, get_palette_as_byte(&palette));
+    fn test_shade() {
+        let palette = 0b11_10_01_00;
+        assert_eq!(
+            [0, 1, 2, 3].map(|color| shade(palette, color)),
+            [0, 1, 2, 3]
+        );
+        assert_eq!(shade(0b00_00_11_00, 1), 3);
     }
 }

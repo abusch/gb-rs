@@ -177,17 +177,12 @@ impl Bus {
         self.cartridge.read_rom(0x014D)
     }
 
-    /// Run the different peripherals for the given number of clock cycles
-    pub fn cycle(
-        &mut self,
-        cycles: u8,
-        frame_sink: &mut dyn FrameSink,
-        audio_sink: &mut dyn AudioSink,
-    ) {
-        self.interrupt_flag |= self.gfx.dots(cycles, frame_sink);
-        self.apu.step(cycles, audio_sink);
-        self.cartridge.step(cycles);
-        if self.timer.cycle(cycles) {
+    /// Run the different peripherals for one M-cycle (4 clock cycles).
+    fn cycle(&mut self, frame_sink: &mut dyn FrameSink, audio_sink: &mut dyn AudioSink) {
+        self.interrupt_flag |= self.gfx.dots(4, frame_sink);
+        self.apu.step(4, audio_sink);
+        self.cartridge.step(4);
+        if self.timer.cycle() {
             self.interrupt_flag |= InterruptFlag::TIMER;
         }
         if self.joypad_interrupt {
@@ -466,7 +461,7 @@ impl<'a> CpuBus<'a> {
 
     /// Run the hardware for an M-cycle in which the CPU doesn't access memory.
     pub(crate) fn tick(&mut self) {
-        self.bus.cycle(4, self.frame_sink, self.audio_sink);
+        self.bus.cycle(self.frame_sink, self.audio_sink);
         self.cycles += 4;
     }
 

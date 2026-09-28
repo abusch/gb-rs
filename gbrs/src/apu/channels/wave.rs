@@ -1,4 +1,3 @@
-use bitvec::{field::BitField, order::Lsb0, view::BitView};
 use serde::{Deserialize, Serialize};
 
 use crate::apu::{Timer, frame_sequencer::FrameSequencer};
@@ -14,6 +13,9 @@ const ACCESS_WINDOW: u16 = 2;
 /// How close to fetching a byte a retrigger has to be to corrupt wave RAM (on the DMG).
 const CORRUPTION_WINDOW: u16 = 2;
 
+/// How much each NR32 volume code shifts the samples right by: muted, 100%, 50% and 25%.
+const VOLUME_SHIFTS: [u8; 4] = [4, 0, 1, 2];
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WaveChannel {
     // Wave table containing 32 4-bit samples
@@ -21,7 +23,8 @@ pub(crate) struct WaveChannel {
     dac_enabled: bool,
     enabled: bool,
     length_counter: LengthCounter,
-    output_level: OutputLevel,
+    /// Volume code from NR32: an index into `VOLUME_SHIFTS`.
+    output_level: u8,
     freq: u16,
     position: u8,
     freq_timer: Timer,
@@ -36,7 +39,7 @@ impl WaveChannel {
             dac_enabled: false,
             enabled: false,
             length_counter: LengthCounter::new(256),
-            output_level: OutputLevel::Mute,
+            output_level: 0,
             freq: 0,
             position: 0,
             freq_timer: Timer::new(4096),
@@ -63,18 +66,12 @@ impl WaveChannel {
     }
 
     pub(crate) fn nr30(&self) -> u8 {
-        let mut res = 0xFF_u8;
-        let bits = res.view_bits_mut::<Lsb0>();
-        bits.set(7, self.dac_enabled);
-
-        res
+        0x7F | (self.dac_enabled as u8) << 7
     }
 
     pub(crate) fn set_nr30(&mut self, b: u8) {
-        if b.view_bits::<Lsb0>()[7] {
-            self.dac_enabled = true;
-        } else {
-            self.dac_enabled = false;
+        self.dac_enabled = b & 0x80 != 0;
+        if !self.dac_enabled {
             self.enabled = false;
         }
     }
@@ -89,21 +86,11 @@ impl WaveChannel {
     }
 
     pub(crate) fn nr32(&self) -> u8 {
-        let mut res = 0xFF_u8;
-        let bits = res.view_bits_mut::<Lsb0>();
-        bits[5..=6].store(self.output_level as u8);
-
-        res
+        0x9F | self.output_level << 5
     }
 
     pub(crate) fn set_nr32(&mut self, b: u8) {
-        self.output_level = match b.view_bits::<Lsb0>()[5..=6].load::<u8>() {
-            0 => OutputLevel::Mute,
-            1 => OutputLevel::Full,
-            2 => OutputLevel::Half,
-            3 => OutputLevel::Quarter,
-            _ => unreachable!(),
-        };
+        self.output_level = (b >> 5) & 0x03;
     }
 
     pub(crate) fn nr33(&self) -> u8 {
@@ -111,31 +98,22 @@ impl WaveChannel {
     }
 
     pub(crate) fn set_nr33(&mut self, b: u8) {
-        self.freq.view_bits_mut::<Lsb0>()[0..=7].store(b);
+        self.freq = (self.freq & 0x700) | u16::from(b);
         self.update_period();
     }
 
     pub(crate) fn nr34(&self) -> u8 {
-        let mut res = 0xff;
-        let bits = res.view_bits_mut::<Lsb0>();
-        bits.set(6, self.length_counter.length_enabled);
-
-        res
+        self.length_counter.nrx4()
     }
 
     pub(crate) fn set_nr34(&mut self, b: u8, frame_sequencer: &FrameSequencer) {
-        let bits = b.view_bits::<Lsb0>();
-        self.freq.view_bits_mut::<Lsb0>()[8..=10].store::<u8>(bits[0..=2].load::<u8>());
+        self.freq = (self.freq & 0xFF) | (u16::from(b & 0x07) << 8);
         self.update_period();
 
-        let trigger = bits[7];
-        if self.length_counter.write_nrx4(
-            bits[6],
-            trigger,
-            frame_sequencer.next_step_clocks_length(),
-        ) {
+        if self.length_counter.write_nrx4(b, frame_sequencer) {
             self.enabled = false;
         }
+        let trigger = b & 0x80 != 0;
         if trigger {
             // On the DMG, retriggering just as the channel fetches a byte corrupts wave RAM.
             if self.enabled && self.freq_timer.counter <= CORRUPTION_WINDOW {
@@ -200,7 +178,7 @@ impl WaveChannel {
             byte >> 4
         };
 
-        self.output_level.apply(value)
+        value >> VOLUME_SHIFTS[self.output_level as usize]
     }
 
     pub(crate) fn output(&self) -> f32 {
@@ -217,7 +195,7 @@ impl WaveChannel {
         self.enabled = false;
         self.length_counter.power_off();
         self.position = 0;
-        self.output_level = OutputLevel::Mute;
+        self.output_level = 0;
         self.freq = 0;
         self.update_period();
     }
@@ -228,26 +206,6 @@ impl WaveChannel {
 
     pub(crate) fn enabled(&self) -> bool {
         self.enabled
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[repr(u8)]
-enum OutputLevel {
-    Mute = 0,
-    Full = 1,
-    Half = 2,
-    Quarter = 3,
-}
-
-impl OutputLevel {
-    fn apply(&self, value: u8) -> u8 {
-        match self {
-            OutputLevel::Mute => 0,
-            OutputLevel::Full => value,
-            OutputLevel::Half => value >> 1,
-            OutputLevel::Quarter => value >> 2,
-        }
     }
 }
 

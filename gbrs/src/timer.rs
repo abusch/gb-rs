@@ -1,4 +1,3 @@
-use bitvec::{field::BitField, order::Lsb0, view::BitView};
 use log::trace;
 use serde::{Deserialize, Serialize};
 
@@ -13,9 +12,8 @@ pub struct Timer {
     tima: u8,
     /// FF06 - TMA - Time Modulo
     tma: u8,
-    /// FF07 - TAC - Timer Control
-    tac_timer_enable: bool,
-    tac_input_clock_select: ClockSpeed,
+    /// FF07 - TAC - Timer Control: bit 2 enables the timer, bits 0-1 select its speed
+    tac: u8,
 
     reload: Reload,
 }
@@ -37,15 +35,13 @@ impl Timer {
             div_timer: 0,
             tima: 0,
             tma: 0,
-            tac_timer_enable: false,
-            tac_input_clock_select: ClockSpeed::Speed0,
+            tac: 0,
             reload: Reload::None,
         }
     }
 
-    /// Run the timer for one M-cycle (`cycles` being 4). Return whether to request the timer
-    /// interrupt.
-    pub fn cycle(&mut self, cycles: u8) -> bool {
+    /// Run the timer for one M-cycle. Return whether to request the timer interrupt.
+    pub fn cycle(&mut self) -> bool {
         let mut request_interrupt = false;
         self.reload = match self.reload {
             Reload::Pending => {
@@ -55,38 +51,18 @@ impl Timer {
             }
             Reload::None | Reload::Done => Reload::None,
         };
-
-        let mut remaining = cycles as u16;
-        while remaining > 0 {
-            // Nothing else happens until the next falling edge of the selected bit, so jump to it
-            // (or as far as we can go).
-            let period = self.tima_period();
-            let to_edge = period - (self.div_timer & (period - 1));
-            let n = to_edge.min(remaining);
-            self.div_timer = self.div_timer.wrapping_add(n);
-            remaining -= n;
-            if n == to_edge && self.tac_timer_enable {
-                self.increment_tima();
-            }
-        }
+        // TIMA's clock ticks at least every 16 cycles, so this can't skip a falling edge.
+        self.update_div(self.div_timer.wrapping_add(4));
         request_interrupt
     }
 
     /// The signal whose falling edges increment TIMA: the timer being enabled, and the system
     /// counter bit selected by TAC.
     fn tima_clock(&self) -> bool {
-        self.tac_timer_enable && self.div_timer & (self.tima_period() >> 1) != 0
-    }
-
-    /// Number of cycles between two increments of TIMA, i.e. between two falling edges of the
-    /// system counter bit selected by TAC.
-    fn tima_period(&self) -> u16 {
-        match self.tac_input_clock_select {
-            ClockSpeed::Speed0 => 1 << 10,
-            ClockSpeed::Speed1 => 1 << 4,
-            ClockSpeed::Speed2 => 1 << 6,
-            ClockSpeed::Speed3 => 1 << 8,
-        }
+        // The system counter bit for each speed: TIMA ticks every 1024, 16, 64 or 256 cycles.
+        const CLOCK_BITS: [u8; 4] = [9, 3, 5, 7];
+        let enabled = self.tac & 0b100 != 0;
+        enabled && self.div_timer & (1 << CLOCK_BITS[usize::from(self.tac & 0b11)]) != 0
     }
 
     fn increment_tima(&mut self) {
@@ -110,31 +86,15 @@ impl Timer {
     pub fn set_tac(&mut self, tac: u8) {
         // Changing TAC can make the signal clocking TIMA fall too, which increments it (on DMG)
         let old_clock = self.tima_clock();
-        self.update_tac(tac);
+        self.tac = tac & 0b111;
         if old_clock && !self.tima_clock() {
             self.increment_tima();
         }
     }
 
-    fn update_tac(&mut self, tac: u8) {
-        let bits = tac.view_bits::<Lsb0>();
-        self.tac_timer_enable = bits[2];
-        self.tac_input_clock_select = match bits[0..2].load::<u8>() {
-            0 => ClockSpeed::Speed0,
-            1 => ClockSpeed::Speed1,
-            2 => ClockSpeed::Speed2,
-            3 => ClockSpeed::Speed3,
-            _ => unreachable!(),
-        };
-    }
-
     pub fn tac(&self) -> u8 {
-        let mut tac = 0xFF; // unused are set to 1
-        let bits = tac.view_bits_mut::<Lsb0>();
-        bits.set(2, self.tac_timer_enable);
-        bits[0..2].store(self.tac_input_clock_select as u8);
-
-        tac
+        // Unused bits read as 1
+        0xF8 | self.tac
     }
 
     pub fn div_timer(&self) -> u8 {
@@ -181,13 +141,4 @@ impl Timer {
             self.tima = tma;
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[repr(u8)]
-enum ClockSpeed {
-    Speed0 = 0,
-    Speed1 = 1,
-    Speed2 = 2,
-    Speed3 = 3,
 }
