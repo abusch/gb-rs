@@ -112,9 +112,12 @@ impl<const N: u8> ToneChannel<N> {
         self.wave_generator.set_duty(duty);
         trace!("duty = {:?}", duty);
 
-        let length = bits[0..=5].load::<u8>();
-        trace!("length = {}", length);
-        self.length_counter.load(64 - length as u16);
+        self.set_length(b);
+    }
+
+    /// Write the length part of NRx1, which is the only one that works while the APU is off.
+    pub(crate) fn set_length(&mut self, b: u8) {
+        self.length_counter.load(64 - (b & 0x3F) as u16);
     }
 
     pub(crate) fn nrx2(&self) -> u8 {
@@ -175,23 +178,25 @@ impl<const N: u8> ToneChannel<N> {
         res
     }
 
-    pub(crate) fn set_nrx4(&mut self, b: u8) {
+    pub(crate) fn set_nrx4(&mut self, b: u8, frame_sequencer: &FrameSequencer) {
         trace!("Channel {N}: setting NRx4 to {:08b}", b);
         let bits = b.view_bits::<Lsb0>();
 
-        if bits[6] {
-            self.length_counter.enable();
-        } else {
-            self.length_counter.disable();
-        }
         self.freq_hi = bits[0..=2].load::<u8>();
         self.update_period();
 
-        if bits[7] {
+        let trigger = bits[7];
+        if self.length_counter.write_nrx4(
+            bits[6],
+            trigger,
+            frame_sequencer.next_step_clocks_length(),
+        ) {
+            self.enabled = false;
+        }
+        if trigger {
             debug!("Channel {N}: Tone channel triggered");
             // Trigger. The rest of it still happens if the DAC is off, but the channel stays off.
             self.enabled = self.is_dac_on();
-            self.length_counter.trigger();
             let freq = self.frequency();
             self.freq_timer.reset();
             // Reset volume envelope
@@ -242,12 +247,13 @@ impl<const N: u8> ToneChannel<N> {
         self.dac_enabled
     }
 
-    pub(crate) fn reset(&mut self) {
+    /// Clear the registers, like powering the APU off does.
+    pub(crate) fn power_off(&mut self) {
         trace!("Resetting square channel");
         self.dac_enabled = false;
         self.enabled = false;
         self.volume_envelope.reset();
-        self.length_counter.reset();
+        self.length_counter.power_off();
         self.freq_hi = 0;
         self.freq_lo = 0;
         self.freq_timer.reset();
@@ -446,12 +452,12 @@ mod tests {
         let mut channel = ToneChannel::<2>::new(false);
         channel.set_nrx2(0xF0); // DAC on
         channel.set_nrx3(0x00);
-        channel.set_nrx4(0x87); // trigger with frequency 0x700
+        channel.set_nrx4(0x87, &FrameSequencer::default()); // trigger with frequency 0x700
         assert_eq!(channel.freq_timer.period, (2048 - 0x700) * 4);
 
         channel.set_nrx3(0x80);
         assert_eq!(channel.freq_timer.period, (2048 - 0x780) * 4);
-        channel.set_nrx4(0x06);
+        channel.set_nrx4(0x06, &FrameSequencer::default());
         assert_eq!(channel.freq_timer.period, (2048 - 0x680) * 4);
         assert!(channel.enabled());
     }
@@ -460,13 +466,13 @@ mod tests {
     fn nrx4_is_written_while_dac_is_off() {
         let mut channel = ToneChannel::<2>::new(false);
         channel.set_nrx2(0x00); // DAC off
-        channel.set_nrx4(0xC7); // trigger, with length enabled and frequency 0x700
+        channel.set_nrx4(0xC7, &FrameSequencer::default()); // trigger, with length enabled and frequency 0x700
         assert!(!channel.enabled());
         assert!(channel.length_counter.length_enabled);
         assert_eq!(channel.freq_timer.period, (2048 - 0x700) * 4);
 
         channel.set_nrx2(0xF0); // DAC on
-        channel.set_nrx4(0x80);
+        channel.set_nrx4(0x80, &FrameSequencer::default());
         assert!(channel.enabled());
     }
 

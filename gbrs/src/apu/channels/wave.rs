@@ -47,7 +47,7 @@ impl WaveChannel {
     pub(crate) fn nr30(&self) -> u8 {
         let mut res = 0xFF_u8;
         let bits = res.view_bits_mut::<Lsb0>();
-        bits.set(7, self.enabled);
+        bits.set(7, self.dac_enabled);
 
         res
     }
@@ -55,7 +55,6 @@ impl WaveChannel {
     pub(crate) fn set_nr30(&mut self, b: u8) {
         if b.view_bits::<Lsb0>()[7] {
             self.dac_enabled = true;
-            self.position = 0;
         } else {
             self.dac_enabled = false;
             self.enabled = false;
@@ -106,25 +105,25 @@ impl WaveChannel {
         res
     }
 
-    pub(crate) fn set_nr34(&mut self, b: u8) {
+    pub(crate) fn set_nr34(&mut self, b: u8, frame_sequencer: &FrameSequencer) {
         let bits = b.view_bits::<Lsb0>();
         self.freq.view_bits_mut::<Lsb0>()[8..=10].store::<u8>(bits[0..=2].load::<u8>());
         self.update_period();
 
-        if bits[6] {
-            self.length_counter.enable();
-        } else {
-            self.length_counter.reset();
+        let trigger = bits[7];
+        if self.length_counter.write_nrx4(
+            bits[6],
+            trigger,
+            frame_sequencer.next_step_clocks_length(),
+        ) {
+            self.enabled = false;
         }
-
-        if bits[7] {
-            // trigger
+        if trigger {
             if self.is_dac_on() {
                 self.enabled = true;
             }
             self.position = 0;
             self.freq_timer.reset();
-            self.length_counter.trigger();
         }
     }
 
@@ -167,11 +166,15 @@ impl WaveChannel {
         }
     }
 
-    pub(crate) fn reset(&mut self) {
+    /// Clear the registers, like powering the APU off does. Wave RAM is left alone.
+    pub(crate) fn power_off(&mut self) {
+        self.dac_enabled = false;
         self.enabled = false;
-        self.length_counter.reset();
+        self.length_counter.power_off();
         self.position = 0;
         self.output_level = OutputLevel::Mute;
+        self.freq = 0;
+        self.update_period();
     }
 
     pub(crate) fn is_dac_on(&self) -> bool {
@@ -212,12 +215,12 @@ mod tests {
         let mut channel = WaveChannel::new();
         channel.set_nr30(0x80); // DAC on
         channel.set_nr33(0x00);
-        channel.set_nr34(0x87); // trigger with frequency 0x700
+        channel.set_nr34(0x87, &FrameSequencer::default()); // trigger with frequency 0x700
         assert_eq!(channel.freq_timer.period, (2048 - 0x700) * 2);
 
         channel.set_nr33(0x80);
         assert_eq!(channel.freq_timer.period, (2048 - 0x780) * 2);
-        channel.set_nr34(0x06);
+        channel.set_nr34(0x06, &FrameSequencer::default());
         assert_eq!(channel.freq_timer.period, (2048 - 0x680) * 2);
         assert!(channel.enabled());
     }

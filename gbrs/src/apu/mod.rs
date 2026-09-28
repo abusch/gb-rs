@@ -137,7 +137,8 @@ impl Apu {
             remaining -= n;
 
             let (frame_step, sample_due) = self.run_for(n);
-            if frame_step {
+            // The frame sequencer is stopped while the APU is off.
+            if frame_step && self.apu_enabled {
                 self.frame_sequencer.tick();
                 self.channel1.tick_frame(&self.frame_sequencer);
                 self.channel2.tick_frame(&self.frame_sequencer);
@@ -327,10 +328,22 @@ impl Apu {
 
     pub fn write_io(&mut self, addr: u16, b: u8) {
         self.catch_up();
-        // If the APU is disabled, all writes are ignored, except for NR52
-        if addr != REG_NR52 && !self.apu_enabled {
-            return;
+        // While the APU is off, writes are ignored, except to NR52 and (on the DMG) to the length
+        // counters.
+        if !self.apu_enabled {
+            match addr {
+                REG_NR11 => self.channel1.set_length(b),
+                REG_NR21 => self.channel2.set_length(b),
+                REG_NR31 => self.channel3.set_nr31(b),
+                REG_NR41 => self.channel4.set_nr41(b),
+                REG_NR52 => (),
+                _ => return,
+            }
+            if addr != REG_NR52 {
+                return;
+            }
         }
+        let frame_sequencer = self.frame_sequencer;
 
         match addr {
             // Channel 1
@@ -338,25 +351,25 @@ impl Apu {
             REG_NR11 => self.channel1.set_nrx1(b),
             REG_NR12 => self.channel1.set_nrx2(b),
             REG_NR13 => self.channel1.set_nrx3(b),
-            REG_NR14 => self.channel1.set_nrx4(b),
+            REG_NR14 => self.channel1.set_nrx4(b, &frame_sequencer),
             0xFF15 => (), // nop
             // Channel 2
             REG_NR21 => self.channel2.set_nrx1(b),
             REG_NR22 => self.channel2.set_nrx2(b),
             REG_NR23 => self.channel2.set_nrx3(b),
-            REG_NR24 => self.channel2.set_nrx4(b),
+            REG_NR24 => self.channel2.set_nrx4(b, &frame_sequencer),
             // Channel 3
             REG_NR30 => self.channel3.set_nr30(b),
             REG_NR31 => self.channel3.set_nr31(b),
             REG_NR32 => self.channel3.set_nr32(b),
             REG_NR33 => self.channel3.set_nr33(b),
-            REG_NR34 => self.channel3.set_nr34(b),
+            REG_NR34 => self.channel3.set_nr34(b, &frame_sequencer),
             0xFF1F => (), // nop
             // Channel 4
             REG_NR41 => self.channel4.set_nr41(b),
             REG_NR42 => self.channel4.set_nr42(b),
             REG_NR43 => self.channel4.set_nr43(b),
-            REG_NR44 => self.channel4.set_nr44(b),
+            REG_NR44 => self.channel4.set_nr44(b, &frame_sequencer),
             // sound control
             REG_NR50 => {
                 let bits = b.view_bits::<Lsb0>();
@@ -367,11 +380,12 @@ impl Apu {
             }
             REG_NR51 => self.sound_output_selection = b,
             REG_NR52 => {
+                let was_enabled = self.apu_enabled;
                 self.apu_enabled = b.view_bits::<Lsb0>()[7];
-                if self.apu_enabled {
+                if self.apu_enabled && !was_enabled {
                     debug!("Turning APU ON!");
-                    // self.channel1.reset();
-                } else {
+                    self.frame_sequencer.restart();
+                } else if !self.apu_enabled {
                     debug!("Turning APU OFF!");
                     self.left_vin_enabled = false;
                     self.right_vin_enabled = false;
@@ -379,10 +393,10 @@ impl Apu {
                     self.left_volume = 0;
                     self.right_volume = 0;
                     self.sound_output_selection = 0;
-                    self.channel1.reset();
-                    self.channel2.reset();
-                    self.channel3.reset();
-                    self.channel4.reset();
+                    self.channel1.power_off();
+                    self.channel2.power_off();
+                    self.channel3.power_off();
+                    self.channel4.power_off();
                 }
             }
             _ => panic!("Invalid sound register {:04x}", addr),

@@ -77,23 +77,32 @@ impl LengthCounter {
         self.length_counter = length;
     }
 
-    fn enable(&mut self) {
-        self.length_enabled = true;
-    }
-
-    fn disable(&mut self) {
-        self.length_enabled = false;
-    }
-
-    fn reset(&mut self) {
-        self.length_enabled = false;
-        self.length_counter = 0;
-    }
-
-    fn trigger(&mut self) {
-        if self.length_counter == 0 {
-            self.length_counter = self.default_length;
+    /// Handle a write to NRx4, which enables or disables length counting and can trigger the
+    /// channel. Return whether that disables the channel.
+    ///
+    /// Enabling length counting when the frame sequencer's next step doesn't clock it clocks it
+    /// once straight away, and a trigger loads a counter that reached 0 with the maximum, minus
+    /// that extra clock. See <https://gbdev.io/pandocs/Audio_details.html#obscure-behavior>.
+    fn write_nrx4(&mut self, enable: bool, trigger: bool, next_step_clocks_length: bool) -> bool {
+        let extra_clock = enable && !next_step_clocks_length;
+        let mut disable = false;
+        if extra_clock && !self.length_enabled && self.length_counter > 0 {
+            self.length_counter -= 1;
+            disable = self.length_counter == 0 && !trigger;
         }
+        self.length_enabled = enable;
+        if trigger && self.length_counter == 0 {
+            self.length_counter = self.default_length;
+            if extra_clock {
+                self.length_counter -= 1;
+            }
+        }
+        disable
+    }
+
+    /// Powering the APU off disables length counting, but on the DMG it keeps the counters.
+    fn power_off(&mut self) {
+        self.length_enabled = false;
     }
 }
 

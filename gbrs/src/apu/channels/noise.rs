@@ -16,14 +16,15 @@ struct Lsfr {
 impl Lsfr {
     fn new() -> Self {
         Self {
-            reg: 0xffff,
+            reg: 0x7FFF,
             width_mode: false,
         }
     }
 
-    fn reset(&mut self) {
-        self.reg = 0x0000;
-        self.width_mode = false;
+    /// Reset the register, like a trigger does. With the feedback computed as a XOR and the output
+    /// inverted, this is all 1s: all 0s would stay stuck at 0.
+    fn restart(&mut self) {
+        self.reg = 0x7FFF;
     }
 
     fn tick(&mut self) {
@@ -89,6 +90,7 @@ impl NoiseChannel {
         0xFF
     }
 
+    /// Only the length can be written, so this works while the APU is off too.
     pub(crate) fn set_nr41(&mut self, b: u8) {
         self.length_counter.load(64 - (b & 0x3F) as u16);
     }
@@ -145,9 +147,8 @@ impl NoiseChannel {
         };
         self.shift = bits[4..=7].load::<u8>();
         let width = bits[3];
-        let period = (base_divisor as u16) << (self.shift as u16);
-        self.timer.period = period;
-        self.timer.reset();
+        // Like the other channels' frequency, it takes effect the next time the timer reloads.
+        self.timer.period = (base_divisor as u16) << (self.shift as u16);
         self.lsfr.width_mode = width;
     }
 
@@ -160,21 +161,23 @@ impl NoiseChannel {
         res
     }
 
-    pub(crate) fn set_nr44(&mut self, b: u8) {
+    pub(crate) fn set_nr44(&mut self, b: u8, frame_sequencer: &FrameSequencer) {
         let bits = b.view_bits::<Lsb0>();
-        if bits[6] {
-            self.length_counter.enable();
-        } else {
-            self.length_counter.reset();
+        let trigger = bits[7];
+        if self.length_counter.write_nrx4(
+            bits[6],
+            trigger,
+            frame_sequencer.next_step_clocks_length(),
+        ) {
+            self.enabled = false;
         }
 
-        if bits[7] {
-            // trigger
+        if trigger {
             debug!("Noise channel triggered");
             self.enabled = true;
-            self.lsfr.reset();
+            self.lsfr.restart();
+            self.timer.reset();
             self.volume_envelope.trigger();
-            self.length_counter.trigger();
             if !self.is_dac_on() {
                 debug!("DAC4 is off, disabling noise channel");
                 self.enabled = false;
@@ -182,15 +185,14 @@ impl NoiseChannel {
         }
     }
 
-    pub(crate) fn reset(&mut self) {
+    /// Clear the registers, like powering the APU off does.
+    pub(crate) fn power_off(&mut self) {
         self.dac_enabled = false;
         self.enabled = false;
-        self.length_counter.reset();
+        self.length_counter.power_off();
         self.volume_envelope.reset();
-        self.lsfr.reset();
-        self.base_divisor = 0;
-        self.shift = 0;
-        self.timer.reset();
+        self.lsfr.width_mode = false;
+        self.set_nr43(0);
     }
 
     pub(crate) fn digital_output(&self) -> u8 {
@@ -215,5 +217,25 @@ impl NoiseChannel {
 
     pub(crate) fn enabled(&self) -> bool {
         self.enabled
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_noise_after_trigger() {
+        let mut channel = NoiseChannel::new();
+        channel.set_nr42(0xF0); // DAC on, full volume
+        channel.set_nr43(0x00); // fastest clock, 15-bit LFSR
+        channel.set_nr44(0x80, &FrameSequencer::default()); // trigger
+        let mut outputs = std::collections::HashSet::new();
+        for _ in 0..1000 {
+            channel.advance(8);
+            outputs.insert(channel.digital_output());
+        }
+        // Both 0 and the full volume show up, so the LFSR isn't stuck.
+        assert_eq!(outputs.len(), 2, "outputs: {outputs:?}");
     }
 }
