@@ -7,7 +7,7 @@ use rustyline::{
     Config, Editor, Helper,
     completion::{Completer, Pair},
     error::ReadlineError,
-    highlight::{CmdKind, Highlighter},
+    highlight::Highlighter,
     hint::Hinter,
     history::MemHistory,
     validate::Validator,
@@ -83,8 +83,7 @@ impl Debugger {
                     }
                     s if s.starts_with("poke ") => {
                         let mut parts = s.split_whitespace();
-                        if let (Some(addr_str), Some(value_str)) =
-                            (dbg!(parts.nth(1)), dbg!(parts.nth(0)))
+                        if let (Some(addr_str), Some(value_str)) = (parts.nth(1), parts.next())
                             && let Ok(addr) = u16::from_str_radix(addr_str, 16)
                             && let Ok(value) = u8::from_str_radix(value_str, 16)
                         {
@@ -145,7 +144,7 @@ impl Completer for DebuggerHelper {
         pos: usize,
         ctx: &rustyline::Context<'_>,
     ) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
-        let _ = (line, pos, ctx);
+        let _ = (pos, ctx);
         let candidates = self
             .commands
             .iter()
@@ -175,36 +174,16 @@ impl Hinter for DebuggerHelper {
 }
 
 impl Highlighter for DebuggerHelper {
-    fn highlight<'l>(&self, line: &'l str, pos: usize) -> std::borrow::Cow<'l, str> {
-        let _ = pos;
-        std::borrow::Cow::Borrowed(line)
-    }
-
     fn highlight_prompt<'b, 's: 'b, 'p: 'b>(
         &'s self,
         prompt: &'p str,
         _default: bool,
-    ) -> std::borrow::Cow<'b, str> {
+    ) -> Cow<'b, str> {
         Cow::Owned(format!("{}", Colour::Green.dimmed().paint(prompt)))
     }
 
-    fn highlight_hint<'h>(&self, hint: &'h str) -> std::borrow::Cow<'h, str> {
+    fn highlight_hint<'h>(&self, hint: &'h str) -> Cow<'h, str> {
         Cow::Owned(format!("{}", Colour::White.dimmed().paint(hint)))
-        // std::borrow::Cow::Borrowed(hint)
-    }
-
-    fn highlight_candidate<'c>(
-        &self,
-        candidate: &'c str, // FIXME should be Completer::Candidate
-        completion: rustyline::CompletionType,
-    ) -> std::borrow::Cow<'c, str> {
-        let _ = completion;
-        std::borrow::Cow::Borrowed(candidate)
-    }
-
-    fn highlight_char(&self, line: &str, pos: usize, _kind: CmdKind) -> bool {
-        let _ = (line, pos);
-        false
     }
 }
 

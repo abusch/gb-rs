@@ -33,11 +33,10 @@ impl FrameSink for HashingSink {
 }
 
 impl AudioSink for HashingSink {
-    fn push_sample(&mut self, (left, right): (f32, f32)) -> bool {
+    fn push_sample(&mut self, (left, right): (f32, f32)) {
         self.samples += 1;
         self.audio.write_u32(left.to_bits());
         self.audio.write_u32(right.to_bits());
-        true
     }
 }
 

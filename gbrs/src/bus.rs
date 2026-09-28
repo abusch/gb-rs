@@ -273,9 +273,8 @@ impl Bus {
     }
 
     pub fn write_byte(&mut self, addr: u16, b: u8) {
-        if BOOT_ROM.contains(&addr) && self.boot_rom.is_some() {
-            panic!("Tried to write into boot ROM during the boot sequence!");
-        } else if CART_BANK_00.contains(&addr) || CART_BANK_MAPPED.contains(&addr) {
+        // Writes to the boot ROM area go to the cartridge's MBC, even while the boot ROM is mapped.
+        if CART_BANK_00.contains(&addr) || CART_BANK_MAPPED.contains(&addr) {
             self.cartridge.write_rom(addr, b);
         } else if VRAM.contains(&addr) {
             self.gfx.write_vram(addr, b);
@@ -313,7 +312,7 @@ impl Bus {
     }
 
     pub fn ack_interrupt(&mut self, flag: InterruptFlag) {
-        self.interrupt_flag.toggle(flag);
+        self.interrupt_flag.remove(flag);
         trace!(
             "Acknowledging interrupt: {:?}. Pending: {:?}",
             flag, self.interrupt_flag
@@ -415,8 +414,6 @@ impl Bus {
             if b != 0 && self.boot_rom.take().is_some() {
                 info!("Boot sequence complete. Disabling boot ROM.");
             }
-        } else if (0xff68..=0xff69).contains(&addr) {
-            // CGB-only registers, just ignore for now
         } else {
             trace!(
                 "Write I/O Register 0x{:04x}<-0x{:02X} (NOT IMPLEMENTED)",

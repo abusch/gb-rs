@@ -12,7 +12,7 @@ use crate::{AudioSink, FrameSink, Rgb555};
 const SAVE_STATE_MAGIC: [u8; 4] = *b"GBRS";
 /// Bump this whenever the shape of the emulator's state changes (e.g. a field is added to one of
 /// the components), since save states are just the serialised structs.
-const SAVE_STATE_VERSION: u16 = 6;
+const SAVE_STATE_VERSION: u16 = 7;
 
 /// Comes first in save states, to reject ones that can't be loaded.
 #[derive(Serialize, Deserialize)]
@@ -255,9 +255,7 @@ mod tests {
     }
 
     impl AudioSink for NullSink {
-        fn push_sample(&mut self, _sample: (f32, f32)) -> bool {
-            false
-        }
+        fn push_sample(&mut self, _sample: (f32, f32)) {}
     }
 
     /// Hashes the video and audio output.
@@ -273,10 +271,9 @@ mod tests {
     }
 
     impl AudioSink for HashSink {
-        fn push_sample(&mut self, (left, right): (f32, f32)) -> bool {
+        fn push_sample(&mut self, (left, right): (f32, f32)) {
             std::hash::Hasher::write_u32(&mut self.0, left.to_bits());
             std::hash::Hasher::write_u32(&mut self.0, right.to_bits());
-            true
         }
     }
 

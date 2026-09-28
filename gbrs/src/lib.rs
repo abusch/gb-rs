@@ -49,7 +49,7 @@ pub trait FrameSink {
 }
 
 pub trait AudioSink {
-    fn push_sample(&mut self, sample: (f32, f32)) -> bool;
+    fn push_sample(&mut self, sample: (f32, f32));
 }
 
 #[cfg(test)]

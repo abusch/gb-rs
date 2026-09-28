@@ -1,9 +1,7 @@
-use std::io::Cursor;
+use std::io::{Cursor, Read};
 
 use anyhow::Result;
 use bitvec::prelude::*;
-use byteorder::LittleEndian;
-use byteorder::ReadBytesExt;
 
 pub struct Instr {
     /// String representation of the decoded instruction
@@ -263,11 +261,15 @@ impl<'a> Disassembler<'a> {
     }
 
     fn read_byte(&mut self) -> Result<u8> {
-        Ok(self.instructions.read_u8()?)
+        let mut byte = [0];
+        self.instructions.read_exact(&mut byte)?;
+        Ok(byte[0])
     }
 
     fn read_word(&mut self) -> Result<u16> {
-        Ok(self.instructions.read_u16::<LittleEndian>()?)
+        let mut word = [0; 2];
+        self.instructions.read_exact(&mut word)?;
+        Ok(u16::from_le_bytes(word))
     }
 }
 

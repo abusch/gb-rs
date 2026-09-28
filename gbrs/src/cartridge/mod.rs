@@ -62,9 +62,9 @@ impl Cartridge {
             t @ 0x19..=0x1E => Mbc::Mbc5(Mbc5::new(rom_len, ram_banks, t >= 0x1C)),
             0x00 | 0x08 | 0x09 => Mbc::None,
             0x01..=0x03 => Mbc::Mbc1(Mbc1::new(rom_len, ram_banks, cartridge.is_multicart())),
-            _ => {
+            t => {
                 warn!(
-                    "Unsupported cartridge type {}, falling back to MBC1",
+                    "Unsupported cartridge type {} (0x{t:02X}), falling back to MBC1",
                     cartridge.cartridge_type()
                 );
                 Mbc::Mbc1(Mbc1::new(rom_len, ram_banks, false))
@@ -130,7 +130,7 @@ impl Cartridge {
             0xFD => "BANDAI TAMA5",
             0xFE => "HuC3",
             0xFF => "HuC1+RAM+BATTERY",
-            b => panic!("Unknown cartridge type {:x}", b),
+            _ => "UNKNOWN",
         }
     }
 
@@ -299,22 +299,6 @@ impl Cartridge {
         (!self.ram.is_empty()).then_some(&mut self.ram[..])
     }
 
-    #[allow(dead_code)]
-    fn get_num_rom_banks(&self) -> u16 {
-        match self.get_rom_size() {
-            0x00 => 2,
-            0x01 => 4,
-            0x02 => 8,
-            0x03 => 16,
-            0x04 => 32,
-            0x05 => 64,
-            0x06 => 128,
-            0x07 => 256,
-            0x08 => 512,
-            s => panic!("Invalid ROM size {}", s),
-        }
-    }
-
     fn get_num_ram_banks(&self) -> Option<u16> {
         if self.has_ram() {
             match self.get_ram_size() {
@@ -366,6 +350,14 @@ mod tests {
         cart.write_ram(0x1FFF, 0x42);
         assert_eq!(cart.read_ram(0x1FFF), 0x42);
         assert_eq!(cart.save_ram().unwrap().len(), 0x2000);
+    }
+
+    #[test]
+    fn test_unknown_type_falls_back_to_mbc1() {
+        let mut cart = cartridge(0x04, 0x02, 0x00);
+        assert_eq!(cart.cartridge_type(), "UNKNOWN");
+        cart.write_rom(0x2000, 0x03);
+        assert_eq!(cart.read_rom(0x4000), 3);
     }
 
     #[test]

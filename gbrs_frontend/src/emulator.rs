@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicU32, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -115,7 +115,6 @@ const STATS_LOG_INTERVAL: Duration = Duration::from_secs(1);
 pub struct AudioStats {
     pub underrun_count: AtomicU64,
     pub producer_drop_count: AtomicU64,
-    pub last_fill_level: AtomicU32,
 }
 
 /// The object that pulls everything together and drives the emulation engine while interfacing
@@ -179,7 +178,10 @@ impl Emulator {
             emulated_cycles: 0,
             debugger: Debugger::new()?,
             sink: MostRecentFrameSink::default(),
-            audio_sink: CpalAudioSink::new(producer, Arc::clone(&audio_stats)),
+            audio_sink: CpalAudioSink {
+                buffer: producer,
+                stats: Arc::clone(&audio_stats),
+            },
             audio_stats,
             last_stats_log: now,
             gamepads: Gamepads::new(),
@@ -192,7 +194,7 @@ impl Emulator {
         self.gb.pause();
     }
 
-    pub fn render(&mut self, buf: &mut [u8]) {
+    pub fn render(&self, buf: &mut [u8]) {
         self.sink.draw_current_frame(buf);
     }
 
@@ -282,11 +284,7 @@ impl Emulator {
         }
         self.last_stats_log = now;
 
-        let fill = self.audio_sink.fill_level() as u32;
-        self.audio_stats
-            .last_fill_level
-            .store(fill, Ordering::Relaxed);
-
+        let fill = self.audio_sink.fill_level();
         let underruns = self.audio_stats.underrun_count.swap(0, Ordering::Relaxed);
         let drops = self
             .audio_stats
@@ -298,7 +296,7 @@ impl Emulator {
         }
     }
 
-    pub fn screenshot(&mut self) -> Result<()> {
+    pub fn screenshot(&self) -> Result<()> {
         let filename = format!(
             "gb-rs-screenshot_{}.png",
             SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs()
@@ -400,73 +398,48 @@ impl Emulator {
 /// Frame sink that only keeps the most recent frame
 struct MostRecentFrameSink {
     buf: [Rgb555; SCREEN_WIDTH * SCREEN_HEIGHT],
-    new_frame: bool,
 }
 
 impl MostRecentFrameSink {
-    pub fn new() -> Self {
-        Self {
-            buf: [Rgb555::default(); SCREEN_WIDTH * SCREEN_HEIGHT],
-            new_frame: true,
+    fn draw_current_frame(&self, frame: &mut [u8]) {
+        for (color, p) in self.buf.iter().zip(frame.chunks_mut(4)) {
+            let (r, g, b) = color.to_rgb888();
+            p.copy_from_slice(&[r, g, b, 255]);
         }
-    }
-
-    fn draw_current_frame(&mut self, frame: &mut [u8]) {
-        self.buf
-            .iter()
-            .zip(frame.chunks_mut(4))
-            .for_each(|(color, p)| {
-                let (r, g, b) = color.to_rgb888();
-                p.copy_from_slice(&[r, g, b, 255]);
-            });
-        self.new_frame = false;
     }
 }
 
 impl Default for MostRecentFrameSink {
     fn default() -> Self {
-        Self::new()
+        Self {
+            buf: [Rgb555::default(); SCREEN_WIDTH * SCREEN_HEIGHT],
+        }
     }
 }
 
 impl FrameSink for MostRecentFrameSink {
     fn push_frame(&mut self, frame: &[Rgb555]) {
         self.buf.copy_from_slice(frame);
-        self.new_frame = true;
     }
 }
 
 struct CpalAudioSink {
     buffer: ProducerF32,
-    master_volume: f32,
     stats: Arc<AudioStats>,
 }
 
 impl CpalAudioSink {
-    fn new(buffer: ProducerF32, stats: Arc<AudioStats>) -> Self {
-        Self {
-            buffer,
-            master_volume: 1.0,
-            stats,
-        }
-    }
-
     fn fill_level(&self) -> usize {
         self.buffer.occupied_len()
     }
 }
 
 impl AudioSink for CpalAudioSink {
-    fn push_sample(&mut self, sample: (f32, f32)) -> bool {
-        if self.buffer.try_push(sample.0 * self.master_volume).is_err()
-            || self.buffer.try_push(sample.1 * self.master_volume).is_err()
-        {
+    fn push_sample(&mut self, (left, right): (f32, f32)) {
+        if self.buffer.try_push(left).is_err() || self.buffer.try_push(right).is_err() {
             self.stats
                 .producer_drop_count
                 .fetch_add(1, Ordering::Relaxed);
-            return true;
         }
-
-        false
     }
 }

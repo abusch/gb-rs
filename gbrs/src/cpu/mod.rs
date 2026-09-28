@@ -39,6 +39,8 @@ pub struct Cpu {
 
     // Flag for the HALT bug
     halt_bug: bool,
+    /// Set by an invalid opcode: the CPU stops for good, and ignores interrupts.
+    locked_up: bool,
 }
 
 impl Cpu {
@@ -73,6 +75,9 @@ impl Cpu {
     }
 
     pub fn handle_interrupt(&mut self, bus: &mut CpuBus<'_>) {
+        if self.locked_up {
+            return;
+        }
         let pending_interrupts = bus.interrupt_pending();
 
         // if there are pending interrupts, we need to wake the cpu (even if IME=0)
@@ -118,7 +123,7 @@ impl Cpu {
         if self.breakpoint == Some(self.pc) {
             self.paused = true;
         }
-        if self.halted {
+        if self.halted || self.locked_up {
             return 4;
         }
         let orig_pc = self.pc;
@@ -719,11 +724,11 @@ impl Cpu {
             // RST 0x38
             0xff => self.rst(bus, 0x38),
 
+            // The remaining opcodes don't exist, and lock the CPU up until it's powered off.
             _ => {
-                // self.dump_cpu();
-                // unimplemented!("op=0x{:02x}, orig_pc=0x{:04x}", op, orig_pc);
-                warn!("Unimplemented op=0x{:02x}, orig_pc=0x{:04x}", op, orig_pc);
-                0
+                warn!("Invalid opcode 0x{op:02x} at 0x{orig_pc:04x}: locking up");
+                self.locked_up = true;
+                4
             }
         }
     }
@@ -2003,68 +2008,6 @@ impl Cpu {
         4
     }
 
-    // fn daa(&mut self) -> u8 {
-    //     let reg_a = self.regs.get(Reg::A);
-    //     let hi = (reg_a & 0xf0) >> 4;
-    //     let lo = reg_a & 0x0f;
-
-    //     if self.regs.flag_n().is_set() {
-    //         // Last operation was subtraction
-    //         match (self.regs.flag_c().is_set(), self.regs.flag_h().is_set()) {
-    //             (false, false) => (),
-    //             (false, true) => {
-    //                 if hi <= 8 && lo >= 6 {
-    //                     self.add(0xfa);
-    //                 }
-    //             }
-    //             (true, false) => {
-    //                 if hi >= 7 && lo <= 9 {
-    //                     self.add(0xa0);
-    //                 }
-    //             }
-    //             (true, true) => {
-    //                 if hi >= 6 && lo >= 6 {
-    //                     self.add(0x9a);
-    //                 }
-    //             }
-    //         }
-    //     } else {
-    //         // Last operation was an addition
-    //         match (self.regs.flag_c().is_set(), self.regs.flag_h().is_set()) {
-    //             (false, false) => {
-    //                 if hi <= 8 && lo >= 0x0a {
-    //                     self.add(0x06);
-    //                 } else if hi >= 0x0a && lo <= 9 {
-    //                     self.add(0x60);
-    //                 } else if hi >= 0x09 && lo >= 0x0a {
-    //                     self.add(0x66);
-    //                 }
-    //             }
-    //             (false, true) => {
-    //                 if hi <= 9 && lo <= 3 {
-    //                     self.add(0x06);
-    //                 } else if hi >= 0x0a && lo <= 3 {
-    //                     self.add(0x66);
-    //                 }
-    //             }
-    //             (true, false) => {
-    //                 if hi <= 2 && lo <= 9 {
-    //                     self.add(0x60);
-    //                 } else if hi <= 2 && lo >= 0x0a {
-    //                     self.add(0x66);
-    //                 }
-    //             }
-    //             (true, true) => {
-    //                 if hi <= 3 && lo <= 3 {
-    //                     self.add(0x66);
-    //                 }
-    //             }
-    //         }
-    //     }
-
-    //     4
-    // }
-
     pub fn is_paused(&self) -> bool {
         self.paused
     }
@@ -2113,9 +2056,7 @@ mod tests {
     }
 
     impl crate::AudioSink for NullSink {
-        fn push_sample(&mut self, _sample: (f32, f32)) -> bool {
-            true
-        }
+        fn push_sample(&mut self, _sample: (f32, f32)) {}
     }
 
     #[test]

@@ -324,10 +324,9 @@ struct RetroAudioSink {
 }
 
 impl AudioSink for RetroAudioSink {
-    fn push_sample(&mut self, (left, right): (f32, f32)) -> bool {
+    fn push_sample(&mut self, (left, right): (f32, f32)) {
         let to_i16 = |s: f32| (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
         self.samples.push([to_i16(left), to_i16(right)]);
-        false
     }
 }
 

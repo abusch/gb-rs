@@ -971,7 +971,6 @@ dependencies = [
  "anyhow",
  "bitflags 2.13.2",
  "bitvec",
- "byteorder",
  "log",
  "png",
  "postcard",

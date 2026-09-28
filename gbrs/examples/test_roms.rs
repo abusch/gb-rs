@@ -78,9 +78,7 @@ impl FrameSink for ScreenSink {
 struct NoAudio;
 
 impl AudioSink for NoAudio {
-    fn push_sample(&mut self, _sample: (f32, f32)) -> bool {
-        true
-    }
+    fn push_sample(&mut self, _sample: (f32, f32)) {}
 }
 
 /// Whether a test for the given models (the last part of its file name, in mooneye's naming
