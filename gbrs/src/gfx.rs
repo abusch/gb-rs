@@ -106,6 +106,11 @@ pub struct Gfx {
     stat_sources: u8,
     /// STAT interrupt conditions that currently hold, as `STAT_*` bits
     stat_conditions: u8,
+    /// Level of the STAT interrupt line, whose rising edges request the interrupt.
+    stat_line_high: bool,
+    /// The LY=LYC comparison. It's only updated while the PPU runs, so it holds its value while
+    /// the LCD is off.
+    lyc_equal: bool,
 
     /// BG Palette
     bgp: Palette,
@@ -153,6 +158,8 @@ impl Gfx {
             wx: 0,
             stat_sources: 0,
             stat_conditions: 0,
+            stat_line_high: false,
+            lyc_equal: false,
             window_internal_line_counter: 0,
             debugger_access: false,
         }
@@ -321,6 +328,10 @@ impl Gfx {
                 self.line_dot = 0;
                 self.running_mode = Mode::Mode0;
                 self.window_internal_line_counter = 0;
+                // The LY=LYC comparison stops with the PPU, and restarts straight away with it.
+                if self.lcd_and_ppu_enabled {
+                    self.compare_lyc();
+                }
                 self.update_stat_conditions();
             }
         } else if addr == STAT_REG {
@@ -360,7 +371,7 @@ impl Gfx {
     /// Return the value of the STAT register (FF41)
     fn stat(&self) -> u8 {
         // bit 7 is always 1
-        let lyc_eq_ly = if self.ly == self.lyc { 0b100 } else { 0 };
+        let lyc_eq_ly = if self.lyc_equal { 0b100 } else { 0 };
         0x80 | self.stat_sources | lyc_eq_ly | self.running_mode as u8
     }
 
@@ -403,7 +414,7 @@ impl Gfx {
     #[inline(always)]
     fn dot(&mut self, frame_sink: &mut dyn FrameSink) -> InterruptFlag {
         let mut interrupts = InterruptFlag::empty();
-        let stat_line = self.stat_line();
+        let mut vblank_started = false;
 
         // The mode only ever changes at a handful of fixed dots, so only do work at those.
         self.line_dot += 1;
@@ -419,6 +430,7 @@ impl Gfx {
                 self.running_mode = Mode::Mode1;
                 frame_sink.push_frame(&self.lcd);
                 interrupts |= InterruptFlag::VBLANK;
+                vblank_started = true;
                 // Reset the window internal line counter
                 self.window_internal_line_counter = 0;
             } else if self.ly < SCREEN_HEIGHT as u8 {
@@ -436,21 +448,27 @@ impl Gfx {
             }
         }
 
+        self.compare_lyc();
         self.update_stat_conditions();
 
-        let new_stat_line = self.stat_line();
-        // A STAT interrupt will be triggered by a rising edge (transition from low to high) on the
-        // STAT interrupt line.
-        if !stat_line && new_stat_line {
-            // trace!("Rising edge of the STAT itr line detected: requesting STAT interrupt");
+        // A STAT interrupt is requested on a rising edge of the STAT interrupt line. On the DMG, the
+        // mode 2 source also triggers one when VBlank starts, along with the VBlank source.
+        let stat_line = self.stat_line();
+        let oam_at_vblank = vblank_started && self.stat_sources & STAT_OAM != 0;
+        if (stat_line || oam_at_vblank) && !self.stat_line_high {
             interrupts |= InterruptFlag::STAT;
         }
+        self.stat_line_high = stat_line;
 
         interrupts
     }
 
+    fn compare_lyc(&mut self) {
+        self.lyc_equal = self.ly == self.lyc;
+    }
+
     fn update_stat_conditions(&mut self) {
-        let lyc_eq_ly = if self.ly == self.lyc { STAT_LYC } else { 0 };
+        let lyc_eq_ly = if self.lyc_equal { STAT_LYC } else { 0 };
         self.stat_conditions = self.running_mode.stat_condition() | lyc_eq_ly;
     }
 
