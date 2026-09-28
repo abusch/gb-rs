@@ -24,8 +24,8 @@ use winit::{
     dpi::LogicalSize,
     event::WindowEvent,
     event_loop::EventLoop,
-    keyboard::{Key, NamedKey},
-    window::{Window, WindowAttributes},
+    keyboard::{Key, KeyCode, NamedKey, PhysicalKey},
+    window::{Fullscreen, Window, WindowAttributes},
 };
 
 mod debugger;
@@ -202,6 +202,16 @@ impl ApplicationHandler for App {
                 if k.logical_key == Key::Named(NamedKey::Escape) {
                     event_loop.exit();
                     self.emulator.finish();
+                    return;
+                }
+                if k.physical_key == PhysicalKey::Code(KeyCode::KeyF)
+                    && k.state.is_pressed()
+                    && !k.repeat
+                {
+                    if let Some(window) = &self.window {
+                        let fullscreen = window.fullscreen().is_none();
+                        window.set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
+                    }
                     return;
                 }
                 self.emulator.handle_input(k);

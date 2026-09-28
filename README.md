@@ -18,6 +18,7 @@ Current keybindings:
 - <kbd>S</kbd>: Take a screenshot
 - <kbd>F5</kbd>: Save the state of the game (to a `.state` file next to the ROM)
 - <kbd>F7</kbd>: Load the saved state
+- <kbd>F</kbd>: Toggle fullscreen
 
 Gamepads work too, and can be plugged in while the emulator runs (you can also use the keyboard at the same time):
 - D-pad or left stick: Joypad
