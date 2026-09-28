@@ -2,10 +2,7 @@ use std::{
     fs::{self, File},
     io::{BufReader, BufWriter, Read},
     path::{Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::atomic::Ordering,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -13,11 +10,8 @@ use anyhow::{Context, Result};
 use log::{info, warn};
 
 use gbrs::{
-    AudioSink, BootRom, FrameSink, Rgb555, SCREEN_HEIGHT, SCREEN_WIDTH, cartridge::Cartridge,
+    BootRom, CPU_HZ, FrameSink, Rgb555, SCREEN_HEIGHT, SCREEN_WIDTH, cartridge::Cartridge,
     gameboy::GameBoy, joypad::Button,
-};
-use ringbuf::{
-    SharedRb, producer::Producer, storage::Heap, traits::Observer, wrap::caching::Caching,
 };
 use winit::{
     event::KeyEvent,
@@ -25,15 +19,14 @@ use winit::{
 };
 
 use crate::{
+    audio::CpalAudioSink,
     debugger::{Command, Debugger},
-    input::{ALL_BUTTONS, Buttons, Gamepads},
+    input::{Buttons, Gamepads},
 };
 
-// 4.194304 MHz CPU clock. We do not store a precomputed ns-per-cycle constant: at 238 ns
-// it rounds the period down by 0.18%, which makes the emulator run ~78 samples/s faster
-// than real time and steadily fills the audio ring buffer. Convert via full multiply/divide
-// against `NS_PER_SEC` instead.
-const CPU_HZ: u64 = 4_194_304;
+// We do not store a precomputed ns-per-cycle constant: at 238 ns it rounds the period down by
+// 0.18%, which makes the emulator run ~78 samples/s faster than real time and steadily fills the
+// audio ring buffer. Convert via full multiply/divide against `NS_PER_SEC` instead.
 const NS_PER_SEC: u64 = 1_000_000_000;
 
 fn cycles_to_ns(cycles: u64) -> u64 {
@@ -107,15 +100,7 @@ fn load_save_file(gb: &mut GameBoy, save_file: &Path) -> Result<()> {
     Ok(())
 }
 
-pub type ProducerF32 = Caching<Arc<SharedRb<Heap<f32>>>, true, false>;
-
 const STATS_LOG_INTERVAL: Duration = Duration::from_secs(1);
-
-#[derive(Debug, Default)]
-pub struct AudioStats {
-    pub underrun_count: AtomicU64,
-    pub producer_drop_count: AtomicU64,
-}
 
 /// The object that pulls everything together and drives the emulation engine while interfacing
 /// with actual input/outputs.
@@ -130,7 +115,6 @@ pub struct Emulator {
     debugger: Debugger,
     sink: MostRecentFrameSink,
     audio_sink: CpalAudioSink,
-    audio_stats: Arc<AudioStats>,
     last_stats_log: Instant,
     gamepads: Gamepads,
     /// Buttons held on the keyboard and on gamepads. The Game Boy sees a button as held as long as
@@ -143,8 +127,7 @@ impl Emulator {
     pub fn new(
         rom: impl AsRef<Path>,
         boot_rom: Option<BootRom>,
-        producer: ProducerF32,
-        audio_stats: Arc<AudioStats>,
+        audio_sink: CpalAudioSink,
         breakpoint: Option<u16>,
         enable_soft_break: bool,
         sample_rate: u32,
@@ -159,13 +142,11 @@ impl Emulator {
         info!("RAM size is ${:02x}", cartridge.get_ram_size());
         info!("CGB flag: {}", cartridge.cgb_flag());
         info!("SGB flag: {}", cartridge.sgb_flag());
-        let mut gb = GameBoy::new(
-            cartridge,
-            boot_rom,
-            breakpoint,
-            enable_soft_break,
-            sample_rate,
-        );
+        let mut gb = GameBoy::new(cartridge, boot_rom, sample_rate);
+        if let Some(addr) = breakpoint {
+            gb.set_breakpoint(addr);
+        }
+        gb.set_soft_break(enable_soft_break);
         let save_file = rom.with_extension("sav");
         load_save_file(&mut gb, &save_file)?;
 
@@ -178,11 +159,7 @@ impl Emulator {
             emulated_cycles: 0,
             debugger: Debugger::new()?,
             sink: MostRecentFrameSink::default(),
-            audio_sink: CpalAudioSink {
-                buffer: producer,
-                stats: Arc::clone(&audio_stats),
-            },
-            audio_stats,
+            audio_sink,
             last_stats_log: now,
             gamepads: Gamepads::new(),
             keyboard_buttons: Buttons::default(),
@@ -285,11 +262,9 @@ impl Emulator {
         self.last_stats_log = now;
 
         let fill = self.audio_sink.fill_level();
-        let underruns = self.audio_stats.underrun_count.swap(0, Ordering::Relaxed);
-        let drops = self
-            .audio_stats
-            .producer_drop_count
-            .swap(0, Ordering::Relaxed);
+        let stats = self.audio_sink.stats();
+        let underruns = stats.underrun_count.swap(0, Ordering::Relaxed);
+        let drops = stats.producer_drop_count.swap(0, Ordering::Relaxed);
 
         if underruns > 0 || drops > 0 {
             info!("audio stats: underruns/s={underruns} producer_drops/s={drops} fill={fill}");
@@ -387,7 +362,7 @@ impl Emulator {
         let after = keyboard | gamepad;
         self.keyboard_buttons = keyboard;
         self.gamepad_buttons = gamepad;
-        for button in ALL_BUTTONS {
+        for button in Button::ALL {
             if before.contains(button) != after.contains(button) {
                 self.gb.set_button_pressed(button, after.contains(button));
             }
@@ -420,26 +395,5 @@ impl Default for MostRecentFrameSink {
 impl FrameSink for MostRecentFrameSink {
     fn push_frame(&mut self, frame: &[Rgb555]) {
         self.buf.copy_from_slice(frame);
-    }
-}
-
-struct CpalAudioSink {
-    buffer: ProducerF32,
-    stats: Arc<AudioStats>,
-}
-
-impl CpalAudioSink {
-    fn fill_level(&self) -> usize {
-        self.buffer.occupied_len()
-    }
-}
-
-impl AudioSink for CpalAudioSink {
-    fn push_sample(&mut self, (left, right): (f32, f32)) {
-        if self.buffer.try_push(left).is_err() || self.buffer.try_push(right).is_err() {
-            self.stats
-                .producer_drop_count
-                .fetch_add(1, Ordering::Relaxed);
-        }
     }
 }

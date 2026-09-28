@@ -6,17 +6,6 @@ use gbrs::joypad::Button;
 use gilrs::{Axis, EventType, Gilrs};
 use log::{info, warn};
 
-pub const ALL_BUTTONS: [Button; 8] = [
-    Button::Start,
-    Button::Select,
-    Button::A,
-    Button::B,
-    Button::Up,
-    Button::Down,
-    Button::Left,
-    Button::Right,
-];
-
 /// Gamepad buttons for each Game Boy button. A and B go by position rather than label, as on the
 /// Game Boy: A is the right face button, B the bottom one.
 const GAMEPAD_BUTTONS: [(gilrs::Button, Button); 8] = [
@@ -142,7 +131,7 @@ mod tests {
         let mut buttons = Buttons::default();
         buttons.set(Button::A, true);
         buttons.set(Button::Right, true);
-        for button in ALL_BUTTONS {
+        for button in Button::ALL {
             assert_eq!(
                 buttons.contains(button),
                 matches!(button, Button::A | Button::Right)

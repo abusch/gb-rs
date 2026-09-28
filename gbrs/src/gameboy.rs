@@ -45,17 +45,11 @@ impl GameBoy {
     ///
     /// With a boot ROM, emulation starts by running it. Without one, it starts directly at the
     /// cartridge's entry point, in the state the boot ROM would have left the hardware in.
-    pub fn new(
-        cartridge: Cartridge,
-        boot_rom: Option<BootRom>,
-        breakpoint: Option<u16>,
-        enable_soft_break: bool,
-        sample_rate: u32,
-    ) -> Self {
+    pub fn new(cartridge: Cartridge, boot_rom: Option<BootRom>, sample_rate: u32) -> Self {
         let skip_boot = boot_rom.is_none();
         let mut gb = Self {
-            cpu: Cpu::with_breakpoint(breakpoint, enable_soft_break),
-            bus: Bus::new(8 * 1024, cartridge, sample_rate, boot_rom),
+            cpu: Cpu::default(),
+            bus: Bus::new(cartridge, sample_rate, boot_rom),
         };
         if skip_boot {
             gb.cpu.skip_boot(gb.bus.header_checksum());
@@ -162,6 +156,11 @@ impl GameBoy {
         self.cpu.set_breakpoint(addr);
     }
 
+    /// Make the `LD B,B` instruction pause emulation like a breakpoint, as some test ROMs expect.
+    pub fn set_soft_break(&mut self, enabled: bool) {
+        self.cpu.set_soft_break(enabled);
+    }
+
     pub fn set_button_pressed(&mut self, button: Button, is_pressed: bool) {
         self.bus.set_button_pressed(button, is_pressed);
     }
@@ -247,16 +246,7 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-
-    struct NullSink;
-
-    impl FrameSink for NullSink {
-        fn push_frame(&mut self, _frame: &[Rgb555]) {}
-    }
-
-    impl AudioSink for NullSink {
-        fn push_sample(&mut self, _sample: (f32, f32)) {}
-    }
+    use crate::CYCLES_PER_FRAME;
 
     /// Hashes the video and audio output.
     #[derive(Default)]
@@ -293,7 +283,7 @@ mod tests {
         let mut sink = HashSink::default();
         let mut audio = HashSink::default();
         let mut cycles = 0;
-        while cycles < frames * 154 * 456 {
+        while cycles < frames * CYCLES_PER_FRAME {
             cycles += gb.step(&mut sink, &mut audio);
         }
         std::hash::Hasher::finish(&sink.0) ^ std::hash::Hasher::finish(&audio.0)
@@ -303,7 +293,7 @@ mod tests {
     fn test_save_state_replays() {
         // A custom palette isn't part of the state, so the output only matches if it's kept.
         let palette = [Rgb555(1), Rgb555(2), Rgb555(3), Rgb555(4)];
-        let mut gb = GameBoy::new(scrolling_cartridge(0), None, None, false, 48_000);
+        let mut gb = GameBoy::new(scrolling_cartridge(0), None, 48_000);
         gb.set_dmg_palette(palette);
         run_frames(&mut gb, 30);
         let state = gb.save_state();
@@ -313,7 +303,7 @@ mod tests {
         assert_eq!(run_frames(&mut gb, 60), expected);
 
         // Also after a restart, and with padding at the end
-        let mut fresh = GameBoy::new(scrolling_cartridge(0), None, None, false, 48_000);
+        let mut fresh = GameBoy::new(scrolling_cartridge(0), None, 48_000);
         fresh.set_dmg_palette(palette);
         let mut padded = state.clone();
         padded.resize(state.len() + 100, 0);
@@ -327,13 +317,13 @@ mod tests {
 
     #[test]
     fn test_invalid_save_states_are_rejected() {
-        let mut gb = GameBoy::new(scrolling_cartridge(0), None, None, false, 48_000);
+        let mut gb = GameBoy::new(scrolling_cartridge(0), None, 48_000);
         run_frames(&mut gb, 10);
         let state = gb.save_state();
         run_frames(&mut gb, 10);
         let before = gb.save_state();
 
-        let mut other_game = GameBoy::new(scrolling_cartridge(1), None, None, false, 48_000);
+        let mut other_game = GameBoy::new(scrolling_cartridge(1), None, 48_000);
         let mut bad_magic = state.clone();
         bad_magic[0] = b'X';
         for (data, error) in [
@@ -384,15 +374,13 @@ mod tests {
         let mut booted = GameBoy::new(
             cart(),
             Some(BootRom::load_bytes(boot_rom.clone()).unwrap()),
-            None,
-            false,
             48_000,
         );
-        let mut skipped = GameBoy::new(cart(), None, None, false, 48_000);
+        let mut skipped = GameBoy::new(cart(), None, 48_000);
 
         let mut cycles = 0;
         while booted.cpu.snapshot().0[5] != 0x0100 {
-            cycles += booted.step(&mut NullSink, &mut NullSink);
+            cycles += booted.step(&mut (), &mut ());
             assert!(cycles < 100_000_000, "boot ROM never reached 0x0100");
         }
 

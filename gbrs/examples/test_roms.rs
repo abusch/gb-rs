@@ -19,10 +19,8 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use gbrs::{AudioSink, FrameSink, Rgb555, cartridge::Cartridge, gameboy::GameBoy};
+use gbrs::{CPU_HZ, CYCLES_PER_FRAME, FrameSink, Rgb555, cartridge::Cartridge, gameboy::GameBoy};
 
-const CPU_HZ: u64 = 4_194_304;
-const CYCLES_PER_FRAME: u64 = 154 * 456;
 /// The 4 DMG shades used by the reference screenshots.
 const SHADES: [u8; 4] = [0xFF, 0xAA, 0x55, 0x00];
 
@@ -73,12 +71,6 @@ impl FrameSink for ScreenSink {
         self.0.clear();
         self.0.extend_from_slice(frame);
     }
-}
-
-struct NoAudio;
-
-impl AudioSink for NoAudio {
-    fn push_sample(&mut self, _sample: (f32, f32)) {}
 }
 
 /// Whether a test for the given models (the last part of its file name, in mooneye's naming
@@ -245,7 +237,8 @@ fn run_test(test: &Test) -> Result<Outcome> {
     );
 
     let run = std::panic::catch_unwind(|| {
-        let mut gb = GameBoy::new(cartridge, None, None, stop_on_ld_b_b, 48_000);
+        let mut gb = GameBoy::new(cartridge, None, 48_000);
+        gb.set_soft_break(stop_on_ld_b_b);
         gb.set_dmg_palette(SHADES.map(|level| Rgb555::from_rgb888(level, level, level)));
         let mut screen = ScreenSink::default();
         let mut finished = false;
@@ -256,7 +249,7 @@ fn run_test(test: &Test) -> Result<Outcome> {
                     finished = true;
                     break 'frames;
                 }
-                cycles += gb.step(&mut screen, &mut NoAudio);
+                cycles += gb.step(&mut screen, &mut ());
             }
             if matches!(test.check, Check::ResultCode)
                 && [0xA001, 0xA002, 0xA003].map(|addr| gb.peek(addr)) == [0xDE, 0xB0, 0x61]

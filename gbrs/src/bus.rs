@@ -132,16 +132,9 @@ pub struct Bus {
 }
 
 impl Bus {
-    pub fn new(
-        ram_size: usize,
-        cartridge: Cartridge,
-        sample_rate: u32,
-        boot_rom: Option<BootRom>,
-    ) -> Self {
-        let ram = vec![0; ram_size];
-
+    pub fn new(cartridge: Cartridge, sample_rate: u32, boot_rom: Option<BootRom>) -> Self {
         Self {
-            ram: ram.into_boxed_slice(),
+            ram: vec![0; 0x2000].into_boxed_slice(),
             hram: vec![0; 0x80].into_boxed_slice(),
             apu: Apu::new(sample_rate),
             gfx: Gfx::new(),

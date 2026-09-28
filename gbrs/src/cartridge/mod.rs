@@ -598,7 +598,7 @@ mod tests {
 
         // Reads return the latched value, until the next 0 then 1 write to 6000-7FFF.
         cart.write_rom(0x4000, 0x08);
-        for _ in 0..4_194_304 / 4 {
+        for _ in 0..crate::CPU_HZ / 4 {
             cart.step(4);
         }
         assert_eq!(cart.read_ram(0x0000), 0);

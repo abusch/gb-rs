@@ -8,11 +8,10 @@
 use std::{hash::Hasher, time::Instant};
 
 use anyhow::{Context, Result};
-use gbrs::{AudioSink, FrameSink, Rgb555, cartridge::Cartridge, gameboy::GameBoy};
+use gbrs::{
+    AudioSink, CPU_HZ, CYCLES_PER_FRAME, FrameSink, Rgb555, cartridge::Cartridge, gameboy::GameBoy,
+};
 
-/// Dots per frame: 154 scanlines of 456 dots each.
-const CYCLES_PER_FRAME: u64 = 154 * 456;
-const CPU_HZ: f64 = 4_194_304.0;
 const SAMPLE_RATE: u32 = 48_000;
 
 #[derive(Default)]
@@ -52,7 +51,7 @@ fn main() -> Result<()> {
 
     let content = std::fs::read(&rom).context("Failed to read ROM")?;
     let cartridge = Cartridge::load_bytes(content)?;
-    let mut gb = GameBoy::new(cartridge, None, None, false, SAMPLE_RATE);
+    let mut gb = GameBoy::new(cartridge, None, SAMPLE_RATE);
 
     let mut frame_sink = HashingSink::default();
     let mut audio_sink = HashingSink::default();
@@ -64,7 +63,7 @@ fn main() -> Result<()> {
     }
     let elapsed = start.elapsed();
 
-    let emulated = cycles as f64 / CPU_HZ;
+    let emulated = cycles as f64 / CPU_HZ as f64;
     println!(
         "{frames} frames in {:.3}s: {:.1} fps, {:.2}x real time",
         elapsed.as_secs_f64(),

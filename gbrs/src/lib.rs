@@ -17,6 +17,11 @@ pub use gfx::DEFAULT_DMG_PALETTE;
 pub const SCREEN_WIDTH: usize = 160;
 pub const SCREEN_HEIGHT: usize = 144;
 
+/// The clock everything runs off, in Hz. [`gameboy::GameBoy::step`] counts in its cycles.
+pub const CPU_HZ: u64 = 4_194_304;
+/// Clock cycles per frame: 154 lines of 456 dots each, so ~59.73 frames per second.
+pub const CYCLES_PER_FRAME: u64 = 154 * 456;
+
 /// A 15-bit colour in the Game Boy Color's native layout: `0bxBBBBBGGGGGRRRRR`.
 ///
 /// This is what CGB palette RAM holds, so it can represent every colour either model can show.
@@ -50,6 +55,16 @@ pub trait FrameSink {
 
 pub trait AudioSink {
     fn push_sample(&mut self, sample: (f32, f32));
+}
+
+/// Discards the frames.
+impl FrameSink for () {
+    fn push_frame(&mut self, _frame: &[Rgb555]) {}
+}
+
+/// Discards the samples.
+impl AudioSink for () {
+    fn push_sample(&mut self, _sample: (f32, f32)) {}
 }
 
 #[cfg(test)]

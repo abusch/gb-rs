@@ -41,7 +41,7 @@ const REG_NR52: u16 = 0xFF26;
 
 const WAV_RAM_START: u16 = 0xFF30;
 
-const CPU_CYCLES_PER_SECOND: u32 = 4194304;
+const CPU_CYCLES_PER_SECOND: u32 = crate::CPU_HZ as u32;
 // Period for the main 512Hz timer
 const TIMER_PERIOD: u16 = 8192;
 

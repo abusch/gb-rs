@@ -2,7 +2,6 @@ use std::borrow::Cow;
 
 use ansi_term::Colour;
 use anyhow::Result;
-use log::info;
 use rustyline::{
     Config, Editor, Helper,
     completion::{Completer, Pair},
@@ -36,65 +35,13 @@ impl Debugger {
                 self.editor
                     .add_history_entry(line.as_str())
                     .expect("Failed to add history entry");
-                match line.as_str() {
-                    s if s.starts_with("next") => {
-                        let num = s
-                            .split_whitespace()
-                            .nth(1)
-                            .and_then(|n| u16::from_str_radix(n, 16).ok())
-                            .unwrap_or(1);
-                        Command::Next(num)
-                    }
-                    "continue" => Command::Continue,
-                    "cpu" => Command::DumpCpu,
-                    "oam" => Command::DumpOam,
-                    "palettes" => Command::DumpPalettes,
-                    s if s.starts_with("mem") => {
-                        if let Some(addr_str) = s.split_whitespace().nth(1)
-                            && let Ok(addr) = u16::from_str_radix(addr_str, 16)
-                        {
-                            return Command::DumpMem(addr);
-                        }
+                if line.trim().is_empty() {
+                    Command::Nop
+                } else {
+                    parse_command(&line).unwrap_or_else(|| {
+                        println!("Invalid command: {line}");
                         Command::Nop
-                    }
-                    s if s.starts_with("dis") => {
-                        if let Some(addr_str) = s.split_whitespace().nth(1)
-                            && let Ok(addr) = u16::from_str_radix(addr_str, 16)
-                        {
-                            return Command::Disassemble(addr);
-                        }
-                        Command::Nop
-                    }
-                    s if s.starts_with("br") => {
-                        if let Some(addr_str) = s.split_whitespace().nth(1)
-                            && let Ok(addr) = u16::from_str_radix(addr_str, 16)
-                        {
-                            return Command::Break(addr);
-                        }
-                        Command::Nop
-                    }
-                    s if s.starts_with("sprite ") => {
-                        if let Some(id_str) = s.split_whitespace().nth(1)
-                            && let Ok(id) = id_str.parse::<u8>()
-                        {
-                            return Command::Sprite(id);
-                        }
-                        Command::Nop
-                    }
-                    s if s.starts_with("poke ") => {
-                        let mut parts = s.split_whitespace();
-                        if let (Some(addr_str), Some(value_str)) = (parts.nth(1), parts.next())
-                            && let Ok(addr) = u16::from_str_radix(addr_str, 16)
-                            && let Ok(value) = u8::from_str_radix(value_str, 16)
-                        {
-                            return Command::Poke(addr, value);
-                        } else {
-                            info!("Invalid poke command");
-                        }
-                        Command::Nop
-                    }
-                    "quit" => Command::Quit,
-                    _ => Command::Nop,
+                    })
                 }
             }
             Err(ReadlineError::Interrupted) => {
@@ -111,6 +58,30 @@ impl Debugger {
             }
         }
     }
+}
+
+/// Parse a command line. Addresses, values and the `next` count are in hex, without a `0x` prefix.
+fn parse_command(line: &str) -> Option<Command> {
+    let hex16 = |s: &str| u16::from_str_radix(s, 16).ok();
+    let mut words = line.split_whitespace();
+    let command = match (words.next()?, words.next()) {
+        ("next", count) => Command::Next(count.map_or(Some(1), hex16)?),
+        ("continue", None) => Command::Continue,
+        ("cpu", None) => Command::DumpCpu,
+        ("oam", None) => Command::DumpOam,
+        ("palettes", None) => Command::DumpPalettes,
+        ("mem", Some(addr)) => Command::DumpMem(hex16(addr)?),
+        ("dis", Some(addr)) => Command::Disassemble(hex16(addr)?),
+        ("br", Some(addr)) => Command::Break(hex16(addr)?),
+        ("sprite", Some(id)) => Command::Sprite(id.parse().ok()?),
+        ("poke", Some(addr)) => {
+            Command::Poke(hex16(addr)?, u8::from_str_radix(words.next()?, 16).ok()?)
+        }
+        ("quit", None) => Command::Quit,
+        _ => return None,
+    };
+    // No trailing arguments
+    words.next().is_none().then_some(command)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,5 +168,32 @@ impl Default for DebuggerHelper {
                 "poke",
             ],
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_command() {
+        assert_eq!(parse_command("next"), Some(Command::Next(1)));
+        assert_eq!(parse_command("next 10"), Some(Command::Next(0x10)));
+        assert_eq!(
+            parse_command("  mem  c000 "),
+            Some(Command::DumpMem(0xC000))
+        );
+        assert_eq!(parse_command("sprite 12"), Some(Command::Sprite(12)));
+        assert_eq!(
+            parse_command("poke ff40 91"),
+            Some(Command::Poke(0xFF40, 0x91))
+        );
+        assert_eq!(parse_command("quit"), Some(Command::Quit));
+
+        assert_eq!(parse_command("mem"), None);
+        assert_eq!(parse_command("br 0x100"), None);
+        assert_eq!(parse_command("poke ff40"), None);
+        assert_eq!(parse_command("cpu now"), None);
+        assert_eq!(parse_command("jump 100"), None);
     }
 }

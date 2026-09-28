@@ -44,14 +44,6 @@ pub struct Cpu {
 }
 
 impl Cpu {
-    pub fn with_breakpoint(breakpoint: Option<u16>, enable_soft_break: bool) -> Self {
-        Self {
-            breakpoint,
-            enable_soft_break,
-            ..Self::default()
-        }
-    }
-
     /// Set the registers to the values the DMG boot ROM leaves them with when it jumps to the
     /// cartridge's entry point.
     pub fn skip_boot(&mut self, header_checksum: u8) {
@@ -2029,6 +2021,11 @@ impl Cpu {
         self.breakpoint = Some(breakpoint);
     }
 
+    /// Make `LD B,B` pause the CPU, like a breakpoint.
+    pub fn set_soft_break(&mut self, enabled: bool) {
+        self.enable_soft_break = enabled;
+    }
+
     /// Get the cpu's halted.
     pub fn halted(&self) -> bool {
         self.halted
@@ -2045,18 +2042,8 @@ mod tests {
         let mut rom = vec![0; 0x8000];
         rom[..program.len()].copy_from_slice(program);
         let cartridge = Cartridge::load_bytes(rom).unwrap();
-        let mut bus = Bus::new(8 * 1024, cartridge, 48_000, None);
-        Cpu::default().step(&mut CpuBus::new(&mut bus, &mut NullSink, &mut NullSink))
-    }
-
-    struct NullSink;
-
-    impl crate::FrameSink for NullSink {
-        fn push_frame(&mut self, _frame: &[crate::Rgb555]) {}
-    }
-
-    impl crate::AudioSink for NullSink {
-        fn push_sample(&mut self, _sample: (f32, f32)) {}
+        let mut bus = Bus::new(cartridge, 48_000, None);
+        Cpu::default().step(&mut CpuBus::new(&mut bus, &mut (), &mut ()))
     }
 
     #[test]

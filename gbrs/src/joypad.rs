@@ -105,6 +105,19 @@ pub enum Button {
     Right,
 }
 
+impl Button {
+    pub const ALL: [Button; 8] = [
+        Button::Start,
+        Button::Select,
+        Button::A,
+        Button::B,
+        Button::Up,
+        Button::Down,
+        Button::Left,
+        Button::Right,
+    ];
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

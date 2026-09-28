@@ -4,7 +4,7 @@ use std::{
 };
 
 use gbrs::{
-    AudioSink, BootRom, FrameSink, Rgb555, SCREEN_HEIGHT, SCREEN_WIDTH,
+    AudioSink, BootRom, CPU_HZ, CYCLES_PER_FRAME, FrameSink, Rgb555, SCREEN_HEIGHT, SCREEN_WIDTH,
     cartridge::{Cartridge, RTC_SAVE_SIZE},
     gameboy::GameBoy,
     joypad::Button,
@@ -20,10 +20,6 @@ const AUDIO_SAMPLE_RATE: f64 = 48000.0;
 /// Optional boot ROM, looked up in the frontend's system directory.
 const BOOT_ROM_FILE: &str = "dmg_boot.bin";
 
-/// 4.194304 MHz CPU clock.
-const CPU_HZ: u64 = 4_194_304;
-/// 154 scanlines of 456 dots each.
-const CYCLES_PER_FRAME: u64 = 154 * 456;
 /// ~59.73 Hz: the DMG does not run at exactly 60 fps.
 const FPS: f64 = CPU_HZ as f64 / CYCLES_PER_FRAME as f64;
 
@@ -78,8 +74,6 @@ impl GbrsCore {
         self.emulator = Some(GameBoy::new(
             cartridge,
             self.boot_rom.clone(),
-            None,
-            false,
             AUDIO_SAMPLE_RATE as u32,
         ));
         self.frame = RetroFrameSink::default();
@@ -339,13 +333,7 @@ mod tests {
     fn game_boy(cartridge_type: u8) -> GameBoy {
         let mut rom = vec![0; 0x8000];
         rom[0x0147] = cartridge_type;
-        GameBoy::new(
-            Cartridge::load_bytes(rom).unwrap(),
-            None,
-            None,
-            false,
-            48_000,
-        )
+        GameBoy::new(Cartridge::load_bytes(rom).unwrap(), None, 48_000)
     }
 
     fn unix_time() -> u64 {

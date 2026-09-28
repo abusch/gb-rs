@@ -25,7 +25,7 @@ const DH_CARRY: u8 = 0x80;
 const MASKS: [u8; 5] = [0x3F, 0x3F, 0x1F, 0xFF, DH_CARRY | DH_HALT | DH_DAY_MSB];
 
 /// The clock ticks every 32768 cycles of its own 32.768kHz oscillator, i.e. once a second.
-const CYCLES_PER_SECOND: u32 = 4_194_304;
+const CYCLES_PER_SECOND: u32 = crate::CPU_HZ as u32;
 
 const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
 
