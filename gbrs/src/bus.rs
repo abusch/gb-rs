@@ -208,14 +208,6 @@ impl Bus {
         }
     }
 
-    pub fn read_word(&self, addr: u16) -> u16 {
-        // memory access is little-endian (i.e lsb comes first)
-        let lsb = self.read_byte(addr);
-        let msb = self.read_byte(addr + 1);
-
-        u16::from_le_bytes([lsb, msb])
-    }
-
     pub fn write_byte(&mut self, addr: u16, b: u8) {
         if BOOT_ROM.contains(&addr) && self.boot_rom.is_some() {
             panic!("Tried to write into boot ROM during the boot sequence!");
@@ -246,14 +238,6 @@ impl Bus {
         } else {
             unreachable!("How did we get here? addr=0x{:04x}", addr);
         }
-    }
-
-    pub(crate) fn write_word(&mut self, addr: u16, word: u16) {
-        // memory access is little-endian, so write the lsb first...
-        let [lsb, msb] = word.to_le_bytes();
-        self.write_byte(addr, lsb);
-        // then the msb
-        self.write_byte(addr + 1, msb);
     }
 
     pub fn interrupt_enable(&self) -> InterruptFlag {
@@ -385,5 +369,70 @@ impl Bus {
         // OR in the result: several buttons may be updated before the next `cycle()`, and a
         // later one that doesn't request the interrupt must not clear an earlier one's request.
         self.joypad_interrupt |= self.joypad.set_button(button, is_pressed);
+    }
+}
+
+/// The bus as the CPU sees it. Every memory access takes one M-cycle, during which the rest of
+/// the hardware runs, so accesses land on the right cycle within an instruction.
+pub(crate) struct CpuBus<'a> {
+    bus: &'a mut Bus,
+    frame_sink: &'a mut dyn FrameSink,
+    audio_sink: &'a mut dyn AudioSink,
+    /// Clock cycles run so far.
+    cycles: u8,
+}
+
+impl<'a> CpuBus<'a> {
+    pub(crate) fn new(
+        bus: &'a mut Bus,
+        frame_sink: &'a mut dyn FrameSink,
+        audio_sink: &'a mut dyn AudioSink,
+    ) -> Self {
+        Self {
+            bus,
+            frame_sink,
+            audio_sink,
+            cycles: 0,
+        }
+    }
+
+    /// Read a byte, taking one M-cycle.
+    pub(crate) fn read_byte(&mut self, addr: u16) -> u8 {
+        let b = self.bus.read_byte(addr);
+        self.tick();
+        b
+    }
+
+    /// Write a byte, taking one M-cycle.
+    pub(crate) fn write_byte(&mut self, addr: u16, b: u8) {
+        self.bus.write_byte(addr, b);
+        self.tick();
+    }
+
+    /// Run the hardware for an M-cycle in which the CPU doesn't access memory.
+    pub(crate) fn tick(&mut self) {
+        self.bus.cycle(4, self.frame_sink, self.audio_sink);
+        self.cycles += 4;
+    }
+
+    /// Clock cycles run so far.
+    pub(crate) fn cycles(&self) -> u8 {
+        self.cycles
+    }
+
+    pub(crate) fn interrupt_enable(&self) -> InterruptFlag {
+        self.bus.interrupt_enable()
+    }
+
+    pub(crate) fn interrupt_flag(&self) -> InterruptFlag {
+        self.bus.interrupt_flag()
+    }
+
+    pub(crate) fn interrupt_pending(&self) -> bool {
+        self.bus.interrupt_pending()
+    }
+
+    pub(crate) fn ack_interrupt(&mut self, flag: InterruptFlag) {
+        self.bus.ack_interrupt(flag);
     }
 }

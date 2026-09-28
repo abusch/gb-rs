@@ -35,7 +35,7 @@ The binary provides concrete implementations: `MostRecentFrameSink` (just keeps 
 - Each update computes `target_cycles = elapsed_ns / 238` and steps the Game Boy until `emulated_cycles >= target_cycles` or the CPU is paused.
 - When resuming from the debugger, `start_time_ns` is rebased so that `elapsed - emulated_cycles*238` is preserved — otherwise a long pause would cause a catch-up burst.
 
-`GameBoy::step()` runs one CPU instruction, then for each of the resulting M-cycles ticks the `Bus` once (with 4 T-cycles) and lets the CPU handle interrupts. So peripherals (GPU/APU/Timer) advance in lockstep with the CPU at M-cycle granularity — not per-instruction.
+`GameBoy::step()` runs one CPU instruction, then the interrupt dispatch if one is due. The CPU accesses memory through `CpuBus` (in `bus.rs`), whose `read_byte`/`write_byte` run the rest of the hardware (PPU, APU, timer) for one M-cycle after each access, so every access lands on the M-cycle it does on hardware (blargg `mem_timing` and mooneye's access-timing tests rely on this). Internal M-cycles that come *before* an access must be run explicitly with `CpuBus::tick` (e.g. `push_word`, conditional `RET`, interrupt dispatch); the ones at the end of an instruction are run by `GameBoy::step`, which pads up to the cycle count the instruction returns. Interrupts are only checked between instructions.
 
 ### Bus & memory map
 

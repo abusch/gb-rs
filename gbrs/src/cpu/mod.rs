@@ -5,7 +5,7 @@ use log::{info, trace, warn};
 use serde::{Deserialize, Serialize};
 
 use self::register::{Reg, RegPair, Registers};
-use crate::{bus::Bus, interrupt::InterruptFlag};
+use crate::{bus::CpuBus, interrupt::InterruptFlag};
 
 const ITR_VBLANK: u16 = 0x0040;
 const ITR_STAT: u16 = 0x0048;
@@ -69,9 +69,7 @@ impl Cpu {
         ([*r.af, *r.bc, *r.de, *r.hl, self.sp, self.pc], self.ime)
     }
 
-    pub fn handle_interrupt(&mut self, bus: &mut Bus) {
-        let interrupt_flag = bus.interrupt_flag();
-        let interrupt_enable = bus.interrupt_enable();
+    pub fn handle_interrupt(&mut self, bus: &mut CpuBus<'_>) {
         let pending_interrupts = bus.interrupt_pending();
 
         // if there are pending interrupts, we need to wake the cpu (even if IME=0)
@@ -84,29 +82,7 @@ impl Cpu {
             // debug!("interrupts are disabled, ignoring");
             return;
         }
-        // debug!("Handling interrupts: pending: {:?} / enabled: {:?}", interrupt_flag, interrupt_enable);
-
-        let should_handle = |f: InterruptFlag| -> bool {
-            interrupt_flag.contains(f) && interrupt_enable.contains(f)
-        };
-
-        // These need to be ordered by priority:
-        if should_handle(InterruptFlag::VBLANK) {
-            trace!("Handling VBLANK interrupt");
-            self.call_interrupt(bus, InterruptFlag::VBLANK);
-        } else if should_handle(InterruptFlag::STAT) {
-            trace!("Handling STAT interrupt");
-            self.call_interrupt(bus, InterruptFlag::STAT);
-        } else if should_handle(InterruptFlag::TIMER) {
-            trace!("Handling TIMER interrupt");
-            self.call_interrupt(bus, InterruptFlag::TIMER);
-        } else if should_handle(InterruptFlag::SERIAL) {
-            trace!("Handling SERIAL interrupt");
-            self.call_interrupt(bus, InterruptFlag::SERIAL);
-        } else if should_handle(InterruptFlag::JOYPAD) {
-            trace!("Handling JOYPAD interrupt");
-            self.call_interrupt(bus, InterruptFlag::JOYPAD);
-        }
+        self.dispatch_interrupt(bus);
     }
 
     fn get_itr_vector(&self, flag: InterruptFlag) -> u16 {
@@ -123,7 +99,7 @@ impl Cpu {
     /// Fetch and execute the next instructions.
     ///
     /// Return the number of clock cycles used
-    pub fn step(&mut self, bus: &mut Bus) -> u8 {
+    pub fn step(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         // for debugging
         if self.breakpoint == Some(self.pc) {
             self.paused = true;
@@ -155,7 +131,9 @@ impl Cpu {
             // LD (a16),SP
             0x08 => {
                 let addr = self.fetch_word(bus);
-                bus.write_word(addr, self.sp);
+                let [lsb, msb] = self.sp.to_le_bytes();
+                bus.write_byte(addr, lsb);
+                bus.write_byte(addr.wrapping_add(1), msb);
                 20
             }
             // ADD HL,BC
@@ -575,8 +553,7 @@ impl Cpu {
             }
             // RET
             0xc9 => {
-                self.ret_if(bus, true);
-                // debug!("Returning from subroutine to 0x{:04x}", self.pc);
+                self.pc = self.pop_word(bus);
                 16
             }
             // JP Z,a16
@@ -627,7 +604,7 @@ impl Cpu {
             }
             // RETI
             0xd9 => {
-                self.ret_if(bus, true);
+                self.pc = self.pop_word(bus);
                 // Re-enable interrupts
                 self.ime = true;
                 trace!("Returning from interrupt handler to 0x{:04x}", self.pc);
@@ -736,7 +713,7 @@ impl Cpu {
     }
 
     /// CB-prefixed instruction
-    fn step_cb(&mut self, bus: &mut Bus) -> u8 {
+    fn step_cb(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let cb_op = self.fetch(bus);
         match cb_op {
             // RLC B
@@ -1095,7 +1072,7 @@ impl Cpu {
         );
     }
 
-    fn fetch(&mut self, bus: &mut Bus) -> u8 {
+    fn fetch(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let byte = bus.read_byte(self.pc);
         if self.halt_bug {
             // Don't increment PC so the same byte is read again
@@ -1107,7 +1084,7 @@ impl Cpu {
         byte
     }
 
-    fn fetch_word(&mut self, bus: &mut Bus) -> u16 {
+    fn fetch_word(&mut self, bus: &mut CpuBus<'_>) -> u16 {
         let lsb = self.fetch(bus);
         let msb = self.fetch(bus);
 
@@ -1115,14 +1092,14 @@ impl Cpu {
     }
 
     /// LD r,d8
-    fn ld_r_d8(&mut self, bus: &mut Bus, reg: Reg) -> u8 {
+    fn ld_r_d8(&mut self, bus: &mut CpuBus<'_>, reg: Reg) -> u8 {
         let d8 = self.fetch(bus);
         self.regs.set(reg, d8);
         8
     }
 
     /// LD (HL),d8
-    fn ld_hl_d8(&mut self, bus: &mut Bus) -> u8 {
+    fn ld_hl_d8(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let d8 = self.fetch(bus);
         bus.write_byte(*self.regs.hl, d8);
         12
@@ -1139,31 +1116,31 @@ impl Cpu {
     }
 
     /// LD rr,d16
-    fn ld_rr_d16(&mut self, bus: &mut Bus, reg: RegPair) -> u8 {
+    fn ld_rr_d16(&mut self, bus: &mut CpuBus<'_>, reg: RegPair) -> u8 {
         let d16 = self.fetch_word(bus);
         self.regs.set_pair(reg, d16);
         12
     }
 
-    fn ld_r_addr(&mut self, bus: &mut Bus, r: Reg, rr: RegPair) -> u8 {
+    fn ld_r_addr(&mut self, bus: &mut CpuBus<'_>, r: Reg, rr: RegPair) -> u8 {
         let addr = self.regs.get_pair(rr);
         self.regs.set(r, bus.read_byte(addr));
         8
     }
 
-    fn ld_addr_r(&mut self, bus: &mut Bus, rr: RegPair, r: Reg) -> u8 {
+    fn ld_addr_r(&mut self, bus: &mut CpuBus<'_>, rr: RegPair, r: Reg) -> u8 {
         let addr = self.regs.get_pair(rr);
         bus.write_byte(addr, self.regs.get(r));
         8
     }
 
-    fn ld_a16_r(&mut self, bus: &mut Bus, r: Reg) -> u8 {
+    fn ld_a16_r(&mut self, bus: &mut CpuBus<'_>, r: Reg) -> u8 {
         let addr = self.fetch_word(bus);
         bus.write_byte(addr, self.regs.get(r));
         16
     }
 
-    fn ld_r_a16(&mut self, bus: &mut Bus, r: Reg) -> u8 {
+    fn ld_r_a16(&mut self, bus: &mut CpuBus<'_>, r: Reg) -> u8 {
         let addr = self.fetch_word(bus);
         let byte = bus.read_byte(addr);
         self.regs.set(r, byte);
@@ -1174,7 +1151,7 @@ impl Cpu {
     ///
     /// This is basically the same as `ADD SP,r8` except that the result is stored in `HL` and `SP`
     /// is not modified.
-    fn ld_hl_sp_r8(&mut self, bus: &mut Bus) -> u8 {
+    fn ld_hl_sp_r8(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         // save SP
         let sp = self.sp;
         self.add_sp_r8(bus);
@@ -1185,7 +1162,7 @@ impl Cpu {
         12
     }
 
-    fn add_sp_r8(&mut self, bus: &mut Bus) -> u8 {
+    fn add_sp_r8(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         // sign extend r8 to 16 bits
         let r8 = self.fetch(bus) as i8 as i16 as u16;
         let sp = self.sp;
@@ -1208,13 +1185,13 @@ impl Cpu {
         self.xor(r)
     }
 
-    fn xor_d8(&mut self, bus: &mut Bus) -> u8 {
+    fn xor_d8(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let v = self.fetch(bus);
         self.xor(v);
         8
     }
 
-    fn xor_hl(&mut self, bus: &mut Bus) -> u8 {
+    fn xor_hl(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let v = bus.read_byte(*self.regs.hl);
         self.xor(v);
         8
@@ -1237,14 +1214,14 @@ impl Cpu {
     }
 
     /// AND d8
-    fn and_d8(&mut self, bus: &mut Bus) -> u8 {
+    fn and_d8(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let d8 = self.fetch(bus);
         self.and(d8);
         8
     }
 
     // AND (HL)
-    fn and_hl(&mut self, bus: &mut Bus) -> u8 {
+    fn and_hl(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let hl = bus.read_byte(*self.regs.hl);
         self.and(hl);
         8
@@ -1267,13 +1244,13 @@ impl Cpu {
     }
 
     /// OR (HL)
-    fn or_hl(&mut self, bus: &mut Bus) -> u8 {
+    fn or_hl(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let v = bus.read_byte(*self.regs.hl);
         self.or(v);
         8
     }
 
-    fn or_d8(&mut self, bus: &mut Bus) -> u8 {
+    fn or_d8(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let v = self.fetch(bus);
         self.or(v);
         8
@@ -1299,7 +1276,7 @@ impl Cpu {
         8
     }
 
-    fn srl_hl(&mut self, bus: &mut Bus) -> u8 {
+    fn srl_hl(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let hl = bus.read_byte(*self.regs.hl);
         bus.write_byte(*self.regs.hl, self.srl_value_and_set_flags(hl));
         16
@@ -1316,7 +1293,7 @@ impl Cpu {
     }
 
     // SRA r (Shift Right Arithmetically)
-    fn sra_hl(&mut self, bus: &mut Bus) -> u8 {
+    fn sra_hl(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let r = bus.read_byte(*self.regs.hl);
         let new_r = self.sra(r);
         bus.write_byte(*self.regs.hl, new_r);
@@ -1341,7 +1318,7 @@ impl Cpu {
     }
 
     // SLA r (Shift Left Arithmetically)
-    fn sla_hl(&mut self, bus: &mut Bus) -> u8 {
+    fn sla_hl(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let r = bus.read_byte(*self.regs.hl);
         let new_r = self.sla(r);
         bus.write_byte(*self.regs.hl, new_r);
@@ -1367,7 +1344,7 @@ impl Cpu {
     }
 
     /// DEC (HL)
-    fn dec_hl(&mut self, bus: &mut Bus) -> u8 {
+    fn dec_hl(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let new_r = self.dec_value_and_set_flags(bus.read_byte(*self.regs.hl));
         bus.write_byte(*self.regs.hl, new_r);
 
@@ -1393,7 +1370,7 @@ impl Cpu {
     }
 
     /// INC (HL)
-    fn inc_hl(&mut self, bus: &mut Bus) -> u8 {
+    fn inc_hl(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let new_r = self.inc_value_and_set_flags(bus.read_byte(*self.regs.hl));
         bus.write_byte(*self.regs.hl, new_r);
         12
@@ -1444,7 +1421,7 @@ impl Cpu {
     }
 
     /// Test bit n of register r
-    fn bit_n_hl(&mut self, n: u8, bus: &mut Bus) -> u8 {
+    fn bit_n_hl(&mut self, n: u8, bus: &mut CpuBus<'_>) -> u8 {
         self.bit_n_value(n, bus.read_byte(*self.regs.hl));
         12
     }
@@ -1461,7 +1438,7 @@ impl Cpu {
     }
 
     /// Conditional relative jump
-    fn jr_if_r8(&mut self, bus: &mut Bus, flag: bool) -> u8 {
+    fn jr_if_r8(&mut self, bus: &mut CpuBus<'_>, flag: bool) -> u8 {
         let r8 = self.fetch(bus) as i8;
         if flag {
             self.pc = self.pc.wrapping_add(r8 as i16 as u16);
@@ -1472,7 +1449,7 @@ impl Cpu {
     }
 
     /// conditional absolute jump
-    fn jp_if_a16(&mut self, bus: &mut Bus, flag: bool) -> u8 {
+    fn jp_if_a16(&mut self, bus: &mut CpuBus<'_>, flag: bool) -> u8 {
         let a16 = self.fetch_word(bus);
         if flag {
             self.pc = a16;
@@ -1488,7 +1465,7 @@ impl Cpu {
     }
 
     /// conditional CALL
-    fn call_if_a16(&mut self, bus: &mut Bus, flag: bool) -> u8 {
+    fn call_if_a16(&mut self, bus: &mut CpuBus<'_>, flag: bool) -> u8 {
         let addr = self.fetch_word(bus);
         if flag {
             self.call(bus, addr);
@@ -1498,23 +1475,53 @@ impl Cpu {
         }
     }
 
-    fn call_interrupt(&mut self, bus: &mut Bus, itr_flag: InterruptFlag) {
-        let addr = self.get_itr_vector(itr_flag);
-        trace!("Calling ITR 0x{:02X}", addr);
-        // disable interrupts
+    /// Jump to the handler of the highest priority pending interrupt, which takes 5 M-cycles.
+    ///
+    /// Which interrupt that is only gets decided after the high byte of PC has been pushed, which
+    /// can overwrite IE (at 0xFFFF): if no interrupt is left pending then, execution continues at
+    /// 0x0000.
+    fn dispatch_interrupt(&mut self, bus: &mut CpuBus<'_>) {
         self.ime = false;
-        bus.ack_interrupt(itr_flag);
-        self.push_word(bus, self.pc);
-        self.pc = addr;
+        let [lsb, msb] = self.pc.to_le_bytes();
+        bus.tick();
+        bus.tick();
+        self.sp = self.sp.wrapping_sub(1);
+        bus.write_byte(self.sp, msb);
+
+        let pending = bus.interrupt_enable() & bus.interrupt_flag();
+        // These are ordered by priority
+        let interrupt = [
+            InterruptFlag::VBLANK,
+            InterruptFlag::STAT,
+            InterruptFlag::TIMER,
+            InterruptFlag::SERIAL,
+            InterruptFlag::JOYPAD,
+        ]
+        .into_iter()
+        .find(|flag| pending.contains(*flag));
+        self.pc = match interrupt {
+            Some(flag) => {
+                trace!("Handling {flag:?} interrupt");
+                bus.ack_interrupt(flag);
+                self.get_itr_vector(flag)
+            }
+            None => 0x0000,
+        };
+
+        self.sp = self.sp.wrapping_sub(1);
+        bus.write_byte(self.sp, lsb);
+        bus.tick();
     }
 
-    fn call(&mut self, bus: &mut Bus, addr: u16) {
+    fn call(&mut self, bus: &mut CpuBus<'_>, addr: u16) {
         trace!("Calling subroutine at 0x{:04x}", addr);
         self.push_word(bus, self.pc);
         self.pc = addr;
     }
 
-    fn ret_if(&mut self, bus: &mut Bus, flag: bool) -> u8 {
+    /// Conditional RET, which takes an internal M-cycle to check the condition first.
+    fn ret_if(&mut self, bus: &mut CpuBus<'_>, flag: bool) -> u8 {
+        bus.tick();
         if flag {
             self.pc = self.pop_word(bus);
             20
@@ -1524,29 +1531,36 @@ impl Cpu {
     }
 
     /// PUSH rr
-    fn push_rr(&mut self, bus: &mut Bus, rr: RegPair) -> u8 {
+    fn push_rr(&mut self, bus: &mut CpuBus<'_>, rr: RegPair) -> u8 {
         self.push_word(bus, self.regs.get_pair(rr));
         16
     }
 
     /// POP rr
-    fn pop_rr(&mut self, bus: &mut Bus, rr: RegPair) -> u8 {
+    fn pop_rr(&mut self, bus: &mut CpuBus<'_>, rr: RegPair) -> u8 {
         let word = self.pop_word(bus);
         self.regs.set_pair(rr, word);
         12
     }
 
-    /// PUSH a16
-    fn push_word(&mut self, bus: &mut Bus, word: u16) {
-        self.sp = self.sp.wrapping_sub(2);
-        bus.write_word(self.sp, word);
+    /// Push a word on the stack: an internal M-cycle to decrement SP, then the high byte and the
+    /// low byte.
+    fn push_word(&mut self, bus: &mut CpuBus<'_>, word: u16) {
+        let [lsb, msb] = word.to_le_bytes();
+        bus.tick();
+        self.sp = self.sp.wrapping_sub(1);
+        bus.write_byte(self.sp, msb);
+        self.sp = self.sp.wrapping_sub(1);
+        bus.write_byte(self.sp, lsb);
     }
 
-    /// POP a16
-    fn pop_word(&mut self, bus: &mut Bus) -> u16 {
-        let word = bus.read_word(self.sp);
-        self.sp = self.sp.wrapping_add(2);
-        word
+    /// Pop a word from the stack, low byte first.
+    fn pop_word(&mut self, bus: &mut CpuBus<'_>) -> u16 {
+        let lsb = bus.read_byte(self.sp);
+        self.sp = self.sp.wrapping_add(1);
+        let msb = bus.read_byte(self.sp);
+        self.sp = self.sp.wrapping_add(1);
+        u16::from_le_bytes([lsb, msb])
     }
 
     /// RL r ;rotate left through carry
@@ -1558,7 +1572,7 @@ impl Cpu {
     }
 
     /// RL r ;rotate left through carry
-    fn rl_hl(&mut self, bus: &mut Bus) -> u8 {
+    fn rl_hl(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let v = bus.read_byte(*self.regs.hl);
         let res = self.rl(v);
         bus.write_byte(*self.regs.hl, res);
@@ -1596,7 +1610,7 @@ impl Cpu {
         8
     }
 
-    fn rr_hl(&mut self, bus: &mut Bus) -> u8 {
+    fn rr_hl(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let r = bus.read_byte(*self.regs.hl);
         let new_r = self.rr(r);
         bus.write_byte(*self.regs.hl, new_r);
@@ -1652,7 +1666,7 @@ impl Cpu {
         8
     }
 
-    fn rlc_hl(&mut self, bus: &mut Bus) -> u8 {
+    fn rlc_hl(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let r = bus.read_byte(*self.regs.hl);
         let rotated = self.rlc(r);
         bus.write_byte(*self.regs.hl, rotated);
@@ -1685,7 +1699,7 @@ impl Cpu {
         8
     }
 
-    fn rrc_hl(&mut self, bus: &mut Bus) -> u8 {
+    fn rrc_hl(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let r = bus.read_byte(*self.regs.hl);
         let rotated = self.rrc(r);
         bus.write_byte(*self.regs.hl, rotated);
@@ -1711,7 +1725,7 @@ impl Cpu {
     }
 
     /// ADD (HL)
-    fn add_hl_addr(&mut self, bus: &mut Bus) -> u8 {
+    fn add_hl_addr(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let hl = bus.read_byte(*self.regs.hl);
         self.add(hl);
         8
@@ -1723,7 +1737,7 @@ impl Cpu {
     }
 
     /// ADD d8
-    fn add_d8(&mut self, bus: &mut Bus) -> u8 {
+    fn add_d8(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let d8 = self.fetch(bus);
         self.add(d8);
         8
@@ -1747,7 +1761,7 @@ impl Cpu {
     }
 
     /// ADD (HL)
-    fn adc_hl(&mut self, bus: &mut Bus) -> u8 {
+    fn adc_hl(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let hl = bus.read_byte(*self.regs.hl);
         self.adc(hl, true);
         8
@@ -1759,7 +1773,7 @@ impl Cpu {
     }
 
     /// ADD d8
-    fn adc_d8(&mut self, bus: &mut Bus) -> u8 {
+    fn adc_d8(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let d8 = self.fetch(bus);
         self.adc(d8, true);
         8
@@ -1782,7 +1796,7 @@ impl Cpu {
     }
 
     /// SBC (HL)
-    fn sbc_hl(&mut self, bus: &mut Bus) -> u8 {
+    fn sbc_hl(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let hl = bus.read_byte(*self.regs.hl);
         self.sbc(hl, true);
         8
@@ -1794,21 +1808,21 @@ impl Cpu {
     }
 
     /// SBC d8
-    fn sbc_d8(&mut self, bus: &mut Bus) -> u8 {
+    fn sbc_d8(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let d8 = self.fetch(bus);
         self.sbc(d8, true);
         8
     }
 
     /// SUB (HL)
-    fn sub_hl_addr(&mut self, bus: &mut Bus) -> u8 {
+    fn sub_hl_addr(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let hl = bus.read_byte(*self.regs.hl);
         self.sub(hl);
         8
     }
 
     /// SUB d8
-    fn sub_d8(&mut self, bus: &mut Bus) -> u8 {
+    fn sub_d8(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let d8 = self.fetch(bus);
         self.sub(d8);
         8
@@ -1840,13 +1854,13 @@ impl Cpu {
         4
     }
 
-    fn cp_hl(&mut self, bus: &mut Bus) -> u8 {
+    fn cp_hl(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let d8 = bus.read_byte(self.regs.get_pair(RegPair::HL));
         self.cp(d8);
         8
     }
 
-    fn cp_d8(&mut self, bus: &mut Bus) -> u8 {
+    fn cp_d8(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let d8 = self.fetch(bus);
         self.cp(d8);
         8
@@ -1869,7 +1883,7 @@ impl Cpu {
             .set_value((reg_a & 0x0f) < (value & 0x0f));
     }
 
-    fn rst(&mut self, bus: &mut Bus, vec: u8) -> u8 {
+    fn rst(&mut self, bus: &mut CpuBus<'_>, vec: u8) -> u8 {
         self.call(bus, vec as u16);
         16
     }
@@ -1882,7 +1896,7 @@ impl Cpu {
         4
     }
 
-    fn swap_hl(&mut self, bus: &mut Bus) -> u8 {
+    fn swap_hl(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         let r = bus.read_byte(*self.regs.hl);
         let new_r = self.swap(r);
         bus.write_byte(*self.regs.hl, new_r);
@@ -1914,7 +1928,7 @@ impl Cpu {
         8
     }
 
-    fn res_hl(&mut self, n: u8, bus: &mut Bus) -> u8 {
+    fn res_hl(&mut self, n: u8, bus: &mut CpuBus<'_>) -> u8 {
         let mut hl = bus.read_byte(*self.regs.hl);
         hl.view_bits_mut::<Lsb0>().set(n as usize, false);
         bus.write_byte(*self.regs.hl, hl);
@@ -1930,7 +1944,7 @@ impl Cpu {
         8
     }
 
-    fn set_hl(&mut self, n: u8, bus: &mut Bus) -> u8 {
+    fn set_hl(&mut self, n: u8, bus: &mut CpuBus<'_>) -> u8 {
         let mut hl = bus.read_byte(*self.regs.hl);
         hl.view_bits_mut::<Lsb0>().set(n as usize, true);
         bus.write_byte(*self.regs.hl, hl);
@@ -2059,7 +2073,7 @@ impl Cpu {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::Cartridge;
+    use crate::{bus::Bus, cartridge::Cartridge};
 
     /// Number of cycles taken by the first instruction of `program`.
     fn cycles(program: &[u8]) -> u8 {
@@ -2067,7 +2081,19 @@ mod tests {
         rom[..program.len()].copy_from_slice(program);
         let cartridge = Cartridge::load_bytes(rom).unwrap();
         let mut bus = Bus::new(8 * 1024, cartridge, 48_000, None);
-        Cpu::default().step(&mut bus)
+        Cpu::default().step(&mut CpuBus::new(&mut bus, &mut NullSink, &mut NullSink))
+    }
+
+    struct NullSink;
+
+    impl crate::FrameSink for NullSink {
+        fn push_frame(&mut self, _frame: &[crate::Rgb555]) {}
+    }
+
+    impl crate::AudioSink for NullSink {
+        fn push_sample(&mut self, _sample: (f32, f32)) -> bool {
+            true
+        }
     }
 
     #[test]

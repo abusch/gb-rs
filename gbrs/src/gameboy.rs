@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 
-use crate::bus::{BootRom, Bus};
+use crate::bus::{BootRom, Bus, CpuBus};
 use crate::cartridge::{Cartridge, RTC_SAVE_SIZE};
 use crate::cpu::Cpu;
 use crate::disasm::Disassembler;
@@ -64,18 +64,24 @@ impl GameBoy {
         gb
     }
 
+    /// Run one CPU instruction (or one M-cycle while halted), then the interrupt dispatch if one
+    /// is due. Return the number of clock cycles that took.
     pub fn step(&mut self, frame_sink: &mut dyn FrameSink, audio_sink: &mut dyn AudioSink) -> u64 {
-        let cycles = self.cpu.step(&mut self.bus);
+        let mut bus = CpuBus::new(&mut self.bus, frame_sink, audio_sink);
+        let cycles = self.cpu.step(&mut bus);
+        // The rest of the hardware runs during each of the instruction's memory accesses. What's
+        // left is the internal M-cycles at the end of the instruction, which don't access memory.
         debug_assert!(
-            cycles.is_multiple_of(4),
-            "{cycles} cycles is not a whole number of M-cycles"
+            cycles.is_multiple_of(4) && bus.cycles() <= cycles,
+            "{cycles} cycles for an instruction that took {}",
+            bus.cycles()
         );
-        for _ in 0..cycles / 4 {
-            self.bus.cycle(4, frame_sink, audio_sink);
-            self.cpu.handle_interrupt(&mut self.bus);
+        while bus.cycles() < cycles {
+            bus.tick();
         }
+        self.cpu.handle_interrupt(&mut bus);
 
-        cycles as u64
+        bus.cycles() as u64
     }
 
     pub fn dump_cpu(&self) {
