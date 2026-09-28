@@ -74,6 +74,36 @@ const IO_RANGE_WAV: RangeInclusive<u16> = 0xFF30..=0xFF3F;
 const IO_RANGE_LCD: RangeInclusive<u16> = 0xFF40..=0xFF4F;
 /// Disable Boot ROM
 const IO_RANGE_DBR: RangeInclusive<u16> = 0xFF50..=0xFF50;
+/// OAM DMA source address & start
+const DMA_REG: u16 = 0xFF46;
+
+/// M-cycles between writing to DMA_REG and the first byte being copied.
+const DMA_START_DELAY: u8 = 1;
+const DMA_LENGTH: u8 = 0xA0;
+
+/// OAM DMA: copies 160 bytes to OAM, one per M-cycle.
+///
+/// While it runs, the CPU can't access OAM, nor the bus the DMA reads from: the external bus
+/// (cartridge and WRAM), or the video bus (VRAM). Reads there return the byte the DMA is copying.
+/// The other bus, the IO registers and HRAM can be accessed as usual.
+#[derive(Default, Serialize, Deserialize)]
+struct OamDma {
+    /// Last value written to DMA_REG, which is what it reads back as.
+    register: u8,
+    /// The transfer in progress: source address, and how many bytes have been copied.
+    active: Option<(u16, u8)>,
+    /// A transfer that's been requested: source address, and M-cycles left until it starts.
+    requested: Option<(u16, u8)>,
+}
+
+impl OamDma {
+    fn request(&mut self, page: u8) {
+        self.register = page;
+        // Pages above 0xDF read the echo of WRAM.
+        let page = if page >= 0xE0 { page - 0x20 } else { page };
+        self.requested = Some((u16::from(page) << 8, DMA_START_DELAY));
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct Bus {
@@ -98,6 +128,7 @@ pub struct Bus {
     timer: Timer,
     /// SB - serial byte
     sb: u8,
+    dma: OamDma,
 }
 
 impl Bus {
@@ -122,6 +153,7 @@ impl Bus {
             interrupt_flag: InterruptFlag::empty(),
             timer: Timer::new(),
             sb: 0,
+            dma: OamDma::default(),
         }
     }
 
@@ -168,6 +200,38 @@ impl Bus {
         if self.joypad_interrupt {
             self.interrupt_flag |= InterruptFlag::JOYPAD;
             self.joypad_interrupt = false;
+        }
+        self.step_dma();
+    }
+
+    /// Run the OAM DMA for one M-cycle.
+    fn step_dma(&mut self) {
+        if let Some((source, copied)) = self.dma.active {
+            let b = self.read_byte(source + u16::from(copied));
+            self.gfx.write_oam_dma(copied, b);
+            self.dma.active = (copied + 1 < DMA_LENGTH).then_some((source, copied + 1));
+        }
+        // A new transfer replaces the one in progress once it starts.
+        if let Some((source, delay)) = self.dma.requested {
+            if delay == 0 {
+                self.dma.active = Some((source, 0));
+                self.dma.requested = None;
+            } else {
+                self.dma.requested = Some((source, delay - 1));
+            }
+        }
+    }
+
+    /// If the OAM DMA stops the CPU from accessing `addr`, what a read returns instead.
+    fn dma_conflict(&self, addr: u16) -> Option<u8> {
+        let (source, copied) = self.dma.active?;
+        let on_video_bus = |addr| VRAM.contains(&addr);
+        if OAM.contains(&addr) || INVALID_AREA.contains(&addr) {
+            Some(0xFF)
+        } else if addr < *IO_REGISTERS.start() && on_video_bus(addr) == on_video_bus(source) {
+            Some(self.read_byte(source + u16::from(copied)))
+        } else {
+            None
         }
     }
 
@@ -291,6 +355,8 @@ impl Bus {
         } else if IO_RANGE_WAV.contains(&addr) {
             // Waveform ram
             self.apu.read_wav(addr)
+        } else if addr == DMA_REG {
+            self.dma.register
         } else if IO_RANGE_LCD.contains(&addr) {
             // LCD
             // debug!("Read LCD controller 0x{:04x}", addr);
@@ -340,14 +406,8 @@ impl Bus {
         } else if IO_RANGE_LCD.contains(&addr) {
             // LCD
             // debug!("Write LCD controller 0x{:04x}<-0x{:02X}", addr, b);
-            if addr == 0xff46 {
-                // DMA transfer
-                let base_addr = (b as u16) * 0x100;
-                // debug!("Starting DMA transfer from 0x{:04x} to OAM", base_addr);
-                for i in 0..=0x9Fu16 {
-                    self.gfx
-                        .write_oam(OAM.start() + i, self.read_byte(base_addr + i));
-                }
+            if addr == DMA_REG {
+                self.dma.request(b);
             } else {
                 self.gfx.write_reg(addr, b);
             }
@@ -398,14 +458,19 @@ impl<'a> CpuBus<'a> {
 
     /// Read a byte, taking one M-cycle.
     pub(crate) fn read_byte(&mut self, addr: u16) -> u8 {
-        let b = self.bus.read_byte(addr);
+        let b = self
+            .bus
+            .dma_conflict(addr)
+            .unwrap_or_else(|| self.bus.read_byte(addr));
         self.tick();
         b
     }
 
     /// Write a byte, taking one M-cycle.
     pub(crate) fn write_byte(&mut self, addr: u16, b: u8) {
-        self.bus.write_byte(addr, b);
+        if self.bus.dma_conflict(addr).is_none() {
+            self.bus.write_byte(addr, b);
+        }
         self.tick();
     }
 

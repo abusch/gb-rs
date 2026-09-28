@@ -238,6 +238,11 @@ impl Gfx {
         }
     }
 
+    /// Write a byte of OAM for the OAM DMA, which isn't locked out like the CPU.
+    pub(crate) fn write_oam_dma(&mut self, index: u8, b: u8) {
+        self.oam_ram[index as usize] = b;
+    }
+
     pub fn read_reg(&self, addr: u16) -> u8 {
         if addr == LCDC_REG {
             let mut lcdc = 0u8;
