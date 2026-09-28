@@ -48,7 +48,7 @@ pub fn dac(digital: u8) -> f32 {
     -(((digital << 1) as f32) / 15.0 - 1.0)
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct LengthCounter {
     length_enabled: bool,
     length_counter: u16,

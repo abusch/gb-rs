@@ -406,7 +406,11 @@ impl Apu {
     pub fn read_wav(&self, addr: u16) -> u8 {
         let index = addr - WAV_RAM_START;
         assert!(index <= 0x0F);
-        self.channel3.read_wav(index as usize)
+        // While channel 3 plays, what can be read depends on where it is, so it needs to catch up.
+        // This can't mutate, so do it on a copy.
+        let mut channel3 = self.channel3.clone();
+        channel3.advance(self.pending_cycles);
+        channel3.read_wav(index as usize)
     }
 
     pub fn write_wav(&mut self, addr: u16, value: u8) {
@@ -417,7 +421,7 @@ impl Apu {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Timer {
     period: u16,
     counter: u16,
