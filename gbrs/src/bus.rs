@@ -84,7 +84,8 @@ pub struct Bus {
     pub(crate) cartridge: Cartridge,
     /// P1/JOYP Joypad contoller
     joypad: Joypad,
-    input_has_changed: bool,
+    /// Set when a joypad input line has gone low since the last `cycle()`.
+    joypad_interrupt: bool,
 
     /// Boot ROM, until the boot sequence completes and it gets unmapped
     boot_rom: Option<BootRom>,
@@ -115,7 +116,7 @@ impl Bus {
             gfx: Gfx::new(),
             cartridge,
             joypad: Joypad::default(),
-            input_has_changed: false,
+            joypad_interrupt: false,
             boot_rom,
             interrupt_enable: InterruptFlag::empty(),
             interrupt_flag: InterruptFlag::empty(),
@@ -164,9 +165,9 @@ impl Bus {
         if self.timer.cycle(cycles) {
             self.interrupt_flag |= InterruptFlag::TIMER;
         }
-        if self.input_has_changed {
+        if self.joypad_interrupt {
             self.interrupt_flag |= InterruptFlag::JOYPAD;
-            self.input_has_changed = false;
+            self.joypad_interrupt = false;
         }
     }
 
@@ -320,7 +321,7 @@ impl Bus {
     fn write_io(&mut self, addr: u16, b: u8) {
         if IO_RANGE_JPD.contains(&addr) {
             // Joypad controller register
-            self.joypad.write(b);
+            self.joypad_interrupt |= self.joypad.write(b);
             trace!(
                 "Write Joypad controller register 0x{:04x}<-0x{:02X}. Register is now {:08b}",
                 addr,
@@ -382,7 +383,7 @@ impl Bus {
 
     pub(crate) fn set_button_pressed(&mut self, button: crate::joypad::Button, is_pressed: bool) {
         // OR in the result: several buttons may be updated before the next `cycle()`, and a
-        // later unchanged button must not clear a pending change from an earlier one.
-        self.input_has_changed |= self.joypad.set_button(button, is_pressed);
+        // later one that doesn't request the interrupt must not clear an earlier one's request.
+        self.joypad_interrupt |= self.joypad.set_button(button, is_pressed);
     }
 }

@@ -38,7 +38,7 @@ The binary provides concrete implementations: `MostRecentFrameSink` (just keeps 
 
 ### Bus & memory map
 
-`src/bus.rs` is the hub. It owns: `Apu`, `Gfx`, `Cartridge`, `Joypad`, `Timer`, WRAM, HRAM, interrupt registers, and the serial byte. The memory map and IO-register ranges are declared as top-of-file `RangeInclusive<u16>` constants; `read_byte`/`write_byte` dispatch against them. When adding a new IO register, add a new range constant and extend `read_io`/`write_io`.
+`src/bus.rs` is the hub. It owns: `Apu`, `Gfx`, `Cartridge`, `Joypad`, `Timer`, WRAM, HRAM, interrupt registers, and the serial byte. The memory map and IO-register ranges are declared as top-of-file `RangeInclusive<u16>` constants; `read_byte`/`write_byte` dispatch against them. When adding a new IO register, add a new range constant and extend `read_io`/`write_io`. The joypad interrupt is requested when one of P1's input lines goes low (`Joypad::set_button` and `Joypad::write` return whether one did): pressing a button in a selected group, or selecting a group while one of its buttons is held, but not releasing a button. Some games (e.g. Lawnmower Man) alternate the selected group every frame and rely on the latter to notice presses.
 
 Boot-ROM handling: if a `BootRom` was given, addresses `0x0000..=0x00FF` return its bytes until a non-zero write to `0xFF50` drops it (`boot_rom = None`). After that, cart ROM is visible in that range. Without a boot ROM, `GameBoy::new` calls the `skip_boot` methods (`Cpu`, `Bus`, and through it `Gfx`/`Apu`/`Timer`) to reproduce the state the boot ROM leaves behind (registers, IO, logo in VRAM; see Pan Docs "Power Up Sequence"). If you change what a peripheral's power-on state looks like, check that `skip_boot` still matches.
 
