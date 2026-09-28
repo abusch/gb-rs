@@ -291,24 +291,12 @@ impl Bus {
         }
     }
 
-    pub fn interrupt_enable(&self) -> InterruptFlag {
-        self.interrupt_enable
-    }
-
-    pub fn interrupt_flag(&self) -> InterruptFlag {
-        self.interrupt_flag
-    }
-
     pub fn ack_interrupt(&mut self, flag: InterruptFlag) {
         self.interrupt_flag.remove(flag);
         trace!(
             "Acknowledging interrupt: {:?}. Pending: {:?}",
             flag, self.interrupt_flag
         );
-    }
-
-    pub fn interrupt_pending(&self) -> bool {
-        !(self.interrupt_enable & self.interrupt_flag).is_empty()
     }
 
     /// Read access to IO registers
@@ -470,16 +458,13 @@ impl<'a> CpuBus<'a> {
         self.cycles
     }
 
-    pub(crate) fn interrupt_enable(&self) -> InterruptFlag {
-        self.bus.interrupt_enable()
-    }
-
-    pub(crate) fn interrupt_flag(&self) -> InterruptFlag {
-        self.bus.interrupt_flag()
+    /// The interrupts that are both requested and enabled.
+    pub(crate) fn pending_interrupts(&self) -> InterruptFlag {
+        self.bus.interrupt_enable & self.bus.interrupt_flag
     }
 
     pub(crate) fn interrupt_pending(&self) -> bool {
-        self.bus.interrupt_pending()
+        !self.pending_interrupts().is_empty()
     }
 
     pub(crate) fn ack_interrupt(&mut self, flag: InterruptFlag) {

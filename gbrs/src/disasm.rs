@@ -1,7 +1,6 @@
 use std::io::{Cursor, Read};
 
 use anyhow::Result;
-use bitvec::prelude::*;
 
 pub struct Instr {
     /// String representation of the decoded instruction
@@ -43,13 +42,12 @@ impl<'a> Disassembler<'a> {
 
     fn run_inner(&mut self) -> Result<()> {
         while let Ok(op) = self.read_byte() {
-            // unprefixed
-            let bits = op.view_bits::<Lsb0>();
-            let x = bits[6..=7].load::<u8>();
-            let y = bits[3..=5].load::<u8>();
-            let z = bits[0..=2].load::<u8>();
-            let p = bits[4..=5].load::<u8>();
-            let q = bits[3];
+            // unprefixed: the opcode's bits are xxyyyzzz, with yyy made of ppq
+            let x = op >> 6;
+            let y = (op >> 3) & 0b111;
+            let z = op & 0b111;
+            let p = y >> 1;
+            let q = y & 1 != 0;
 
             match x {
                 0 => match z {
@@ -274,10 +272,9 @@ impl<'a> Disassembler<'a> {
 }
 
 fn disasm_cb_instr(op: u8) -> String {
-    let bits = op.view_bits::<Lsb0>();
-    let x = bits[6..=7].load::<u8>();
-    let y = bits[3..=5].load::<u8>();
-    let z = bits[0..=2].load::<u8>();
+    let x = op >> 6;
+    let y = (op >> 3) & 0b111;
+    let z = op & 0b111;
 
     let r = r(z);
 

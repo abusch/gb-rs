@@ -5,8 +5,6 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-// TODO don't think this is a great design... maybe we need a `Register` struct for a single
-// register.
 #[derive(Default, Serialize, Deserialize)]
 pub(super) struct Registers {
     pub(super) af: Register,
@@ -15,16 +13,16 @@ pub(super) struct Registers {
     pub(super) hl: Register,
 }
 
-impl Registers {
-    /// Zero flag
-    const FLAG_Z: u16 = 0x80;
-    /// Subtract flag
-    const FLAG_N: u16 = 0x40;
-    /// Half Carry flag
-    const FLAG_H: u16 = 0x20;
-    /// Carry flag
-    const FLAG_C: u16 = 0x10;
+/// Zero flag
+pub(super) const FLAG_Z: u16 = 0x80;
+/// Subtract flag
+pub(super) const FLAG_N: u16 = 0x40;
+/// Half Carry flag
+pub(super) const FLAG_H: u16 = 0x20;
+/// Carry flag
+pub(super) const FLAG_C: u16 = 0x10;
 
+impl Registers {
     pub(super) fn get(&self, name: Reg) -> u8 {
         match name {
             Reg::A => self.af.hi(),
@@ -67,24 +65,25 @@ impl Registers {
         }
     }
 
-    // Flags
-    pub(super) fn flag_z(&mut self) -> Flags<'_> {
-        Flags::new(self, Self::FLAG_Z)
+    /// Whether the given `FLAG_*` is set.
+    pub(super) fn flag(&self, flag: u16) -> bool {
+        *self.af & flag != 0
     }
 
-    // N Flag
-    pub(super) fn flag_n(&mut self) -> Flags<'_> {
-        Flags::new(self, Self::FLAG_N)
+    pub(super) fn set_flag(&mut self, flag: u16, value: bool) {
+        if value {
+            *self.af |= flag;
+        } else {
+            *self.af &= !flag;
+        }
     }
 
-    // H Flag
-    pub(super) fn flag_h(&mut self) -> Flags<'_> {
-        Flags::new(self, Self::FLAG_H)
-    }
-
-    // C Flag
-    pub(super) fn flag_c(&mut self) -> Flags<'_> {
-        Flags::new(self, Self::FLAG_C)
+    /// Set all 4 flags at once.
+    pub(super) fn set_flags(&mut self, z: bool, n: bool, h: bool, c: bool) {
+        self.set_flag(FLAG_Z, z);
+        self.set_flag(FLAG_N, n);
+        self.set_flag(FLAG_H, h);
+        self.set_flag(FLAG_C, c);
     }
 }
 
@@ -99,26 +98,10 @@ impl Debug for Registers {
                 "flags",
                 &format_args!(
                     "{}{}{}{}",
-                    if (*self.af & Self::FLAG_Z) != 0 {
-                        "Z"
-                    } else {
-                        "-"
-                    },
-                    if (*self.af & Self::FLAG_N) != 0 {
-                        "N"
-                    } else {
-                        "-"
-                    },
-                    if (*self.af & Self::FLAG_H) != 0 {
-                        "H"
-                    } else {
-                        "-"
-                    },
-                    if (*self.af & Self::FLAG_C) != 0 {
-                        "C"
-                    } else {
-                        "-"
-                    },
+                    if self.flag(FLAG_Z) { "Z" } else { "-" },
+                    if self.flag(FLAG_N) { "N" } else { "-" },
+                    if self.flag(FLAG_H) { "H" } else { "-" },
+                    if self.flag(FLAG_C) { "C" } else { "-" },
                 ),
             )
             .finish()
@@ -160,37 +143,6 @@ impl DerefMut for Register {
     }
 }
 
-pub(super) struct Flags<'regs> {
-    regs: &'regs mut Registers,
-    flag: u16,
-}
-
-impl Flags<'_> {
-    fn new(regs: &'_ mut Registers, flag: u16) -> Flags<'_> {
-        Flags { regs, flag }
-    }
-
-    pub(super) fn is_set(&self) -> bool {
-        *self.regs.af & self.flag != 0
-    }
-
-    pub(super) fn set(&mut self) {
-        *self.regs.af |= self.flag;
-    }
-
-    pub(super) fn clear(&mut self) {
-        *self.regs.af &= !self.flag;
-    }
-
-    pub(super) fn set_value(&mut self, value: bool) {
-        if value {
-            self.set();
-        } else {
-            self.clear();
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Reg {
     A,
@@ -218,15 +170,14 @@ mod tests {
     fn test_flags() {
         let mut regs = Registers::default();
 
-        assert!(!regs.flag_z().is_set());
-        regs.flag_z().set();
-        assert!(regs.flag_z().is_set());
-        regs.flag_z().clear();
-        assert!(!regs.flag_z().is_set());
+        assert!(!regs.flag(FLAG_Z));
+        regs.set_flag(FLAG_Z, true);
+        assert!(regs.flag(FLAG_Z));
+        assert_eq!(*regs.af, 0x0080);
+        regs.set_flag(FLAG_Z, false);
+        assert!(!regs.flag(FLAG_Z));
 
-        regs.flag_z().set_value(true);
-        assert!(regs.flag_z().is_set());
-        regs.flag_z().set_value(false);
-        assert!(!regs.flag_z().is_set());
+        regs.set_flags(false, true, false, true);
+        assert_eq!(*regs.af, 0x0050);
     }
 }

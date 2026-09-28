@@ -1,6 +1,5 @@
 use std::fmt::{Debug, Write};
 
-use bitvec::prelude::*;
 use log::trace;
 use serde::{Deserialize, Serialize};
 
@@ -771,19 +770,19 @@ impl Sprite {
     }
 
     pub fn obp1_palette(&self) -> bool {
-        self.attrs.view_bits::<Lsb0>()[4]
+        self.attrs & 0x10 != 0
     }
 
     pub fn bg_has_priority(&self) -> bool {
-        self.attrs.view_bits::<Lsb0>()[7]
+        self.attrs & 0x80 != 0
     }
 
     pub fn is_y_flip(&self) -> bool {
-        self.attrs.view_bits::<Lsb0>()[6]
+        self.attrs & 0x40 != 0
     }
 
     pub fn is_x_flip(&self) -> bool {
-        self.attrs.view_bits::<Lsb0>()[5]
+        self.attrs & 0x20 != 0
     }
 }
 

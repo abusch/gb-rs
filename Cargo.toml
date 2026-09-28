@@ -15,7 +15,6 @@ keywords = ["emulator", "gameboy"]
 ansi_term = "0.12"
 anyhow = "1.0"
 bitflags = "2.8"
-bitvec = "1.0"
 clap = { version = "4.0", features = ["derive"] }
 cpal = "0.18"
 env_logger = "0.11"
