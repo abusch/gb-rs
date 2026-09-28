@@ -63,8 +63,7 @@ impl Cpu {
         self.pc = 0x0100;
     }
 
-    /// AF, BC, DE, HL, SP, PC and IME, for tests to compare CPU states.
-    #[cfg(test)]
+    /// AF, BC, DE, HL, SP, PC and IME.
     pub(crate) fn snapshot(&self) -> ([u16; 6], bool) {
         let r = &self.regs;
         ([*r.af, *r.bc, *r.de, *r.hl, self.sp, self.pc], self.ime)

@@ -23,6 +23,17 @@ struct SaveStateHeader {
     rom_checksums: [u8; 3],
 }
 
+/// The CPU's registers, e.g. for test ROMs that report their results in them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CpuRegisters {
+    pub af: u16,
+    pub bc: u16,
+    pub de: u16,
+    pub hl: u16,
+    pub sp: u16,
+    pub pc: u16,
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct GameBoy {
     cpu: Cpu,
@@ -69,6 +80,23 @@ impl GameBoy {
 
     pub fn dump_cpu(&self) {
         self.cpu.dump_cpu();
+    }
+
+    pub fn registers(&self) -> CpuRegisters {
+        let ([af, bc, de, hl, sp, pc], _) = self.cpu.snapshot();
+        CpuRegisters {
+            af,
+            bc,
+            de,
+            hl,
+            sp,
+            pc,
+        }
+    }
+
+    /// Read a byte as the CPU would, without side effects.
+    pub fn peek(&self, addr: u16) -> u8 {
+        self.bus.read_byte(addr)
     }
 
     pub fn dump_mem(&self, addr: u16) {

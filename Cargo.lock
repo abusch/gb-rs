@@ -973,6 +973,7 @@ dependencies = [
  "bitvec",
  "byteorder",
  "log",
+ "png",
  "postcard",
  "serde",
 ]

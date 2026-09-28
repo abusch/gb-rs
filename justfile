@@ -11,3 +11,7 @@ test_roms:
   curl -sSL https://github.com/c-sp/gameboy-test-roms/releases/download/v5.1/game-boy-test-roms-{{test_roms_version}}.zip --output {{test_roms_file}}
   unzip {{test_roms_file}} -d test_roms
   rm {{test_roms_file}}
+
+# Run the test ROMs and report which pass (options: -v, --save FILE, --compare FILE, FILTER)
+rom-tests *args:
+  cargo run -q --release --example test_roms -p gbrs -- {{args}}

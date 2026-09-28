@@ -13,6 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `--boot-rom <PATH>`: run the given DMG boot ROM before the game.
 - Logging is configured in `main.rs` via `env_logger` with hardcoded filters `gbrs=debug,gbrs::apu=info` (the frontend binary is also called `gbrs`, so this covers both crates). The `release_max_level_info` feature on the `log` crate caps release-build logs at `info` regardless of filter.
 - Benchmark/profile the core with `cargo run --release --example headless -p gbrs -- <ROM> [FRAMES]`: it runs without a frontend and prints the speed plus hashes of the video and audio output, so optimisations can be checked for behaviour changes.
+- Test ROMs: `just test_roms` downloads the suites into `test_roms/`, and `just rom-tests` runs the DMG-relevant ones (blargg, mooneye, dmg-acid2, mealybug, age) and prints a pass count per suite, in a second or two (`gbrs/examples/test_roms.rs`). Save a baseline with `--save FILE` before changing emulation, then `--compare FILE` lists exactly which tests changed; `-v` lists every result and a trailing argument filters tests by path. Accuracy work should show progress there without regressions.
 - Release profile has `debug = true` and `incremental = true` — debugging a release build is intentionally supported (emulation needs release-level perf).
 
 ## Architecture
