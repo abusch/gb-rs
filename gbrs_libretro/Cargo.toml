@@ -1,5 +1,5 @@
 [package]
-name = "gbrs_retro"
+name = "gbrs_libretro"
 version = "0.1.0"
 edition.workspace = true
 description = "A libretro core for the Gameboy emulator"

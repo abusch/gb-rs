@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["gbrs", "gbrs_frontend", "gbrs_retro"]
+members = ["gbrs", "gbrs_frontend", "gbrs_libretro"]
 
 [workspace.package]
 edition = "2024"

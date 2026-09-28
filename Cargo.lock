@@ -998,7 +998,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gbrs_retro"
+name = "gbrs_libretro"
 version = "0.1.0"
 dependencies = [
  "gbrs",
