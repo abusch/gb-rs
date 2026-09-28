@@ -53,7 +53,7 @@ The MBC3 real-time clock (`rtc.rs`) runs on emulated time: `Bus::cycle` calls `C
 
 ### CPU
 
-`src/cpu/mod.rs` — SM83 interpreter. Key state: `regs` (see `cpu/register.rs` for the `Reg`/`RegPair` abstraction), `sp`, `pc`, `halted`, `ime` (Interrupt Master Enable), plus three debug-only fields (`breakpoint`, `paused`, `enable_soft_break`) and a `halt_bug` flag for emulating the HALT bug. Interrupt vectors live at the top of the file as `ITR_VBLANK`/`ITR_STAT`/`ITR_TIMER`/`ITR_SERIAL`/`ITR_JOYP`. Interrupt delivery happens in `handle_interrupt`, called after every M-cycle batch from `GameBoy::step`.
+`src/cpu/mod.rs` — SM83 interpreter. Key state: `regs` (see `cpu/register.rs` for the `Reg`/`RegPair` abstraction), `sp`, `pc`, `halted`, `ime` (Interrupt Master Enable), plus three debug-only fields (`breakpoint`, `paused`, `enable_soft_break`) and a `halt_bug` flag for emulating the HALT bug. Interrupt vectors live at the top of the file as `ITR_VBLANK`/`ITR_STAT`/`ITR_TIMER`/`ITR_SERIAL`/`ITR_JOYP`. Interrupt delivery happens in `handle_interrupt`, called between instructions by `GameBoy::step`; dispatch takes 5 M-cycles and picks the interrupt only after pushing PC's high byte (which can overwrite IE, see mooneye `ie_push`). EI only sets IME at the end of the following instruction (`ime_delay`), so `EI; HALT` with an interrupt pending triggers the halt bug, and the handler then returns to the HALT.
 
 ### PPU (`src/gfx.rs`)
 

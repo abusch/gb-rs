@@ -24,6 +24,9 @@ pub struct Cpu {
     /// IME - Interrupt Master Enable Flag. Interrupts are disabled at power-on, and the boot ROM
     /// doesn't enable them either.
     ime: bool,
+    /// Instructions left to run until EI takes effect: it only sets IME at the end of the
+    /// instruction after it.
+    ime_delay: u8,
 
     // for debugging, so not part of save states
     #[serde(skip)]
@@ -96,10 +99,21 @@ impl Cpu {
         }
     }
 
-    /// Fetch and execute the next instructions.
+    /// Fetch and execute the next instruction.
     ///
     /// Return the number of clock cycles used
     pub fn step(&mut self, bus: &mut CpuBus<'_>) -> u8 {
+        let cycles = self.execute(bus);
+        if self.ime_delay > 0 {
+            self.ime_delay -= 1;
+            if self.ime_delay == 0 {
+                self.ime = true;
+            }
+        }
+        cycles
+    }
+
+    fn execute(&mut self, bus: &mut CpuBus<'_>) -> u8 {
         // for debugging
         if self.breakpoint == Some(self.pc) {
             self.paused = true;
@@ -107,7 +121,6 @@ impl Cpu {
         if self.halted {
             return 4;
         }
-
         let orig_pc = self.pc;
         let op = self.fetch(bus);
 
@@ -674,6 +687,7 @@ impl Cpu {
             0xf3 => {
                 trace!("Disabling interrupts");
                 self.ime = false;
+                self.ime_delay = 0;
                 4
             }
             // PUSH AF
@@ -694,8 +708,10 @@ impl Cpu {
             // EI
             0xfb => {
                 trace!("Enabling interrupts");
-                // TODO the effect needs to be delayed by one instruction...
-                self.ime = true;
+                // A second EI right after the first doesn't delay it any further
+                if self.ime_delay == 0 {
+                    self.ime_delay = 2;
+                }
                 4
             }
             // CP d8
@@ -1482,6 +1498,12 @@ impl Cpu {
     /// 0x0000.
     fn dispatch_interrupt(&mut self, bus: &mut CpuBus<'_>) {
         self.ime = false;
+        if self.halt_bug {
+            // HALT right after EI, with an interrupt pending: HALT still ran with IME=0, so it
+            // triggered the halt bug, but the handler returns to the HALT, which runs again.
+            self.halt_bug = false;
+            self.pc = self.pc.wrapping_sub(1);
+        }
         let [lsb, msb] = self.pc.to_le_bytes();
         bus.tick();
         bus.tick();

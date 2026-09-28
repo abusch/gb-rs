@@ -12,7 +12,7 @@ use crate::{AudioSink, FrameSink, Rgb555};
 const SAVE_STATE_MAGIC: [u8; 4] = *b"GBRS";
 /// Bump this whenever the shape of the emulator's state changes (e.g. a field is added to one of
 /// the components), since save states are just the serialised structs.
-const SAVE_STATE_VERSION: u16 = 1;
+const SAVE_STATE_VERSION: u16 = 2;
 
 /// Comes first in save states, to reject ones that can't be loaded.
 #[derive(Serialize, Deserialize)]
