@@ -38,10 +38,21 @@ const STAT_SOURCES: u8 = STAT_HBLANK | STAT_VBLANK | STAT_OAM | STAT_LYC;
 const DOTS_PER_LINE: u16 = 456;
 /// 144 visible scanlines followed by 10 of VBlank
 const LINES_PER_FRAME: u8 = 154;
-/// Mode 2 (OAM scan) runs for the first 80 dots of a visible line, then mode 3 (drawing).
-const MODE3_START_DOT: u16 = 80;
+/// LY is incremented this many dots before the OAM scan starts: for those dots, OAM is already
+/// locked, but STAT (and its interrupt conditions) still say mode 0, and the LY=LYC comparison
+/// isn't redone for the new LY yet. The STAT register shows the LY=LYC flag as clear then, but the
+/// STAT interrupt line still sees the previous line's comparison, so there's no gap in it. Mooneye's
+/// `lcdon_timing` measures the former, and Cool Hand needs the latter: with the LYC and mode 2
+/// sources enabled, the line after LYC mustn't get a mode 2 interrupt.
+const LINE_START_DOTS: u16 = 4;
+/// Mode 2 (OAM scan) runs for 80 dots, then mode 3 (drawing).
+const MODE3_START_DOT: u16 = LINE_START_DOTS + 80;
 /// Mode 0 (HBlank) runs from here until the end of the line.
-const MODE0_START_DOT: u16 = 252;
+const MODE0_START_DOT: u16 = MODE3_START_DOT + 172;
+/// At the end of the OAM scan, a little before STAT reports mode 3, VRAM reads get locked. OAM
+/// writes get unlocked until drawing starts, like they are before the scan (mooneye's
+/// `lcdon_timing` and `lcdon_write_timing` measure these).
+const OAM_SCAN_END_DOT: u16 = MODE3_START_DOT - 4;
 
 /// Colours used for the 4 DMG shades (white to black) unless a frontend picks its own.
 pub const DEFAULT_DMG_PALETTE: [Rgb555; 4] = [
@@ -108,8 +119,8 @@ pub struct Gfx {
     stat_conditions: u8,
     /// Level of the STAT interrupt line, whose rising edges request the interrupt.
     stat_line_high: bool,
-    /// The LY=LYC comparison. It's only updated while the PPU runs, so it holds its value while
-    /// the LCD is off.
+    /// The LY=LYC comparison, as the STAT interrupt line sees it. It's only updated while the PPU
+    /// runs, so it holds its value while the LCD is off.
     lyc_equal: bool,
 
     /// BG Palette
@@ -201,23 +212,24 @@ impl Gfx {
     /// Note: when the PPU is active (mode 3), this area is locked to the CPU so reads will return
     /// 0xFF in that case.
     pub fn read_vram(&self, addr: u16) -> u8 {
-        if self.vram_accessible() {
+        let locked = self.running_mode == Mode::Mode3
+            || (self.running_mode == Mode::Mode2 && self.line_dot >= OAM_SCAN_END_DOT);
+        if !locked || self.cpu_access_unlocked() {
             self.read_vram_internal(addr)
         } else {
             0xff
         }
     }
 
-    /// The CPU can't access VRAM while the PPU draws a line (mode 3).
-    fn vram_accessible(&self) -> bool {
-        self.debugger_access || !self.lcd_and_ppu_enabled || self.running_mode != Mode::Mode3
+    /// Whether the CPU can access VRAM and OAM however busy the PPU is.
+    fn cpu_access_unlocked(&self) -> bool {
+        self.debugger_access || !self.lcd_and_ppu_enabled
     }
 
-    /// The CPU can't access OAM while the PPU uses it (modes 2 and 3).
-    fn oam_accessible(&self) -> bool {
-        self.debugger_access
-            || !self.lcd_and_ppu_enabled
-            || !matches!(self.running_mode, Mode::Mode2 | Mode::Mode3)
+    /// Whether the PPU is in the middle of its OAM scan, where it locks OAM writes.
+    fn scanning_oam(&self) -> bool {
+        self.running_mode == Mode::Mode2
+            && (LINE_START_DOTS..OAM_SCAN_END_DOT).contains(&self.line_dot)
     }
 
     /// Read access to the VRAM from within the PPU
@@ -225,22 +237,26 @@ impl Gfx {
         self.vram[(addr - VRAM_START) as usize]
     }
 
+    /// VRAM writes are only locked while the PPU draws a line (mode 3).
     pub fn write_vram(&mut self, addr: u16, b: u8) {
-        if self.vram_accessible() {
+        if self.running_mode != Mode::Mode3 || self.cpu_access_unlocked() {
             self.vram[(addr - VRAM_START) as usize] = b;
         }
     }
 
+    /// OAM reads are locked while the PPU uses OAM (modes 2 and 3).
     pub fn read_oam(&self, addr: u16) -> u8 {
-        if self.oam_accessible() {
+        if !matches!(self.running_mode, Mode::Mode2 | Mode::Mode3) || self.cpu_access_unlocked() {
             self.oam_ram[(addr - OAM_START) as usize]
         } else {
             0xff
         }
     }
 
+    /// OAM writes are locked during the OAM scan proper, and while drawing.
     pub fn write_oam(&mut self, addr: u16, b: u8) {
-        if self.oam_accessible() {
+        let locked = self.scanning_oam() || self.running_mode == Mode::Mode3;
+        if !locked || self.cpu_access_unlocked() {
             self.oam_ram[(addr - OAM_START) as usize] = b;
         }
     }
@@ -321,11 +337,12 @@ impl Gfx {
                         "OFF"
                     }
                 );
-                // The PPU stops while the LCD is off, with LY at 0 and STAT in mode 0, and turning
-                // it back on starts a new frame. Mode 0 is also what STAT reports on the first line
-                // after that, instead of mode 2, until drawing starts.
+                // The PPU stops while the LCD is off, with LY at 0 and STAT in mode 0. Turning it
+                // back on starts a new frame, whose first line skips the OAM scan (it stays in
+                // mode 0 until drawing starts) and starts where the scan would, which makes it 4
+                // dots shorter.
                 self.ly = 0;
-                self.line_dot = 0;
+                self.line_dot = LINE_START_DOTS;
                 self.running_mode = Mode::Mode0;
                 self.window_internal_line_counter = 0;
                 // The LY=LYC comparison stops with the PPU, and restarts straight away with it.
@@ -371,8 +388,12 @@ impl Gfx {
     /// Return the value of the STAT register (FF41)
     fn stat(&self) -> u8 {
         // bit 7 is always 1
-        let lyc_eq_ly = if self.lyc_equal { 0b100 } else { 0 };
-        0x80 | self.stat_sources | lyc_eq_ly | self.running_mode as u8
+        let lyc_eq_ly = if self.lyc_equal && self.line_dot >= LINE_START_DOTS {
+            0b100
+        } else {
+            0
+        };
+        0x80 | self.stat_sources | lyc_eq_ly | self.stat_mode() as u8
     }
 
     fn set_stat(&mut self, stat: u8) {
@@ -399,9 +420,12 @@ impl Gfx {
         interrupt
     }
 
-    /// The next value of `line_dot` at which `dot` changes mode or starts a new line.
+    /// The next value of `line_dot` at which `dot` changes mode, updates the LY=LYC comparison or
+    /// starts a new line.
     fn next_mode_change_dot(&self) -> u16 {
-        if self.ly >= SCREEN_HEIGHT as u8 || self.line_dot >= MODE0_START_DOT {
+        if self.line_dot < LINE_START_DOTS {
+            LINE_START_DOTS
+        } else if self.ly >= SCREEN_HEIGHT as u8 || self.line_dot >= MODE0_START_DOT {
             DOTS_PER_LINE
         } else if self.line_dot >= MODE3_START_DOT {
             MODE0_START_DOT
@@ -425,18 +449,18 @@ impl Gfx {
             } else {
                 self.ly + 1
             };
-            if self.ly == SCREEN_HEIGHT as u8 {
-                // VBlank
-                self.running_mode = Mode::Mode1;
-                frame_sink.push_frame(&self.lcd);
-                interrupts |= InterruptFlag::VBLANK;
-                vblank_started = true;
-                // Reset the window internal line counter
-                self.window_internal_line_counter = 0;
-            } else if self.ly < SCREEN_HEIGHT as u8 {
+            if self.ly < SCREEN_HEIGHT as u8 {
                 // OAM scan
                 self.running_mode = Mode::Mode2;
             }
+        } else if self.ly == SCREEN_HEIGHT as u8 && self.line_dot == LINE_START_DOTS {
+            // VBlank starts where the OAM scan would, like the other modes
+            self.running_mode = Mode::Mode1;
+            frame_sink.push_frame(&self.lcd);
+            interrupts |= InterruptFlag::VBLANK;
+            vblank_started = true;
+            // Reset the window internal line counter
+            self.window_internal_line_counter = 0;
         } else if self.ly < SCREEN_HEIGHT as u8 {
             if self.line_dot == MODE3_START_DOT {
                 // Drawing
@@ -448,7 +472,9 @@ impl Gfx {
             }
         }
 
-        self.compare_lyc();
+        if self.line_dot >= LINE_START_DOTS {
+            self.compare_lyc();
+        }
         self.update_stat_conditions();
 
         // A STAT interrupt is requested on a rising edge of the STAT interrupt line. On the DMG, the
@@ -467,9 +493,18 @@ impl Gfx {
         self.lyc_equal = self.ly == self.lyc;
     }
 
+    /// The mode as STAT reports it, which lags behind at the start of a line.
+    fn stat_mode(&self) -> Mode {
+        if self.running_mode == Mode::Mode2 && self.line_dot < LINE_START_DOTS {
+            Mode::Mode0
+        } else {
+            self.running_mode
+        }
+    }
+
     fn update_stat_conditions(&mut self) {
         let lyc_eq_ly = if self.lyc_equal { STAT_LYC } else { 0 };
-        self.stat_conditions = self.running_mode.stat_condition() | lyc_eq_ly;
+        self.stat_conditions = self.stat_mode().stat_condition() | lyc_eq_ly;
     }
 
     // Only runs once per line: keep it out of `dots`, which runs every M-cycle and would otherwise
