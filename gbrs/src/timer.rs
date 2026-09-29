@@ -65,6 +65,11 @@ impl Timer {
         self.catch_up()
     }
 
+    /// Clock cycles until the timer's next event: stepping this many runs it on the last one.
+    pub fn cycles_until_event(&self) -> u16 {
+        self.idle.saturating_sub(self.lag).min(u32::from(u16::MAX)) as u16
+    }
+
     /// Bring the timer up to date before its registers get read or written. Nothing can have
     /// happened in the cycles it lags behind by (or `step` would have run them), so there's no
     /// interrupt to request.

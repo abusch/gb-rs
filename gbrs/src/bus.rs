@@ -192,6 +192,40 @@ impl Bus {
         self.step_dma();
     }
 
+    /// Run the peripherals for as many M-cycles as they can take in one go, and at most
+    /// `max_cycles`: up to the next event of the PPU or the timer, which then happens in the last
+    /// M-cycle. It's for when the CPU is halted, so return 0 (and run nothing) if it would be woken
+    /// up straight away, or if the OAM DMA needs running every M-cycle. Otherwise, return the clock
+    /// cycles run.
+    pub(crate) fn skip_idle(
+        &mut self,
+        max_cycles: u16,
+        frame_sink: &mut dyn FrameSink,
+        audio_sink: &mut dyn AudioSink,
+    ) -> u16 {
+        let wakes_up = !(self.interrupt_enable & self.interrupt_flag).is_empty();
+        let dma = self.dma.active.is_some() || self.dma.requested.is_some();
+        if wakes_up || dma || self.joypad_interrupt {
+            return 0;
+        }
+        let cycles = self
+            .gfx
+            .cycles_until_event()
+            .min(self.timer.cycles_until_event())
+            .min(max_cycles);
+        // Not worth it for a single M-cycle.
+        if cycles <= 4 {
+            return 0;
+        }
+        self.interrupt_flag |= self.gfx.step(cycles, frame_sink);
+        self.apu.step(cycles, audio_sink);
+        self.cartridge.step(cycles);
+        if self.timer.step(u32::from(cycles)) {
+            self.interrupt_flag |= InterruptFlag::TIMER;
+        }
+        cycles
+    }
+
     /// Run the OAM DMA for one M-cycle.
     fn step_dma(&mut self) {
         if self.dma.active.is_none() && self.dma.requested.is_none() {

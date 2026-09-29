@@ -252,7 +252,7 @@ impl Cartridge {
     }
 
     /// Run the cartridge's own hardware (i.e. the RTC) for the given number of clock cycles.
-    pub(crate) fn step(&mut self, cycles: u8) {
+    pub(crate) fn step(&mut self, cycles: u16) {
         if let Mbc::Mbc3(Mbc3 { rtc: Some(rtc), .. }) = &mut self.mbc {
             rtc.step(cycles);
         }

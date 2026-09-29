@@ -353,6 +353,11 @@ impl Gfx {
         self.catch_up(frame_sink)
     }
 
+    /// Clock cycles until the PPU's next event: stepping this many runs it on the last one.
+    pub(crate) fn cycles_until_event(&self) -> u16 {
+        self.idle_dots.saturating_sub(self.lag_dots)
+    }
+
     /// Bring the PPU up to date before its state gets read or changed. Nothing can have happened in
     /// the dots it lags behind by (or `step` would have run them), so there's no interrupt or frame
     /// to deliver.

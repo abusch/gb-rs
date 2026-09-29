@@ -253,13 +253,10 @@ fn run_test(test: &Test) -> Result<Outcome> {
         let mut screen = ScreenSink::default();
         let mut finished = false;
         'frames: for _ in 0..test.seconds * CPU_HZ / CYCLES_PER_FRAME {
-            let mut cycles = 0;
-            while cycles < CYCLES_PER_FRAME {
-                if gb.is_paused() {
-                    finished = true;
-                    break 'frames;
-                }
-                cycles += gb.step(&mut screen, &mut ());
+            gb.run(CYCLES_PER_FRAME, &mut screen, &mut ());
+            if gb.is_paused() {
+                finished = true;
+                break 'frames;
             }
             if matches!(test.check, Check::ResultCode)
                 && [0xA001, 0xA002, 0xA003].map(|addr| gb.peek(addr)) == [0xDE, 0xB0, 0x61]

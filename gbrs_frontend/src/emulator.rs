@@ -209,9 +209,11 @@ impl Emulator {
                 Command::Nop => (),
             }
         } else {
-            while self.emulated_cycles < target_cycles && !self.gb.is_paused() {
-                self.emulated_cycles += self.gb.step(&mut self.sink, &mut self.audio_sink);
-            }
+            self.emulated_cycles += self.gb.run(
+                target_cycles.saturating_sub(self.emulated_cycles),
+                &mut self.sink,
+                &mut self.audio_sink,
+            );
         }
 
         false

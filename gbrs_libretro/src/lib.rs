@@ -179,11 +179,13 @@ impl Core for GbrsCore {
         // Run exactly one frame's worth of cycles, carrying any overshoot into the next frame so
         // the long-term rate stays locked to `FPS`. We count cycles rather than waiting for a
         // pushed frame because the PPU doesn't push frames while the LCD is off.
-        let mut cycles = self.cycle_carry;
-        while cycles < CYCLES_PER_FRAME {
-            cycles += gb.step(&mut self.frame, &mut self.audio);
-        }
-        self.cycle_carry = cycles - CYCLES_PER_FRAME;
+        let cycles = self.cycle_carry
+            + gb.run(
+                CYCLES_PER_FRAME - self.cycle_carry,
+                &mut self.frame,
+                &mut self.audio,
+            );
+        self.cycle_carry = cycles.saturating_sub(CYCLES_PER_FRAME);
 
         // Always submit the last complete frame, even if the LCD was off this frame.
         let _ = runtime.video_refresh_frame_with_audio(

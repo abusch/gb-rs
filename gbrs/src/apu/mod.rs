@@ -112,8 +112,8 @@ impl Apu {
     /// cycles are just added up here, and only actually run when a frame sequencer step or a
     /// sample is due, or before a register write (see `catch_up`).
     #[inline]
-    pub fn step(&mut self, cycles: u8, sink: &mut dyn AudioSink) {
-        self.pending_cycles += cycles as u16;
+    pub fn step(&mut self, cycles: u16, sink: &mut dyn AudioSink) {
+        self.pending_cycles += cycles;
         if self.pending_cycles >= self.cycles_to_event {
             self.run_pending(sink);
         }

@@ -775,6 +775,12 @@ impl Cpu {
         self.enable_soft_break = enabled;
     }
 
+    /// Whether the CPU is halted, and stepping it would do nothing but wait for an interrupt: no
+    /// EI about to take effect, and no breakpoint to hit.
+    pub(crate) fn idle_while_halted(&self) -> bool {
+        self.halted && !self.locked_up && self.ime_delay == 0 && self.breakpoint != Some(self.pc)
+    }
+
     /// Get the cpu's halted.
     pub fn halted(&self) -> bool {
         self.halted

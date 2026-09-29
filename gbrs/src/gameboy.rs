@@ -78,6 +78,53 @@ impl GameBoy {
         bus.cycles() as u64
     }
 
+    /// Run for at least `cycles` clock cycles, stopping early if the CPU gets paused (e.g. by a
+    /// breakpoint). Return the number of cycles run.
+    ///
+    /// This is the same as calling `step` until then, but faster: while the CPU is halted, the rest
+    /// of the hardware runs up to its next event in one go, rather than an M-cycle at a time.
+    pub fn run(
+        &mut self,
+        cycles: u64,
+        frame_sink: &mut dyn FrameSink,
+        audio_sink: &mut dyn AudioSink,
+    ) -> u64 {
+        let mut ran = 0;
+        while ran < cycles && !self.cpu.is_paused() {
+            let skipped = self.skip_halted(cycles - ran, frame_sink, audio_sink);
+            ran += if skipped > 0 {
+                skipped
+            } else {
+                self.step(frame_sink, audio_sink)
+            };
+        }
+        ran
+    }
+
+    /// While the CPU is halted with nothing to wake it up, run the rest of the hardware for as
+    /// many M-cycles as it can take in one go (see `Bus::skip_idle`), and at most `max_cycles`
+    /// rounded up to an M-cycle, then handle the interrupt if one came up in the last one. That's
+    /// what stepping the halted CPU for those M-cycles would do. Return the cycles run, or 0 if the
+    /// CPU has to be stepped.
+    fn skip_halted(
+        &mut self,
+        max_cycles: u64,
+        frame_sink: &mut dyn FrameSink,
+        audio_sink: &mut dyn AudioSink,
+    ) -> u64 {
+        if !self.cpu.idle_while_halted() {
+            return 0;
+        }
+        let max_cycles = max_cycles.next_multiple_of(4).min(u64::from(u16::MAX)) as u16;
+        let skipped = self.bus.skip_idle(max_cycles, frame_sink, audio_sink);
+        if skipped == 0 {
+            return 0;
+        }
+        let mut bus = CpuBus::new(&mut self.bus, frame_sink, audio_sink);
+        self.cpu.handle_interrupt(&mut bus);
+        u64::from(skipped) + bus.cycles() as u64
+    }
+
     pub fn dump_cpu(&self) {
         self.cpu.dump_cpu();
     }

@@ -70,11 +70,8 @@ fn main() -> Result<()> {
     };
     let mut audio_sink = HashingSink::default();
     let target_cycles = frames * CYCLES_PER_FRAME;
-    let mut cycles = 0;
     let start = Instant::now();
-    while cycles < target_cycles {
-        cycles += gb.step(&mut frame_sink, &mut audio_sink);
-    }
+    let cycles = gb.run(target_cycles, &mut frame_sink, &mut audio_sink);
     let elapsed = start.elapsed();
 
     let emulated = cycles as f64 / CPU_HZ as f64;

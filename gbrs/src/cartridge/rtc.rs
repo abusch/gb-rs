@@ -61,7 +61,7 @@ impl Rtc {
     }
 
     /// Run the clock for the given number of CPU cycles.
-    pub(super) fn step(&mut self, cycles: u8) {
+    pub(super) fn step(&mut self, cycles: u16) {
         if self.halted() {
             return;
         }
