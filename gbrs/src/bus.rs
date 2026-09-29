@@ -179,7 +179,7 @@ impl Bus {
 
     /// Run the different peripherals for one M-cycle (4 clock cycles).
     fn cycle(&mut self, frame_sink: &mut dyn FrameSink, audio_sink: &mut dyn AudioSink) {
-        self.interrupt_flag |= self.gfx.dots(4, frame_sink);
+        self.interrupt_flag |= self.gfx.step(4, frame_sink);
         self.apu.step(4, audio_sink);
         self.cartridge.step(4);
         if self.timer.cycle() {
@@ -194,6 +194,11 @@ impl Bus {
 
     /// Run the OAM DMA for one M-cycle.
     fn step_dma(&mut self) {
+        if self.dma.active.is_none() && self.dma.requested.is_none() {
+            return;
+        }
+        // The copy and the CPU's bus conflicts can read VRAM, whose locking depends on the PPU.
+        self.gfx.sync();
         if let Some((source, copied)) = self.dma.active {
             let b = self.read_byte(source + u16::from(copied));
             self.gfx.write_oam_dma(copied, b);
@@ -431,6 +436,10 @@ impl<'a> CpuBus<'a> {
 
     /// Read a byte, taking one M-cycle.
     pub(crate) fn read_byte(&mut self, addr: u16) -> u8 {
+        // The PPU lags behind until something needs it (its writes catch it up themselves).
+        if VRAM.contains(&addr) || OAM.contains(&addr) || IO_RANGE_LCD.contains(&addr) {
+            self.bus.gfx.sync();
+        }
         let b = self
             .bus
             .dma_conflict(addr)

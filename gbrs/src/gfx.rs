@@ -87,6 +87,12 @@ pub struct Gfx {
 
     /// Number of clock cycles since we began rendering the current scanline
     line_dot: u16,
+    /// Dots that have gone by since the PPU last ran. `step` lets them pile up until something can
+    /// happen, and `sync` catches up before anything reads or changes the PPU's state.
+    lag_dots: u16,
+    /// How far the PPU can lag behind before something happens: a mode change, a new line, or
+    /// picking up a register write.
+    idle_dots: u16,
     running_mode: Mode,
 
     /// LCDC (LCD Control), made of the `LCDC_*` bits
@@ -139,6 +145,8 @@ impl Gfx {
             lcd: vec![Rgb555::default(); SCREEN_WIDTH * SCREEN_HEIGHT].into_boxed_slice(),
             dmg_palette: DEFAULT_DMG_PALETTE,
             line_dot: 0,
+            lag_dots: 0,
+            idle_dots: 0,
             // What STAT reports while the LCD is off
             running_mode: Mode::Mode0,
             lcdc: 0,
@@ -227,6 +235,7 @@ impl Gfx {
 
     /// VRAM writes are only locked while the PPU draws a line (mode 3).
     pub fn write_vram(&mut self, addr: u16, b: u8) {
+        self.sync();
         if self.running_mode != Mode::Mode3 || self.cpu_access_unlocked() {
             self.vram[(addr - VRAM_START) as usize] = b;
         }
@@ -243,6 +252,7 @@ impl Gfx {
 
     /// OAM writes are locked during the OAM scan proper, and while drawing.
     pub fn write_oam(&mut self, addr: u16, b: u8) {
+        self.sync();
         let locked = self.scanning_oam() || self.running_mode == Mode::Mode3;
         if !locked || self.cpu_access_unlocked() {
             self.oam_ram[(addr - OAM_START) as usize] = b;
@@ -251,6 +261,7 @@ impl Gfx {
 
     /// Write a byte of OAM for the OAM DMA, which isn't locked out like the CPU.
     pub(crate) fn write_oam_dma(&mut self, index: u8, b: u8) {
+        self.sync();
         self.oam_ram[index as usize] = b;
     }
 
@@ -273,6 +284,9 @@ impl Gfx {
     }
 
     pub fn write_reg(&mut self, addr: u16, b: u8) {
+        self.sync();
+        // The next dot picks up the write (e.g. a STAT interrupt from enabling a source).
+        self.idle_dots = 0;
         match addr {
             LCDC_REG => {
                 let was_enabled = self.lcdc(LCDC_ENABLE);
@@ -321,12 +335,48 @@ impl Gfx {
         0x80 | self.stat_sources | lyc_eq_ly | self.stat_mode() as u8
     }
 
-    pub(crate) fn dots(&mut self, cycles: u8, frame_sink: &mut dyn FrameSink) -> InterruptFlag {
+    /// Let `dots` dots go by. The PPU only runs once its next event is due, so most calls just
+    /// count the dots.
+    #[inline(always)]
+    pub(crate) fn step(&mut self, dots: u16, frame_sink: &mut dyn FrameSink) -> InterruptFlag {
+        self.lag_dots += dots;
+        if self.lag_dots < self.idle_dots {
+            return InterruptFlag::empty();
+        }
+        self.catch_up(frame_sink)
+    }
+
+    /// Bring the PPU up to date before its state gets read or changed. Nothing can have happened in
+    /// the dots it lags behind by (or `step` would have run them), so there's no interrupt or frame
+    /// to deliver.
+    pub(crate) fn sync(&mut self) {
+        // Nothing to do, and a register write may have just asked for the next dot to run.
+        if self.lag_dots == 0 {
+            return;
+        }
+        debug_assert!(self.lag_dots < self.idle_dots);
+        let interrupts = self.catch_up(&mut ());
+        debug_assert!(interrupts.is_empty());
+    }
+
+    fn catch_up(&mut self, frame_sink: &mut dyn FrameSink) -> InterruptFlag {
+        let interrupts = self.dots(self.lag_dots, frame_sink);
+        self.lag_dots = 0;
+        self.idle_dots = if self.lcdc(LCDC_ENABLE) {
+            self.next_mode_change_dot() - self.line_dot
+        } else {
+            // Nothing happens while the LCD is off: just drop the dots now and then.
+            DOTS_PER_LINE
+        };
+        interrupts
+    }
+
+    fn dots(&mut self, dots: u16, frame_sink: &mut dyn FrameSink) -> InterruptFlag {
         let mut interrupt = InterruptFlag::empty();
         if !self.lcdc(LCDC_ENABLE) {
             return interrupt;
         }
-        let mut remaining = cycles as u16;
+        let mut remaining = dots;
         while remaining > 0 {
             // The first dot picks up any register writes made since the last call.
             interrupt |= self.dot(frame_sink);
