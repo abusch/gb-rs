@@ -1,0 +1,36 @@
+# Software Information
+display_name = "Nintendo - Game Boy (gb-rs)"
+authors = "Antoine Busch"
+supported_extensions = "gb|dmg"
+corename = "gb-rs"
+categories = "Emulator"
+license = "MIT|Apache-2.0"
+permissions = ""
+
+# Hardware Information
+manufacturer = "Nintendo"
+systemname = "Game Boy"
+systemid = "game_boy"
+
+# Libretro Features
+database = "Nintendo - Game Boy"
+supports_no_game = "false"
+savestate = "true"
+savestate_features = "deterministic"
+cheats = "false"
+input_descriptors = "true"
+memory_descriptors = "false"
+libretro_saves = "true"
+core_options = "false"
+load_subsystem = "false"
+hw_render = "false"
+needs_fullpath = "false"
+disk_control = "false"
+is_experimental = "true"
+
+firmware_count = 1
+firmware0_desc = "dmg_boot.bin (Game Boy Boot ROM)"
+firmware0_path = "dmg_boot.bin"
+firmware0_opt = "true"
+
+notes = "(!) dmg_boot.bin is optional: without it, games start in the state the boot ROM leaves behind.|(!) Game Boy only: Game Boy Color-only games are not supported."

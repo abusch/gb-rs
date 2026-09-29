@@ -35,3 +35,12 @@ gbrs = { path = "gbrs/", version = "0.2.0" }
 [profile.release]
 debug = true
 incremental = true
+
+# Optimised build for slow handhelds (`just miyoo`).
+[profile.handheld]
+inherits = "release"
+debug = false
+strip = true
+incremental = false
+lto = "fat"
+codegen-units = 1
