@@ -617,23 +617,27 @@ impl Gfx {
     /// The sprite pixel to draw at each x of line `y`: its shade and `SPRITE_*` flags, or 0 where
     /// there's none.
     fn sprite_pixels_for_scanline(&self, y: u8) -> [u8; SCREEN_WIDTH] {
-        let mut sprites = [Sprite::default(); 40];
+        // The OAM scan picks the first 10 sprites on the line, in OAM order, whatever their `x`
+        // (even off-screen).
+        let mut sprites = [Sprite::default(); 10];
         let mut count = 0;
         for data in self.oam_ram.as_chunks::<4>().0 {
             let sprite = Sprite::new(data);
             if sprite.matches_scanline(y, self.lcdc(LCDC_OBJ_SIZE)) {
                 sprites[count] = sprite;
                 count += 1;
+                if count == sprites.len() {
+                    break;
+                }
             }
         }
-        // Order the sprites by smallest `x` as they have higher priority, and only draw the first
-        // 10.
+        // The smallest `x` has priority, then the first in OAM (the sort is stable).
         let sprites = &mut sprites[..count];
         sprites.sort_by_key(|s| s.x);
 
         let y_size = self.sprite_height();
         let mut pixels = [0; SCREEN_WIDTH];
-        for sprite in sprites.iter().take(10) {
+        for sprite in sprites.iter() {
             let mut tile_y = y + 16 - sprite.y;
             if sprite.is_y_flip() {
                 tile_y = y_size - 1 - tile_y;

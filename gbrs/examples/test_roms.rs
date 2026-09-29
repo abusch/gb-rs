@@ -159,6 +159,16 @@ fn all_tests(root: &Path) -> Vec<Test> {
         }
     }
 
+    // Checked against a screenshot rather than by the registers, unlike mooneye's other tests.
+    let manual = mooneye.join("manual-only");
+    tests.push(screenshot(
+        "mooneye manual-only",
+        manual.join("sprite_priority.gb"),
+        manual.join("sprite_priority-dmg.png"),
+        5,
+        true,
+    ));
+
     let acid2 = root.join("dmg-acid2");
     tests.push(screenshot(
         "dmg-acid2",
