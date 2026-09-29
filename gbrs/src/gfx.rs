@@ -63,6 +63,13 @@ const MODE0_START_DOT: u16 = MODE3_START_DOT + 172;
 /// `lcdon_timing` and `lcdon_write_timing` measure these).
 const OAM_SCAN_END_DOT: u16 = MODE3_START_DOT - 4;
 
+// A pixel of the sprite layer, as `sprite_pixels_for_scanline` returns it
+const SPRITE_SHADE: u8 = 0b11;
+/// Set where a sprite has a pixel: the other bits are 0 elsewhere.
+const SPRITE_OPAQUE: u8 = 1 << 2;
+/// The sprite only shows over background/window colour 0.
+const SPRITE_BEHIND_BG: u8 = 1 << 3;
+
 /// Colours used for the 4 DMG shades (white to black) unless a frontend picks its own.
 pub const DEFAULT_DMG_PALETTE: [Rgb555; 4] = [
     Rgb555::from_rgb888(0xe0, 0xf8, 0xd0),
@@ -478,67 +485,72 @@ impl Gfx {
         self.stat_mode().stat_condition() | lyc_eq_ly
     }
 
-    // Only runs once per line: keep it out of `dots`, which runs every M-cycle and would otherwise
-    // pay for this function's register and stack usage on every call.
+    // Only runs once per line: keep it out of `dots`, so that it doesn't pay for this function's
+    // register and stack usage on every call.
     #[inline(never)]
     fn draw_scan_line(&mut self) {
+        // Colour indices of the background and window, fetched a tile row (8 pixels) at a time.
+        let mut colors = [0; SCREEN_WIDTH];
         let mut drawn_from_window = false;
-        let bg_tilemap_area = if self.lcdc(LCDC_BG_TILE_MAP) {
-            0x9C00
-        } else {
-            0x9800
-        };
-        let win_tilemap_area = if self.lcdc(LCDC_WINDOW_TILE_MAP) {
-            0x9C00
-        } else {
-            0x9800
-        };
+        if self.lcdc(LCDC_BG_WINDOW_ENABLE) {
+            // The window covers the rest of the line from WX - 7 onwards, once LY reaches WY.
+            let window_x = if self.lcdc(LCDC_WINDOW_ENABLE) && self.ly >= self.wy {
+                (self.wx.saturating_sub(7) as usize).min(SCREEN_WIDTH)
+            } else {
+                SCREEN_WIDTH
+            };
+            let (background, window) = colors.split_at_mut(window_x);
+
+            // The background is a 256x256 torus, so the scroll offsets wrap around u8.
+            let bg_tilemap_area = if self.lcdc(LCDC_BG_TILE_MAP) {
+                0x9C00
+            } else {
+                0x9800
+            };
+            self.fetch_tiles(
+                background,
+                bg_tilemap_area,
+                self.scx,
+                self.ly.wrapping_add(self.scy),
+            );
+
+            if !window.is_empty() {
+                let win_tilemap_area = if self.lcdc(LCDC_WINDOW_TILE_MAP) {
+                    0x9C00
+                } else {
+                    0x9800
+                };
+                // With WX < 7, the window's first columns are off the left edge.
+                let first_x = (window_x + 7) as u8 - self.wx;
+                self.fetch_tiles(
+                    window,
+                    win_tilemap_area,
+                    first_x,
+                    self.window_internal_line_counter,
+                );
+                drawn_from_window = true;
+            }
+        }
+
         let sprite_pixels = if self.lcdc(LCDC_OBJ_ENABLE) {
             self.sprite_pixels_for_scanline(self.ly)
         } else {
-            [None; SCREEN_WIDTH]
+            [0; SCREEN_WIDTH]
         };
 
-        // Render a line of pixels
-        for x in 0..SCREEN_WIDTH as u8 {
-            // Coordinates in "LCD space" (i.e 160x144)
-            let (lcd_x, lcd_y) = (x, self.ly);
-            // Coordinates in "Background area" space (i.e 256x256)
-            let bg_and_window_enable = self.lcdc(LCDC_BG_WINDOW_ENABLE);
-            let (bg_x, bg_y, tilemap_area) = if bg_and_window_enable
-                && self.lcdc(LCDC_WINDOW_ENABLE)
-                && lcd_x + 7 >= self.wx
-                && lcd_y >= self.wy
-            {
-                // We're in the window
-                drawn_from_window = true;
-                (
-                    lcd_x + 7 - self.wx,
-                    self.window_internal_line_counter,
-                    win_tilemap_area,
-                )
+        let dmg_palette = self.dmg_palette;
+        let bg_colors: [Rgb555; 4] =
+            std::array::from_fn(|color| dmg_palette[shade(self.bgp, color as u8) as usize]);
+        let line = self.ly as usize * SCREEN_WIDTH;
+        let pixels = self.lcd[line..line + SCREEN_WIDTH].iter_mut();
+        for ((pixel, &color), &sprite) in pixels.zip(&colors).zip(&sprite_pixels) {
+            let sprite_visible =
+                sprite & SPRITE_OPAQUE != 0 && !(sprite & SPRITE_BEHIND_BG != 0 && color != 0);
+            *pixel = if sprite_visible {
+                dmg_palette[(sprite & SPRITE_SHADE) as usize]
             } else {
-                // we're in the background
-                // BG is a 256x256 torus, so scroll offsets wrap around u8.
-                (
-                    lcd_x.wrapping_add(self.scx),
-                    lcd_y.wrapping_add(self.scy),
-                    bg_tilemap_area,
-                )
+                bg_colors[color as usize]
             };
-
-            let color_byte = if bg_and_window_enable {
-                self.bg_pixel(tilemap_area, bg_x, bg_y)
-            } else {
-                0
-            };
-
-            let final_color = match sprite_pixels[x as usize] {
-                Some((p, bg_has_priority)) if !(bg_has_priority && color_byte != 0) => p,
-                _ => shade(self.bgp, color_byte),
-            };
-
-            self.write_pixel(x, self.ly, final_color);
         }
 
         if drawn_from_window {
@@ -546,33 +558,36 @@ impl Gfx {
         }
     }
 
-    /// Colour index (0-3) of the background/window pixel at the given coordinates in the 256x256
-    /// area covered by the tilemap at `tilemap_area`.
-    fn bg_pixel(&self, tilemap_area: u16, bg_x: u8, bg_y: u8) -> u8 {
-        // Coordinates in "tilemap space" (i.e. 32x32)
-        let (tilemap_x, tilemap_y) = (bg_x / 8, bg_y / 8);
-        let tile_id =
-            self.read_vram_internal(tilemap_area + (tilemap_y as u16 * 32 + tilemap_x as u16));
+    /// Fill `colors` with the colour indices (0-3) of the tiles along row `y` of the 256x256 area
+    /// covered by the tilemap at `tilemap_area`, starting from column `x` and wrapping around.
+    fn fetch_tiles(&self, colors: &mut [u8], tilemap_area: u16, x: u8, y: u8) {
+        let tilemap_row = tilemap_area + (y / 8) as u16 * 32;
+        let mut x = x;
+        let mut colors = colors;
+        while !colors.is_empty() {
+            let tile_id = self.read_vram_internal(tilemap_row + (x / 8) as u16);
+            let row =
+                tile_row_pixels(self.tile_row_at(self.bg_tile_addr(tile_id) + 2 * (y % 8) as u16));
+            // The first tile may start partway through.
+            let from = (x % 8) as usize;
+            let n = (8 - from).min(colors.len());
+            let (tile, rest) = colors.split_at_mut(n);
+            tile.copy_from_slice(&row[from..from + n]);
+            colors = rest;
+            x = x.wrapping_add(n as u8);
+        }
+    }
 
-        // Now that we've got the tileid, look up the tile data in the appropriate location.
-
-        // Coordinates in "tile space" (i.e. which pixel of an 8x8 tile to draw)
-        let (tile_col, tile_row) = (bg_x % 8, bg_y % 8);
-
-        let tile_offset: u16 = if self.lcdc(LCDC_TILE_DATA) {
-            let base = VRAM_TILE_DATA_BLOCK_0_ADDR;
+    /// Address of the data of a background or window tile.
+    fn bg_tile_addr(&self, tile_id: u8) -> u16 {
+        if self.lcdc(LCDC_TILE_DATA) {
             // treat tile id as unsigned
-            base + 16 * tile_id as u16
+            VRAM_TILE_DATA_BLOCK_0_ADDR + 16 * tile_id as u16
         } else {
-            let base = VRAM_TILE_DATA_BLOCK_2_ADDR;
             // treat tile id as *signed*, so sign-extend it to 16 bits
-            let signed_id = tile_id as i8 as i16;
-            let offset = (16 * signed_id) as u16;
-
-            base.wrapping_add(offset)
-        };
-        let row = self.tile_row_at(tile_offset + 2 * tile_row as u16);
-        tile_pixel(row, tile_col)
+            let offset = (16 * tile_id as i8 as i16) as u16;
+            VRAM_TILE_DATA_BLOCK_2_ADDR.wrapping_add(offset)
+        }
     }
 
     /// The two bitplanes (low, high) of the tile row at `addr`.
@@ -599,9 +614,9 @@ impl Gfx {
         self.tile_row_at(VRAM_TILE_DATA_BLOCK_0_ADDR + 16 * tile_index as u16 + 2 * tile_y as u16)
     }
 
-    /// The sprite pixel (if any) to draw at each x of line `y`, along with whether the background
-    /// has priority over it.
-    fn sprite_pixels_for_scanline(&self, y: u8) -> [Option<(u8, bool)>; SCREEN_WIDTH] {
+    /// The sprite pixel to draw at each x of line `y`: its shade and `SPRITE_*` flags, or 0 where
+    /// there's none.
+    fn sprite_pixels_for_scanline(&self, y: u8) -> [u8; SCREEN_WIDTH] {
         let mut sprites = [Sprite::default(); 40];
         let mut count = 0;
         for data in self.oam_ram.as_chunks::<4>().0 {
@@ -617,7 +632,7 @@ impl Gfx {
         sprites.sort_by_key(|s| s.x);
 
         let y_size = self.sprite_height();
-        let mut pixels = [None; SCREEN_WIDTH];
+        let mut pixels = [0; SCREEN_WIDTH];
         for sprite in sprites.iter().take(10) {
             let mut tile_y = y + 16 - sprite.y;
             if sprite.is_y_flip() {
@@ -633,7 +648,7 @@ impl Gfx {
                     continue;
                 };
                 // A higher priority sprite already has an opaque pixel here
-                if pixels[lcd_x].is_some() {
+                if pixels[lcd_x] != 0 {
                     continue;
                 }
                 let x = if sprite.is_x_flip() {
@@ -644,7 +659,12 @@ impl Gfx {
                 // Color index 0 is transparent for sprites
                 let color = tile_pixel(row, x);
                 if color != 0 {
-                    pixels[lcd_x] = Some((shade(palette, color), sprite.bg_has_priority()));
+                    let behind_bg = if sprite.bg_has_priority() {
+                        SPRITE_BEHIND_BG
+                    } else {
+                        0
+                    };
+                    pixels[lcd_x] = SPRITE_OPAQUE | behind_bg | shade(palette, color);
                 }
             }
         }
@@ -670,10 +690,6 @@ impl Gfx {
             0 => None,
             color => Some(shade(self.sprite_palette(sprite), color)),
         }
-    }
-
-    fn write_pixel(&mut self, x: u8, y: u8, shade: u8) {
-        self.lcd[y as usize * SCREEN_WIDTH + x as usize] = self.dmg_palette[shade as usize];
     }
 
     /// Carry over what save states leave out from the `Gfx` this one replaces.
@@ -756,6 +772,11 @@ impl Gfx {
 fn tile_pixel((lo, hi): (u8, u8), x: u8) -> u8 {
     let bit = 7 - x;
     (((hi >> bit) & 1) << 1) | ((lo >> bit) & 1)
+}
+
+/// Colour indices of the 8 pixels of a tile row, from left to right.
+fn tile_row_pixels(row: (u8, u8)) -> [u8; 8] {
+    std::array::from_fn(|x| tile_pixel(row, x as u8))
 }
 
 /// The shade (0-3, lightest to darkest) a palette register maps a colour index to.
