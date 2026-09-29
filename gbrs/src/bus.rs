@@ -182,7 +182,7 @@ impl Bus {
         self.interrupt_flag |= self.gfx.step(4, frame_sink);
         self.apu.step(4, audio_sink);
         self.cartridge.step(4);
-        if self.timer.cycle() {
+        if self.timer.step(4) {
             self.interrupt_flag |= InterruptFlag::TIMER;
         }
         if self.joypad_interrupt {
@@ -436,9 +436,12 @@ impl<'a> CpuBus<'a> {
 
     /// Read a byte, taking one M-cycle.
     pub(crate) fn read_byte(&mut self, addr: u16) -> u8 {
-        // The PPU lags behind until something needs it (its writes catch it up themselves).
+        // The PPU and the timer lag behind until something needs them (their writes catch them
+        // up themselves).
         if VRAM.contains(&addr) || OAM.contains(&addr) || IO_RANGE_LCD.contains(&addr) {
             self.bus.gfx.sync();
+        } else if IO_RANGE_TIM.contains(&addr) {
+            self.bus.timer.sync();
         }
         let b = self
             .bus
