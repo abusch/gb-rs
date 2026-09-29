@@ -4,21 +4,25 @@ use std::{
 };
 
 use gbrs::{
-    AudioSink, BootRom, CPU_HZ, CYCLES_PER_FRAME, FrameSink, Rgb555, SCREEN_HEIGHT, SCREEN_WIDTH,
+    AudioSink, BootRom, CPU_HZ, CYCLES_PER_FRAME, DMG_PALETTES, FrameSink, Rgb555, SCREEN_HEIGHT,
+    SCREEN_WIDTH,
     cartridge::{Cartridge, RTC_SAVE_SIZE},
     gameboy::GameBoy,
     joypad::Button,
 };
 use libretro::{
     ContentContract, ControllerDescription, ControllerDevice, ControllerInfo, Core, CoreMemory,
-    Environment, GameInfo, InputPort, JoypadButton, MemoryRegion, PixelFormat, Runtime, SystemInfo,
-    fixed_system_av_info,
+    CoreOptionDefinition, CoreOptionValue, CoreOptions, Environment, GameInfo, InputPort,
+    JoypadButton, MemoryRegion, PixelFormat, Runtime, SystemInfo, fixed_system_av_info,
 };
 
 const AUDIO_SAMPLE_RATE: f64 = 48000.0;
 
 /// Optional boot ROM, looked up in the frontend's system directory.
 const BOOT_ROM_FILE: &str = "dmg_boot.bin";
+
+/// Core option picking one of `DMG_PALETTES` by name.
+const PALETTE_OPTION: &str = "gbrs_palette";
 
 /// ~59.73 Hz: the DMG does not run at exactly 60 fps.
 const FPS: f64 = CPU_HZ as f64 / CYCLES_PER_FRAME as f64;
@@ -51,6 +55,8 @@ struct GbrsCore {
     rtc: RtcRegion,
     /// What `serialize_size` returns, fixed when the game gets loaded.
     save_state_size: usize,
+    /// Colours for the DMG shades, from the palette core option.
+    palette: [Rgb555; 4],
 }
 
 impl Default for GbrsCore {
@@ -65,6 +71,7 @@ impl Default for GbrsCore {
             cycle_carry: 0,
             rtc: RtcRegion::default(),
             save_state_size: 0,
+            palette: DMG_PALETTES[0].colors,
         }
     }
 }
@@ -80,7 +87,22 @@ impl GbrsCore {
         self.audio.samples.clear();
         self.cycle_carry = 0;
         if let Some(gb) = &mut self.emulator {
+            gb.set_dmg_palette(self.palette);
             self.rtc.sync(gb);
+        }
+    }
+
+    /// Apply the core options' current values.
+    fn read_options(&mut self, env: &mut Environment<'_>) {
+        // An unknown palette (e.g. from a newer version) leaves the current one.
+        if let Some(palette) = env
+            .get_variable(PALETTE_OPTION)
+            .and_then(|name| DMG_PALETTES.iter().find(|p| p.name == name))
+        {
+            self.palette = palette.colors;
+            if let Some(gb) = &mut self.emulator {
+                gb.set_dmg_palette(self.palette);
+            }
         }
     }
 
@@ -116,6 +138,14 @@ impl Core for GbrsCore {
             ControllerDevice::Joypad,
         )])];
         let _ = env.set_controller_info(&controllers);
+        let palette = CoreOptionDefinition::new(PALETTE_OPTION, "Palette", DMG_PALETTES[0].name)
+            .with_info("Colours of the four shades of the Game Boy's screen.")
+            .with_values(
+                DMG_PALETTES
+                    .iter()
+                    .map(|p| CoreOptionValue::new(p.name).with_label(p.label)),
+            );
+        let _ = env.set_core_options(&CoreOptions::new([palette]));
     }
 
     fn set_controller_port_device(&mut self, port: InputPort, _device: ControllerDevice) {
@@ -132,6 +162,7 @@ impl Core for GbrsCore {
         let Some(data) = game.and_then(|game| game.data) else {
             return false;
         };
+        self.read_options(&mut runtime.environment());
         // Without a (valid) boot ROM, the game just starts straight away.
         self.boot_rom = runtime
             .environment()
@@ -164,6 +195,9 @@ impl Core for GbrsCore {
 
     fn run(&mut self, runtime: &mut Runtime<'_>) {
         runtime.poll_input();
+        if runtime.environment().variables_updated() {
+            self.read_options(&mut runtime.environment());
+        }
 
         let Some(gb) = &mut self.emulator else {
             return;

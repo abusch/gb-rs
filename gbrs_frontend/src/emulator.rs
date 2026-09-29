@@ -20,6 +20,7 @@ use winit::{
 
 use crate::{
     audio::CpalAudioSink,
+    config::{self, Config, Palette},
     debugger::{Command, Debugger},
     input::{Buttons, Gamepads},
 };
@@ -100,6 +101,22 @@ fn load_save_file(gb: &mut GameBoy, save_file: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The file in `dir` that belongs to `rom`: its name with `extension` instead of the ROM's.
+fn file_for_rom(dir: &Path, rom: &Path, extension: &str) -> PathBuf {
+    let mut name = rom.file_stem().unwrap_or(rom.as_os_str()).to_owned();
+    name.push(".");
+    name.push(extension);
+    dir.join(name)
+}
+
+/// Write `content` to `path`, creating its directory first if needed.
+fn write_creating_dir(path: &Path, content: impl AsRef<[u8]>) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    fs::write(path, content)
+}
+
 const STATS_LOG_INTERVAL: Duration = Duration::from_secs(1);
 
 /// The object that pulls everything together and drives the emulation engine while interfacing
@@ -110,6 +127,12 @@ pub struct Emulator {
     save_file: PathBuf,
     /// Where the quick save state goes.
     state_file: PathBuf,
+    screenshot_dir: PathBuf,
+    palettes: Vec<Palette>,
+    /// Where the palette switched to is saved.
+    config_file: PathBuf,
+    /// The index of the current palette in `palettes`.
+    palette: usize,
     start_time_ns: Instant,
     emulated_cycles: u64,
     debugger: Debugger,
@@ -126,6 +149,7 @@ pub struct Emulator {
 impl Emulator {
     pub fn new(
         rom: impl AsRef<Path>,
+        config: &Config,
         boot_rom: Option<BootRom>,
         audio_sink: CpalAudioSink,
         breakpoint: Option<u16>,
@@ -147,14 +171,30 @@ impl Emulator {
             gb.set_breakpoint(addr);
         }
         gb.set_soft_break(enable_soft_break);
-        let save_file = rom.with_extension("sav");
-        load_save_file(&mut gb, &save_file)?;
+        gb.set_dmg_palette(config.palettes[config.palette].colors);
+        let save_file = file_for_rom(&config.save_dir, rom, "sav");
+        // Saves used to be kept next to the ROM: pick them up from there until there's a new one.
+        let legacy_save_file = rom.with_extension("sav");
+        if !save_file.exists() && legacy_save_file.exists() {
+            info!(
+                "Loading RAM from {}, it will be saved to {} from now on",
+                legacy_save_file.display(),
+                save_file.display()
+            );
+            load_save_file(&mut gb, &legacy_save_file)?;
+        } else {
+            load_save_file(&mut gb, &save_file)?;
+        }
 
         let now = Instant::now();
         Ok(Self {
             gb,
             save_file,
-            state_file: rom.with_extension("state"),
+            state_file: file_for_rom(&config.state_dir, rom, "state"),
+            screenshot_dir: config.screenshot_dir.clone(),
+            palettes: config.palettes.clone(),
+            config_file: config.path.clone(),
+            palette: config.palette,
             start_time_ns: now,
             emulated_cycles: 0,
             debugger: Debugger::new()?,
@@ -225,7 +265,7 @@ impl Emulator {
             content.extend_from_slice(&rtc);
         }
         if !content.is_empty()
-            && let Err(e) = fs::write(&self.save_file, content)
+            && let Err(e) = write_creating_dir(&self.save_file, content)
         {
             warn!(
                 "Failed to save RAM file {}: {}",
@@ -278,8 +318,9 @@ impl Emulator {
             "gb-rs-screenshot_{}.png",
             SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs()
         );
-        let path = Path::new(&filename);
-        let file = File::create(path)?;
+        fs::create_dir_all(&self.screenshot_dir)?;
+        let path = self.screenshot_dir.join(filename);
+        let file = File::create(&path)?;
         let mut w = BufWriter::new(file);
 
         let mut encoder = png::Encoder::new(&mut w, SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32);
@@ -290,12 +331,27 @@ impl Emulator {
         let mut data = [0u8; SCREEN_WIDTH * SCREEN_HEIGHT * 4];
         self.sink.draw_current_frame(&mut data);
         writer.write_image_data(&data)?;
-        info!("Saved screenshot to {}", filename);
+        info!("Saved screenshot to {}", path.display());
         Ok(())
     }
 
+    /// Switch to the next palette, which shows from the next frame, and remember it in the config
+    /// file for next time.
+    fn cycle_palette(&mut self) {
+        self.palette = (self.palette + 1) % self.palettes.len();
+        let palette = &self.palettes[self.palette];
+        self.gb.set_dmg_palette(palette.colors);
+        info!("Palette: {}", palette.name);
+        if let Err(e) = config::save_palette(&self.config_file, &palette.name) {
+            warn!(
+                "Failed to save the palette to {}: {e:#}",
+                self.config_file.display()
+            );
+        }
+    }
+
     fn save_state(&mut self) {
-        match fs::write(&self.state_file, self.gb.save_state()) {
+        match write_creating_dir(&self.state_file, self.gb.save_state()) {
             Ok(()) => info!("Saved state to {}", self.state_file.display()),
             Err(e) => warn!("Failed to save state to {}: {e}", self.state_file.display()),
         }
@@ -341,6 +397,10 @@ impl Emulator {
                 if let Err(e) = self.screenshot() {
                     warn!("Failed to save screenshot: {e}");
                 }
+                return;
+            }
+            KeyCode::KeyP if key.state.is_pressed() => {
+                self.cycle_palette();
                 return;
             }
             KeyCode::F5 if key.state.is_pressed() => {

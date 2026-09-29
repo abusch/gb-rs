@@ -78,6 +78,57 @@ pub const DEFAULT_DMG_PALETTE: [Rgb555; 4] = [
     Rgb555::from_rgb888(0x08, 0x18, 0x20),
 ];
 
+/// A named set of colours for the 4 DMG shades, from lightest to darkest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DmgPalette {
+    /// Identifies the palette in settings: lowercase, without spaces.
+    pub name: &'static str,
+    /// The name to show users.
+    pub label: &'static str,
+    pub colors: [Rgb555; 4],
+}
+
+/// Palettes frontends can offer, starting with [`DEFAULT_DMG_PALETTE`].
+pub const DMG_PALETTES: &[DmgPalette] = &[
+    DmgPalette {
+        name: "green",
+        label: "Green",
+        colors: DEFAULT_DMG_PALETTE,
+    },
+    // The original Game Boy's pea soup screen.
+    DmgPalette {
+        name: "dmg",
+        label: "DMG",
+        colors: [
+            Rgb555::from_rgb888(0x9b, 0xbc, 0x0f),
+            Rgb555::from_rgb888(0x8b, 0xac, 0x0f),
+            Rgb555::from_rgb888(0x30, 0x62, 0x30),
+            Rgb555::from_rgb888(0x0f, 0x38, 0x0f),
+        ],
+    },
+    // The Game Boy Pocket's greyish screen.
+    DmgPalette {
+        name: "pocket",
+        label: "Pocket",
+        colors: [
+            Rgb555::from_rgb888(0xc4, 0xcf, 0xa1),
+            Rgb555::from_rgb888(0x8b, 0x95, 0x6d),
+            Rgb555::from_rgb888(0x4d, 0x53, 0x3c),
+            Rgb555::from_rgb888(0x1f, 0x1f, 0x1f),
+        ],
+    },
+    DmgPalette {
+        name: "grey",
+        label: "Grey",
+        colors: [
+            Rgb555::from_rgb888(0xff, 0xff, 0xff),
+            Rgb555::from_rgb888(0xaa, 0xaa, 0xaa),
+            Rgb555::from_rgb888(0x55, 0x55, 0x55),
+            Rgb555::from_rgb888(0x00, 0x00, 0x00),
+        ],
+    },
+];
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Gfx {
     vram: Box<[u8]>,

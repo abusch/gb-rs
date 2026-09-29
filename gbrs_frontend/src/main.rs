@@ -7,6 +7,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use audio::{AudioStats, CpalAudioSink, init_audio, init_no_audio, negotiate_audio};
 use clap::Parser;
+use config::Config;
 use emulator::Emulator;
 use gbrs::{BootRom, SCREEN_HEIGHT, SCREEN_WIDTH};
 use log::{error, info};
@@ -22,6 +23,7 @@ use winit::{
 };
 
 mod audio;
+mod config;
 mod debugger;
 mod emulator;
 mod input;
@@ -50,6 +52,12 @@ pub struct Cli {
     /// If omitted, the game starts straight away, as if the boot ROM had just run.
     #[arg(long)]
     boot_rom: Option<PathBuf>,
+    /// Path to the config file.
+    ///
+    /// Defaults to `gbrs/config.toml` in the user's configuration directory
+    /// (`$XDG_CONFIG_HOME`, or `~/.config`).
+    #[arg(long)]
+    config: Option<PathBuf>,
     /// Path to the ROM file
     rom: PathBuf,
 }
@@ -65,6 +73,7 @@ fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
+    let config = Config::load(cli.config.as_deref())?;
     let boot_rom = cli
         .boot_rom
         .map(|path| {
@@ -94,6 +103,7 @@ fn main() -> Result<()> {
     let audio_stats = Arc::new(AudioStats::default());
     let mut emulator = Emulator::new(
         &cli.rom,
+        &config,
         boot_rom,
         CpalAudioSink::new(producer, Arc::clone(&audio_stats)),
         cli.breakpoint,

@@ -12,7 +12,7 @@ pub mod joypad;
 mod timer;
 
 pub use bus::{BOOT_ROM_SIZE, BootRom};
-pub use gfx::DEFAULT_DMG_PALETTE;
+pub use gfx::{DEFAULT_DMG_PALETTE, DMG_PALETTES, DmgPalette};
 
 pub const SCREEN_WIDTH: usize = 160;
 pub const SCREEN_HEIGHT: usize = 144;
