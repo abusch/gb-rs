@@ -23,3 +23,7 @@ miyoo:
   mkdir -p target/miyoo
   cp target/armv7-unknown-linux-gnueabihf/handheld/libgbrs_libretro.so target/miyoo/gbrs_libretro.so
   cp target/armv7-unknown-linux-gnueabihf/handheld/examples/headless gbrs_libretro/gbrs_libretro.info target/miyoo/
+
+# Check that the working copy's emulation output matches revision REV's on every ROM (set GBRS_ROMSET to a directory of zipped games to include them)
+compare-output rev="@-" frames="1200":
+  scripts/compare-output.sh {{rev}} {{frames}}
