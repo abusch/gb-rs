@@ -123,11 +123,9 @@ impl Core for GbrsCore {
     }
 
     fn load_game(&mut self, game: Option<GameInfo<'_>>, runtime: &mut Runtime<'_>) -> bool {
-        // The default libretro format is 0RGB1555; ask for 32-bit so we can pass colours through.
-        if !runtime
-            .environment()
-            .set_pixel_format(PixelFormat::Xrgb8888)
-        {
+        // RGB565 rather than XRGB8888: frames are half the size, which matters on handhelds, and
+        // 16 bits are enough for the Game Boy's 15-bit colours.
+        if !runtime.environment().set_pixel_format(PixelFormat::Rgb565) {
             return false;
         }
 
@@ -192,7 +190,7 @@ impl Core for GbrsCore {
             &self.frame.buf[..],
             SCREEN_WIDTH as u32,
             SCREEN_HEIGHT as u32,
-            SCREEN_WIDTH * std::mem::size_of::<u32>(),
+            SCREEN_WIDTH * std::mem::size_of::<u16>(),
             &self.audio.samples,
         );
         self.audio.samples.clear();
@@ -289,9 +287,9 @@ impl RtcRegion {
     }
 }
 
-/// Keeps the most recent frame in XRGB8888 format.
+/// Keeps the most recent frame in RGB565 format.
 struct RetroFrameSink {
-    buf: Box<[u32]>,
+    buf: Box<[u16]>,
 }
 
 impl Default for RetroFrameSink {
@@ -305,8 +303,7 @@ impl Default for RetroFrameSink {
 impl FrameSink for RetroFrameSink {
     fn push_frame(&mut self, frame: &[Rgb555]) {
         for (dst, color) in self.buf.iter_mut().zip(frame) {
-            let (r, g, b) = color.to_rgb888();
-            *dst = u32::from_be_bytes([0, r, g, b]);
+            *dst = color.to_rgb565();
         }
     }
 }

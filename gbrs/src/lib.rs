@@ -47,6 +47,15 @@ impl Rgb555 {
         }
         (expand(self.0), expand(self.0 >> 5), expand(self.0 >> 10))
     }
+
+    /// Convert to `RRRRRGGGGGGBBBBB`, replicating green's high bit into its extra low bit so that
+    /// full intensity stays full.
+    pub const fn to_rgb565(self) -> u16 {
+        let r = self.0 & 0x1F;
+        let g = (self.0 >> 5) & 0x1F;
+        let b = (self.0 >> 10) & 0x1F;
+        (r << 11) | (g << 6) | ((g >> 4) << 5) | b
+    }
 }
 
 pub trait FrameSink {
@@ -94,5 +103,16 @@ mod tests {
                 Rgb555(c | (c << 5) | (c << 10))
             );
         }
+    }
+
+    #[test]
+    fn test_rgb555_to_rgb565() {
+        assert_eq!(Rgb555(0x7FFF).to_rgb565(), 0xFFFF);
+        assert_eq!(Rgb555(0x0000).to_rgb565(), 0x0000);
+        assert_eq!(Rgb555(0x001F).to_rgb565(), 0xF800);
+        assert_eq!(Rgb555(0x03E0).to_rgb565(), 0x07E0);
+        assert_eq!(Rgb555(0x7C00).to_rgb565(), 0x001F);
+        // Unused top bit is ignored.
+        assert_eq!(Rgb555(0x8000).to_rgb565(), 0x0000);
     }
 }
