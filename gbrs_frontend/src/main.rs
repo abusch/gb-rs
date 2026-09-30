@@ -181,7 +181,7 @@ impl ApplicationHandler for App {
     ) {
         match event {
             WindowEvent::CloseRequested => {
-                event_loop.exiting();
+                event_loop.exit();
             }
             WindowEvent::Resized(size) => {
                 if let Some(ref mut pixels) = self.pixels
@@ -194,7 +194,6 @@ impl ApplicationHandler for App {
             WindowEvent::KeyboardInput { event: k, .. } => {
                 if k.logical_key == Key::Named(NamedKey::Escape) {
                     event_loop.exit();
-                    self.emulator.finish();
                     return;
                 }
                 if k.physical_key == PhysicalKey::Code(KeyCode::KeyF)
@@ -214,7 +213,6 @@ impl ApplicationHandler for App {
                     // Run the emiulator
                     if self.emulator.update() {
                         event_loop.exit();
-                        self.emulator.finish();
                         return;
                     }
                     // Render a frame
@@ -222,7 +220,6 @@ impl ApplicationHandler for App {
                     if let Err(e) = pixels.render() {
                         error!("Error while rendering frame: {}", e);
                         event_loop.exit();
-                        self.emulator.finish();
                         return;
                     }
                     window.request_redraw();
@@ -230,5 +227,11 @@ impl ApplicationHandler for App {
             }
             _ => {}
         }
+    }
+
+    /// Save the game however the emulator is quit: this runs after `exit()`, and when the OS
+    /// quits the application (e.g. Cmd-Q on macOS).
+    fn exiting(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
+        self.emulator.finish();
     }
 }
