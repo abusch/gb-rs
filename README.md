@@ -20,6 +20,7 @@ Current keybindings:
 - <kbd>F7</kbd>: Load the saved state
 - <kbd>F</kbd>: Toggle fullscreen
 - <kbd>P</kbd>: Switch to the next palette (remembered for next time)
+- <kbd>L</kbd>: Switch between plain pixels and the LCD shader (remembered for next time)
 
 Gamepads work too, and can be plugged in while the emulator runs (you can also use the keyboard at the same time):
 - D-pad or left stick: Joypad
@@ -35,7 +36,9 @@ The screen colours come from a palette: there are a few built-in ones (`green`, 
 
 In RetroArch, the libretro core has a "Palette" core option instead.
 
-These locations and the palette can be changed in `$XDG_CONFIG_HOME/gbrs/config.toml` (`~/.config/gbrs/config.toml`), or another file given with `--config`. Every setting is optional:
+The screen can also be drawn like the Game Boy's LCD, with a thin gap around each pixel and the shadows the pixels cast on the screen behind them. Switch to it with <kbd>L</kbd>, which saves your choice as `shader` in the config file. It shows best in a large window (or fullscreen), as the gaps fade out when each Game Boy pixel is only a few screen pixels wide.
+
+These locations, the palette and the shader can be changed in `$XDG_CONFIG_HOME/gbrs/config.toml` (`~/.config/gbrs/config.toml`), or another file given with `--config`. Every setting is optional:
 
 ```toml
 save-dir = "~/Games/gb/saves"
@@ -44,6 +47,8 @@ state-dir = "~/Games/gb/states"
 screenshot-dir = "~/Pictures"
 # The palette to start with, updated when switching palettes with P
 palette = "blue"
+# How to draw the screen: "none" (plain pixels, the default) or "lcd", updated when switching with L
+shader = "lcd"
 
 # Extra palettes, from lightest to darkest shade. They come after the built-in ones when switching
 # palettes with P, and one named like a built-in palette replaces it.

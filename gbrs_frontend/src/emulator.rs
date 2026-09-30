@@ -20,7 +20,7 @@ use winit::{
 
 use crate::{
     audio::CpalAudioSink,
-    config::{self, Config, Palette},
+    config::{self, Config, Palette, Shader},
     debugger::{Command, Debugger},
     input::{Buttons, Gamepads},
 };
@@ -129,10 +129,11 @@ pub struct Emulator {
     state_file: PathBuf,
     screenshot_dir: PathBuf,
     palettes: Vec<Palette>,
-    /// Where the palette switched to is saved.
+    /// Where the palette and shader switched to are saved.
     config_file: PathBuf,
     /// The index of the current palette in `palettes`.
     palette: usize,
+    shader: Shader,
     start_time_ns: Instant,
     emulated_cycles: u64,
     debugger: Debugger,
@@ -195,6 +196,7 @@ impl Emulator {
             palettes: config.palettes.clone(),
             config_file: config.path.clone(),
             palette: config.palette,
+            shader: config.shader,
             start_time_ns: now,
             emulated_cycles: 0,
             debugger: Debugger::new()?,
@@ -213,6 +215,16 @@ impl Emulator {
 
     pub fn render(&self, buf: &mut [u8]) {
         self.sink.draw_current_frame(buf);
+    }
+
+    /// How the screen should be drawn.
+    pub fn shader(&self) -> Shader {
+        self.shader
+    }
+
+    /// The colour of the unlit screen: the palette's lightest shade.
+    pub fn background(&self) -> (u8, u8, u8) {
+        self.palettes[self.palette].colors[0].to_rgb888()
     }
 
     pub fn update(&mut self) -> bool {
@@ -342,9 +354,20 @@ impl Emulator {
         let palette = &self.palettes[self.palette];
         self.gb.set_dmg_palette(palette.colors);
         info!("Palette: {}", palette.name);
-        if let Err(e) = config::save_palette(&self.config_file, &palette.name) {
+        self.save_setting("palette", &palette.name);
+    }
+
+    /// Switch to the next shader, and remember it in the config file for next time.
+    fn cycle_shader(&mut self) {
+        self.shader = self.shader.next();
+        info!("Shader: {}", self.shader.name());
+        self.save_setting("shader", self.shader.name());
+    }
+
+    fn save_setting(&self, key: &str, value: &str) {
+        if let Err(e) = config::save_setting(&self.config_file, key, value) {
             warn!(
-                "Failed to save the palette to {}: {e:#}",
+                "Failed to save the {key} to {}: {e:#}",
                 self.config_file.display()
             );
         }
@@ -401,6 +424,10 @@ impl Emulator {
             }
             KeyCode::KeyP if key.state.is_pressed() => {
                 self.cycle_palette();
+                return;
+            }
+            KeyCode::KeyL if key.state.is_pressed() => {
+                self.cycle_shader();
                 return;
             }
             KeyCode::F5 if key.state.is_pressed() => {

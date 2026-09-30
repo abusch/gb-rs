@@ -7,9 +7,10 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use audio::{AudioStats, CpalAudioSink, init_audio, init_no_audio, negotiate_audio};
 use clap::Parser;
-use config::Config;
+use config::{Config, Shader};
 use emulator::Emulator;
 use gbrs::{BootRom, SCREEN_HEIGHT, SCREEN_WIDTH};
+use lcd::LcdRenderer;
 use log::{error, info};
 use pixels::{Pixels, SurfaceTexture};
 use ringbuf::{HeapRb, traits::Split};
@@ -27,6 +28,7 @@ mod config;
 mod debugger;
 mod emulator;
 mod input;
+mod lcd;
 
 #[derive(Parser)]
 #[command(about, version, author)]
@@ -140,6 +142,7 @@ fn main() -> Result<()> {
 
 struct App {
     pixels: Option<Pixels<'static>>,
+    lcd: Option<LcdRenderer>,
     window: Option<Arc<Window>>,
     emulator: Emulator,
 }
@@ -148,6 +151,7 @@ impl App {
     pub fn new(emulator: Emulator) -> Self {
         Self {
             pixels: None,
+            lcd: None,
             window: None,
             emulator,
         }
@@ -178,6 +182,7 @@ impl ApplicationHandler for App {
             // kickoff rendering
             window.request_redraw();
 
+            self.lcd = Some(LcdRenderer::new(&pixels));
             self.pixels = Some(pixels);
             self.window = Some(window);
         }
@@ -219,7 +224,11 @@ impl ApplicationHandler for App {
                 self.emulator.handle_input(k);
             }
             WindowEvent::RedrawRequested => {
-                if let (Some(pixels), Some(window)) = (self.pixels.as_mut(), self.window.as_mut()) {
+                if let (Some(pixels), Some(lcd), Some(window)) = (
+                    self.pixels.as_mut(),
+                    self.lcd.as_ref(),
+                    self.window.as_mut(),
+                ) {
                     // Run the emiulator
                     if self.emulator.update() {
                         event_loop.exit();
@@ -227,7 +236,17 @@ impl ApplicationHandler for App {
                     }
                     // Render a frame
                     self.emulator.render(pixels.frame_mut());
-                    if let Err(e) = pixels.render() {
+                    let result = match self.emulator.shader() {
+                        Shader::None => pixels.render(),
+                        Shader::Lcd => {
+                            let background = self.emulator.background();
+                            pixels.render_with(|encoder, render_target, context| {
+                                lcd.render(encoder, render_target, context, background);
+                                Ok(())
+                            })
+                        }
+                    };
+                    if let Err(e) = result {
                         error!("Error while rendering frame: {}", e);
                         event_loop.exit();
                         return;

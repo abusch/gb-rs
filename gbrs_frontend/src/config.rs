@@ -1,7 +1,7 @@
 //! The frontend's settings, read from a TOML file in the user's configuration directory.
 //!
-//! gb-rs writes to it too, but only to remember the palette last switched to (see
-//! [`save_palette`]).
+//! gb-rs writes to it too, but only to remember the palette and shader last switched to (see
+//! [`save_setting`]).
 //!
 //! Every setting is optional. Directories follow the XDG base directory conventions, on macOS
 //! too (like most command-line tools), and the Windows known folders on Windows:
@@ -10,6 +10,9 @@
 //! # The palette to start with: a built-in one (green, dmg, pocket, grey) or one from `[palettes]`.
 //! # Switching palettes updates it.
 //! palette = "pocket"
+//! # How to draw the screen: plain pixels (none), or like the Game Boy's LCD (lcd). Switching
+//! # shaders updates it.
+//! shader = "lcd"
 //! # Battery-backed cartridge RAM (`.sav`). Default: $XDG_DATA_HOME/gbrs/saves
 //! save-dir = "~/Games/gb/saves"
 //! # Quick save states (`.state`). Default: $XDG_STATE_HOME/gbrs/states
@@ -47,6 +50,36 @@ struct ConfigFile {
     screenshot_dir: Option<PathBuf>,
     palette: Option<String>,
     palettes: BTreeMap<String, [HexColor; 4]>,
+    shader: Shader,
+}
+
+/// How the screen is drawn.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Shader {
+    /// Plain square pixels.
+    #[default]
+    None,
+    /// Like the Game Boy's LCD, with gaps between the pixels and their shadows (`lcd.wgsl`).
+    Lcd,
+}
+
+impl Shader {
+    /// All the shaders, in the order they're switched through.
+    pub const ALL: [Shader; 2] = [Shader::None, Shader::Lcd];
+
+    /// The name the config file uses.
+    pub fn name(self) -> &'static str {
+        match self {
+            Shader::None => "none",
+            Shader::Lcd => "lcd",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        let index = Self::ALL.iter().position(|&s| s == self).unwrap_or(0);
+        Self::ALL[(index + 1) % Self::ALL.len()]
+    }
 }
 
 /// A colour written as `#rrggbb`.
@@ -91,6 +124,7 @@ pub struct Config {
     pub palettes: Vec<Palette>,
     /// The index in `palettes` of the one to start with.
     pub palette: usize,
+    pub shader: Shader,
 }
 
 impl Config {
@@ -163,39 +197,40 @@ impl Config {
             screenshot_dir: dir(file.screenshot_dir, PathBuf::from(".")),
             palettes,
             palette,
+            shader: file.shader,
         })
     }
 }
 
-/// Set `palette` to `name` in the config file at `path`, creating it if needed.
+/// Set the string setting `key` to `value` in the config file at `path`, creating it if needed.
 ///
 /// The file is read again first, so that edits made since it was loaded are kept, and only that
 /// setting changes: comments and formatting stay as they are.
-pub fn save_palette(path: &Path, name: &str) -> Result<()> {
+pub fn save_setting(path: &Path, key: &str, value: &str) -> Result<()> {
     let content = match fs::read_to_string(path) {
         Ok(content) => content,
         Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(e).context("Failed to read the config file"),
     };
-    let content = set_palette(&content, name)?;
+    let content = set_setting(&content, key, value)?;
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).context("Failed to create the config directory")?;
     }
     fs::write(path, content).context("Failed to write the config file")
 }
 
-/// Set `palette` to `name` in the TOML document `content`.
-fn set_palette(content: &str, name: &str) -> Result<String> {
+/// Set the string setting `key` to `value` in the TOML document `content`.
+fn set_setting(content: &str, key: &str, value: &str) -> Result<String> {
     let mut doc: DocumentMut = content.parse().context("Failed to parse the config file")?;
-    match doc.get_mut("palette").and_then(Item::as_value_mut) {
+    match doc.get_mut(key).and_then(Item::as_value_mut) {
         // Keep the comments around the old value.
-        Some(value) => {
-            let decor = value.decor().clone();
-            *value = name.into();
-            *value.decor_mut() = decor;
+        Some(old) => {
+            let decor = old.decor().clone();
+            *old = value.into();
+            *old.decor_mut() = decor;
         }
         None => {
-            doc.insert("palette", toml_edit::value(name));
+            doc.insert(key, toml_edit::value(value));
         }
     }
     Ok(doc.to_string())
@@ -243,6 +278,7 @@ mod tests {
         assert_eq!(config.screenshot_dir, Path::new("."));
         assert_eq!(config.palettes.len(), DMG_PALETTES.len());
         assert_eq!(config.palette, 0);
+        assert_eq!(config.shader, Shader::None);
     }
 
     #[test]
@@ -286,8 +322,11 @@ mod tests {
     }
 
     #[test]
-    fn test_set_palette() {
-        assert_eq!(set_palette("", "dmg").unwrap(), "palette = \"dmg\"\n");
+    fn test_set_setting() {
+        assert_eq!(
+            set_setting("", "palette", "dmg").unwrap(),
+            "palette = \"dmg\"\n"
+        );
 
         // Only the palette changes, and it goes before the tables.
         let content = r##"# My settings
@@ -303,25 +342,42 @@ palette = "blue"
 [palettes]
 blue = ["#e0f0ff", "#80a8d0", "#305078", "#081828"]
 "##;
-        assert_eq!(set_palette(content, "blue").unwrap(), expected);
+        assert_eq!(set_setting(content, "palette", "blue").unwrap(), expected);
 
         // Comments around an existing value are kept.
         let content = "# Start with\npalette   =   'pocket'   # my favourite\nsave-dir = \"x\"\n";
         let expected = "# Start with\npalette   =   \"grey\"   # my favourite\nsave-dir = \"x\"\n";
-        assert_eq!(set_palette(content, "grey").unwrap(), expected);
+        assert_eq!(set_setting(content, "palette", "grey").unwrap(), expected);
 
         // A file that isn't valid TOML is left alone.
-        assert!(set_palette("palette = ", "grey").is_err());
+        assert!(set_setting("palette = ", "palette", "grey").is_err());
     }
 
     #[test]
-    fn test_save_palette() {
+    fn test_save_setting() {
         let dir = std::env::temp_dir().join(format!("gbrs-config-test-{}", std::process::id()));
         let path = dir.join("gbrs").join("config.toml");
-        save_palette(&path, "pocket").unwrap();
-        save_palette(&path, "grey").unwrap();
-        assert_eq!(fs::read_to_string(&path).unwrap(), "palette = \"grey\"\n");
+        save_setting(&path, "palette", "pocket").unwrap();
+        save_setting(&path, "palette", "grey").unwrap();
+        save_setting(&path, "shader", "lcd").unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "palette = \"grey\"\nshader = \"lcd\"\n"
+        );
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_shaders() {
+        let file: ConfigFile = toml::from_str(r#"shader = "lcd""#).unwrap();
+        assert_eq!(file.shader, Shader::Lcd);
+        assert!(toml::from_str::<ConfigFile>(r#"shader = "crt""#).is_err());
+        // Switching goes through every shader, and the names are the ones the file uses.
+        for shader in Shader::ALL {
+            assert_ne!(shader.next(), shader);
+            let toml = format!("shader = \"{}\"", shader.name());
+            assert_eq!(toml::from_str::<ConfigFile>(&toml).unwrap().shader, shader);
+        }
     }
 
     #[test]
