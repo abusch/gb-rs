@@ -38,6 +38,8 @@ The screen colours come from a palette: there are a few built-in ones (`green`, 
 
 In RetroArch, the libretro core has a "Palette" core option instead.
 
+The libretro core also supports [RetroAchievements](https://retroachievements.org): log in under Settings > Achievements in RetroArch, and they work as with other Game Boy cores.
+
 The screen can also be drawn like the Game Boy's LCD, with a thin gap around each pixel and the shadows the pixels cast on the screen behind them. Switch to it with <kbd>L</kbd>, which saves your choice as `shader` in the config file. It shows best in a large window (or fullscreen), as the gaps fade out when each Game Boy pixel is only a few screen pixels wide.
 
 These locations, the palette and the shader can be changed in `$XDG_CONFIG_HOME/gbrs/config.toml` (`~/.config/gbrs/config.toml`), or another file given with `--config`. Every setting is optional:

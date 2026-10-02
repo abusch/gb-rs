@@ -13,7 +13,8 @@ use gbrs::{
 use libretro::{
     ContentContract, ControllerDescription, ControllerDevice, ControllerInfo, Core, CoreMemory,
     CoreOptionDefinition, CoreOptionValue, CoreOptions, Environment, GameInfo, InputPort,
-    JoypadButton, MemoryRegion, PixelFormat, Runtime, SystemInfo, fixed_system_av_info,
+    JoypadButton, MemoryDescriptorFlag, MemoryMapDescriptor, MemoryRegion, PixelFormat, Runtime,
+    SystemInfo, fixed_system_av_info,
 };
 
 const AUDIO_SAMPLE_RATE: f64 = 48000.0;
@@ -31,6 +32,11 @@ const FPS: f64 = CPU_HZ as f64 / CYCLES_PER_FRAME as f64;
 /// small integers are encoded in fewer bytes, and the size libretro asks for can't grow while a
 /// game is loaded. In practice, it varies by about 10 bytes.
 const SAVE_STATE_SLACK: usize = 1024;
+
+/// Where RetroAchievements expects the cartridge RAM banks after the first one (see the Game Boy's
+/// memory regions in rcheevos' `consoleinfo.c`), since only one is mapped at 0xA000.
+const EXTRA_CART_RAM_BANKS: usize = 0x16000;
+const CART_RAM_BANK_SIZE: usize = 0x2000;
 
 const BUTTON_MAP: [(JoypadButton, Button); 8] = [
     (JoypadButton::Up, Button::Up),
@@ -78,16 +84,18 @@ impl Default for GbrsCore {
 
 impl GbrsCore {
     fn power_on(&mut self, cartridge: Cartridge) {
-        self.emulator = Some(GameBoy::new(
-            cartridge,
-            self.boot_rom.clone(),
-            AUDIO_SAMPLE_RATE as u32,
-        ));
+        let mut gb = GameBoy::new(cartridge, self.boot_rom.clone(), AUDIO_SAMPLE_RATE as u32);
+        gb.set_dmg_palette(self.palette);
+        self.emulator = Some(gb);
+        self.restart_output();
+    }
+
+    /// Start over from a Game Boy that was just turned on.
+    fn restart_output(&mut self) {
         self.frame = RetroFrameSink::default();
         self.audio.samples.clear();
         self.cycle_carry = 0;
         if let Some(gb) = &mut self.emulator {
-            gb.set_dmg_palette(self.palette);
             self.rtc.sync(gb);
         }
     }
@@ -174,6 +182,10 @@ impl Core for GbrsCore {
             Ok(cartridge) => {
                 self.power_on(cartridge);
                 self.set_save_state_size();
+                if let Some(gb) = &mut self.emulator {
+                    set_memory_maps(gb, &mut runtime.environment());
+                }
+                runtime.environment().set_support_achievements(true);
                 true
             }
             Err(_) => false,
@@ -186,10 +198,11 @@ impl Core for GbrsCore {
     }
 
     fn reset(&mut self) {
-        // Reuse the cartridge rather than reloading it: battery-backed RAM must survive a reset,
-        // and the frontend may still hold the pointer we handed out for `SaveRam`.
-        if let Some(gb) = self.emulator.take() {
-            self.power_on(gb.eject());
+        // Reset in place rather than reloading the cartridge: battery-backed RAM must survive a
+        // reset, and the frontend holds pointers to the memory (`SaveRam`, the memory maps).
+        if let Some(gb) = &mut self.emulator {
+            gb.reset(self.boot_rom.clone());
+            self.restart_output();
         }
     }
 
@@ -284,6 +297,37 @@ impl Core for GbrsCore {
             _ => None,
         }
     }
+}
+
+/// Tell the frontend where the Game Boy's memory is, at the addresses RetroAchievements uses. It reads
+/// it through these pointers for as long as the game is loaded, which `GameBoy` allows, since its
+/// memory stays put even when loading a save state or resetting.
+///
+/// The ROM isn't mapped, as only its first bank stays in place, nor the I/O registers, which
+/// aren't kept in memory.
+fn set_memory_maps(gb: &mut GameBoy, env: &mut Environment<'_>) -> bool {
+    let memory = gb.memory_mut();
+    let first_bank_size = memory.cart_ram.len().min(CART_RAM_BANK_SIZE);
+    let (cart_ram, extra_cart_ram) = memory.cart_ram.split_at_mut(first_bank_size);
+    let mut descriptors = vec![
+        MemoryMapDescriptor::from_slice(None, 0x8000, memory.vram)
+            .with_flags(MemoryDescriptorFlag::VideoRam.into()),
+        MemoryMapDescriptor::from_slice(None, 0xC000, memory.wram)
+            .with_flags(MemoryDescriptorFlag::SystemRam.into()),
+        MemoryMapDescriptor::from_slice(None, 0xFE00, memory.oam)
+            .with_flags(MemoryDescriptorFlag::VideoRam.into()),
+        MemoryMapDescriptor::from_slice(None, 0xFF80, memory.hram)
+            .with_flags(MemoryDescriptorFlag::SystemRam.into()),
+    ];
+    for (start, ram) in [(0xA000, cart_ram), (EXTRA_CART_RAM_BANKS, extra_cart_ram)] {
+        if !ram.is_empty() {
+            descriptors.push(
+                MemoryMapDescriptor::from_slice(None, start, ram)
+                    .with_flags(MemoryDescriptorFlag::SaveRam.into()),
+            );
+        }
+    }
+    env.set_memory_maps(&descriptors)
 }
 
 /// The cartridge's real-time clock, as exposed to the frontend through `MemoryRegion::Rtc`.

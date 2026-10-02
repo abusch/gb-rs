@@ -84,6 +84,10 @@ impl Apu {
         self.sample_rate = previous.sample_rate;
     }
 
+    pub(crate) fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
     pub fn new(sample_rate: u32) -> Self {
         Self {
             apu_enabled: true,

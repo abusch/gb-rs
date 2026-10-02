@@ -14,6 +14,25 @@ const SAVE_STATE_MAGIC: [u8; 4] = *b"GBRS";
 /// the components), since save states are just the serialised structs.
 const SAVE_STATE_VERSION: u16 = 10;
 
+/// The Game Boy's RAM, for frontends that read (or write) it directly, e.g. for RetroAchievements.
+///
+/// These are the buffers the emulator uses, as they are: VRAM and OAM can be accessed whatever the
+/// PPU is doing. They stay where they are for as long as the [`GameBoy`] exists, even when a save
+/// state is loaded or it's reset, so frontends can keep pointers to them.
+pub struct Memory<'a> {
+    /// 0x8000-0x9FFF
+    pub vram: &'a mut [u8],
+    /// The cartridge's external RAM, if it has any: all its banks, the first of which can be
+    /// mapped at 0xA000-0xBFFF. MBC2's is 512 bytes holding a half-byte each.
+    pub cart_ram: &'a mut [u8],
+    /// 0xC000-0xDFFF
+    pub wram: &'a mut [u8],
+    /// 0xFE00-0xFE9F
+    pub oam: &'a mut [u8],
+    /// 0xFF80-0xFFFE
+    pub hram: &'a mut [u8],
+}
+
 /// Comes first in save states, to reject ones that can't be loaded.
 #[derive(Serialize, Deserialize)]
 struct SaveStateHeader {
@@ -220,6 +239,25 @@ impl GameBoy {
         cartridge
     }
 
+    /// Turn the Game Boy off and on again with the same cartridge, running `boot_rom` if given.
+    ///
+    /// This is like [`GameBoy::eject`] followed by [`GameBoy::new`], except that the memory stays
+    /// where it is (see [`Memory`]), and so do the settings that aren't part of save states (such as
+    /// the DMG palette).
+    pub fn reset(&mut self, boot_rom: Option<BootRom>) {
+        let mut cartridge = std::mem::replace(&mut self.bus.cartridge, Cartridge::empty());
+        cartridge.reset_mapper();
+        let mut gb = Self::new(cartridge, boot_rom, self.bus.sample_rate());
+        gb.bus.restore_peripherals(&mut self.bus);
+        gb.cpu.restore_unsaved(&self.cpu);
+        *self = gb;
+    }
+
+    /// The Game Boy's RAM, see [`Memory`].
+    pub fn memory_mut(&mut self) -> Memory<'_> {
+        self.bus.memory_mut()
+    }
+
     /// Set the colours used for the 4 DMG shades, from lightest to darkest.
     pub fn set_dmg_palette(&mut self, palette: [Rgb555; 4]) {
         self.bus.gfx.set_dmg_palette(palette);
@@ -259,7 +297,7 @@ impl GameBoy {
     }
 
     /// Restore a snapshot from [`GameBoy::save_state`]. Trailing bytes are ignored, since some
-    /// frontends pad save states.
+    /// frontends pad save states. The memory stays where it is (see [`Memory`]).
     ///
     /// On error, the Game Boy is left as it was.
     pub fn load_state(&mut self, data: &[u8]) -> Result<()> {
@@ -391,6 +429,76 @@ mod tests {
         }
         // and the other way around
         assert!(other_game.load_state(&state).is_err());
+    }
+
+    fn memory_pointers(gb: &mut GameBoy) -> [*const u8; 5] {
+        let memory = gb.memory_mut();
+        [
+            memory.vram,
+            memory.cart_ram,
+            memory.wram,
+            memory.oam,
+            memory.hram,
+        ]
+        .map(|buffer| buffer.as_ptr())
+    }
+
+    #[test]
+    fn test_memory() {
+        let mut gb = GameBoy::new(scrolling_cartridge(0), None, 48_000);
+        // Enable the cartridge's RAM
+        gb.poke(0x0000, 0x0A);
+        for addr in [0xA123, 0xC123, 0xD123, 0xFF90] {
+            gb.poke(addr, addr as u8);
+        }
+        let memory = gb.memory_mut();
+        assert_eq!(
+            (memory.vram.len(), memory.cart_ram.len(), memory.oam.len()),
+            (0x2000, 0x2000, 0xA0)
+        );
+        assert_eq!(memory.cart_ram[0x123], 0x23);
+        assert_eq!(memory.wram[0x0123], 0x23);
+        assert_eq!(memory.wram[0x1123], 0x23);
+        assert_eq!(memory.hram[0x10], 0x90);
+        assert_eq!(memory.hram.len(), 0x7F);
+    }
+
+    /// Frontends may keep pointers to the memory, so it mustn't move.
+    #[test]
+    fn test_memory_stays_put() {
+        let mut gb = GameBoy::new(scrolling_cartridge(0), None, 48_000);
+        let pointers = memory_pointers(&mut gb);
+        gb.memory_mut().wram[0] = 0x42;
+        let state = gb.save_state();
+        run_frames(&mut gb, 1);
+        gb.memory_mut().wram[0] = 0;
+
+        gb.load_state(&state).unwrap();
+        assert_eq!(memory_pointers(&mut gb), pointers);
+        assert_eq!(gb.memory_mut().wram[0], 0x42);
+
+        gb.reset(None);
+        assert_eq!(memory_pointers(&mut gb), pointers);
+    }
+
+    #[test]
+    fn test_reset() {
+        let palette = [Rgb555(1), Rgb555(2), Rgb555(3), Rgb555(4)];
+        let mut gb = GameBoy::new(scrolling_cartridge(0), None, 48_000);
+        gb.set_dmg_palette(palette);
+        gb.poke(0x0000, 0x0A);
+        gb.poke(0xA000, 0x42);
+        run_frames(&mut gb, 10);
+        gb.reset(None);
+
+        // It's as if the Game Boy had just been turned on, with the cartridge's RAM as it was, and
+        // the same palette.
+        let mut cartridge = scrolling_cartridge(0);
+        cartridge.save_ram_mut().unwrap()[0] = 0x42;
+        let mut fresh = GameBoy::new(cartridge, None, 48_000);
+        fresh.set_dmg_palette(palette);
+        assert!(gb.save_state() == fresh.save_state());
+        assert_eq!(run_frames(&mut gb, 10), run_frames(&mut fresh, 10));
     }
 
     /// A minimal ROM-only cartridge that passes the boot ROM's logo and header checks.

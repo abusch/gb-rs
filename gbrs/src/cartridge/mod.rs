@@ -8,6 +8,8 @@ use anyhow::Result;
 use log::warn;
 use serde::{Deserialize, Serialize};
 
+use crate::bus::keep_allocation;
+
 use mbc1::Mbc1;
 use mbc2::{MBC2_RAM_SIZE, Mbc2};
 use mbc3::Mbc3;
@@ -65,8 +67,7 @@ impl Cartridge {
         );
         let mut cartridge = Self {
             data: content.into_boxed_slice(),
-            ram: Box::default(),
-            mbc: Mbc::None,
+            ..Self::empty()
         };
         let rom_len = cartridge.data.len();
         let ram_banks = cartridge.get_num_ram_banks().unwrap_or(0) as usize;
@@ -273,7 +274,17 @@ impl Cartridge {
             "Save state is for a different cartridge"
         );
         self.data = std::mem::take(&mut previous.data);
+        keep_allocation(&mut self.ram, &mut previous.ram);
         Ok(())
+    }
+
+    /// A cartridge without ROM or RAM, to leave in place of one that's taken out.
+    pub(crate) fn empty() -> Self {
+        Self {
+            data: Box::default(),
+            ram: Box::default(),
+            mbc: Mbc::None,
+        }
     }
 
     /// Reset the memory bank controller to its power-on state, leaving RAM and the RTC untouched.

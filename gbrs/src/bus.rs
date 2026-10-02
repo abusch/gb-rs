@@ -2,11 +2,11 @@ use std::ops::RangeInclusive;
 
 use anyhow::Result;
 use log::{info, trace};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
-    AudioSink, FrameSink, apu::Apu, cartridge::Cartridge, gfx::Gfx, interrupt::InterruptFlag,
-    joypad::Joypad, timer::Timer,
+    AudioSink, FrameSink, apu::Apu, cartridge::Cartridge, gameboy::Memory, gfx::Gfx,
+    interrupt::InterruptFlag, joypad::Joypad, timer::Timer,
 };
 
 pub const BOOT_ROM_SIZE: usize = 0x100;
@@ -40,6 +40,31 @@ impl From<BootRom> for Vec<u8> {
     fn from(boot_rom: BootRom) -> Self {
         boot_rom.0.to_vec()
     }
+}
+
+/// Give `buffer` the allocation `previous` is in, with `buffer`'s contents, which must be the same
+/// size. Frontends can point to the Game Boy's memory (see [`GameBoy::memory_mut`]), so it has to
+/// stay where it is when a save state is loaded or the Game Boy is reset.
+///
+/// [`GameBoy::memory_mut`]: crate::gameboy::GameBoy::memory_mut
+pub(crate) fn keep_allocation(buffer: &mut Box<[u8]>, previous: &mut Box<[u8]>) {
+    previous.copy_from_slice(buffer);
+    *buffer = std::mem::take(previous);
+}
+
+/// Deserialise a buffer that has to be `N` bytes long, so that a save state can't change its size
+/// (see [`keep_allocation`]).
+pub(crate) fn deserialize_sized<'de, D: Deserializer<'de>, const N: usize>(
+    deserializer: D,
+) -> Result<Box<[u8]>, D::Error> {
+    let buffer = Box::<[u8]>::deserialize(deserializer)?;
+    if buffer.len() != N {
+        return Err(serde::de::Error::custom(format!(
+            "expected {N} bytes, got {}",
+            buffer.len()
+        )));
+    }
+    Ok(buffer)
 }
 
 // Memory Map
@@ -107,7 +132,9 @@ impl OamDma {
 
 #[derive(Serialize, Deserialize)]
 pub struct Bus {
+    #[serde(deserialize_with = "deserialize_sized::<_, 0x2000>")]
     ram: Box<[u8]>,
+    #[serde(deserialize_with = "deserialize_sized::<_, 0x80>")]
     hram: Box<[u8]>,
     apu: Apu,
     pub(crate) gfx: Gfx,
@@ -163,13 +190,37 @@ impl Bus {
         self.interrupt_flag = InterruptFlag::VBLANK;
     }
 
-    /// Carry over what save states leave out from the `Bus` this one replaces. On error, `previous`
-    /// is left untouched.
+    /// Carry over what save states leave out from the `Bus` this one replaces, and keep the memory
+    /// where it was. On error, `previous` is left untouched.
     pub(crate) fn restore_unsaved(&mut self, previous: &mut Self) -> Result<()> {
         self.cartridge.restore_unsaved(&mut previous.cartridge)?;
-        self.gfx.restore_unsaved(&previous.gfx);
-        self.apu.restore_unsaved(&previous.apu);
+        self.restore_peripherals(previous);
         Ok(())
+    }
+
+    /// Like `restore_unsaved`, but leaving the cartridge alone, for a `Bus` built around the
+    /// cartridge `previous` had.
+    pub(crate) fn restore_peripherals(&mut self, previous: &mut Self) {
+        keep_allocation(&mut self.ram, &mut previous.ram);
+        keep_allocation(&mut self.hram, &mut previous.hram);
+        self.gfx.restore_unsaved(&mut previous.gfx);
+        self.apu.restore_unsaved(&previous.apu);
+    }
+
+    pub(crate) fn sample_rate(&self) -> u32 {
+        self.apu.sample_rate()
+    }
+
+    /// See [`GameBoy::memory_mut`](crate::gameboy::GameBoy::memory_mut).
+    pub(crate) fn memory_mut(&mut self) -> Memory<'_> {
+        let (vram, oam) = self.gfx.memory_mut();
+        Memory {
+            vram,
+            cart_ram: self.cartridge.save_ram_mut().unwrap_or_default(),
+            wram: &mut self.ram,
+            oam,
+            hram: &mut self.hram[..HRAM.len()],
+        }
     }
 
     /// The header checksum, which the boot ROM verifies (and leaves traces of in the CPU flags).
@@ -515,5 +566,23 @@ impl<'a> CpuBus<'a> {
 
     pub(crate) fn ack_interrupt(&mut self, flag: InterruptFlag) {
         self.bus.ack_interrupt(flag);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_save_states_cant_resize_memory() {
+        #[derive(Debug, Deserialize)]
+        struct Memory(#[serde(deserialize_with = "deserialize_sized::<_, 2>")] Box<[u8]>);
+
+        assert_eq!(
+            *postcard::from_bytes::<Memory>(&[2, 1, 2]).unwrap().0,
+            [1, 2]
+        );
+        assert!(postcard::from_bytes::<Memory>(&[3, 1, 2, 3]).is_err());
+        assert!(postcard::from_bytes::<Memory>(&[0]).is_err());
     }
 }

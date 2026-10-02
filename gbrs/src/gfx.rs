@@ -3,7 +3,11 @@ use std::fmt::{Debug, Write};
 use log::trace;
 use serde::{Deserialize, Serialize};
 
-use crate::{FrameSink, Rgb555, SCREEN_HEIGHT, SCREEN_WIDTH, interrupt::InterruptFlag};
+use crate::{
+    FrameSink, Rgb555, SCREEN_HEIGHT, SCREEN_WIDTH,
+    bus::{deserialize_sized, keep_allocation},
+    interrupt::InterruptFlag,
+};
 
 const VRAM_START: u16 = 0x8000;
 const OAM_START: u16 = 0xFE00;
@@ -131,7 +135,9 @@ pub const DMG_PALETTES: &[DmgPalette] = &[
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Gfx {
+    #[serde(deserialize_with = "deserialize_sized::<_, 0x2000>")]
     vram: Box<[u8]>,
+    #[serde(deserialize_with = "deserialize_sized::<_, 0xA0>")]
     oam_ram: Box<[u8]>,
 
     /// Represents the LCD itself, i.e. where pixels are actually written.
@@ -752,10 +758,18 @@ impl Gfx {
         }
     }
 
-    /// Carry over what save states leave out from the `Gfx` this one replaces.
-    pub(crate) fn restore_unsaved(&mut self, previous: &Self) {
+    /// Carry over what save states leave out from the `Gfx` this one replaces, and keep the memory
+    /// where it was.
+    pub(crate) fn restore_unsaved(&mut self, previous: &mut Self) {
+        keep_allocation(&mut self.vram, &mut previous.vram);
+        keep_allocation(&mut self.oam_ram, &mut previous.oam_ram);
         self.dmg_palette = previous.dmg_palette;
         self.debugger_access = previous.debugger_access;
+    }
+
+    /// VRAM and OAM, as they are, whatever the PPU is doing.
+    pub(crate) fn memory_mut(&mut self) -> (&mut [u8], &mut [u8]) {
+        (&mut self.vram, &mut self.oam_ram)
     }
 
     pub(crate) fn set_dmg_palette(&mut self, palette: [Rgb555; 4]) {
