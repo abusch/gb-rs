@@ -1,6 +1,6 @@
 use std::{
     fs::{self, File},
-    io::{BufReader, BufWriter, Read},
+    io::{self, BufReader, BufWriter, Read},
     path::{Path, PathBuf},
     sync::atomic::Ordering,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -23,6 +23,7 @@ use crate::{
     config::{self, Config, Palette, Shader},
     debugger::{Command, Debugger},
     input::{Buttons, Gamepads},
+    overlay::Message,
 };
 
 // We do not store a precomputed ns-per-cycle constant: at 238 ns it rounds the period down by
@@ -134,6 +135,8 @@ pub struct Emulator {
     /// The index of the current palette in `palettes`.
     palette: usize,
     shader: Shader,
+    /// The message on screen, if any.
+    message: Option<Message>,
     start_time_ns: Instant,
     emulated_cycles: u64,
     debugger: Debugger,
@@ -197,6 +200,7 @@ impl Emulator {
             config_file: config.path.clone(),
             palette: config.palette,
             shader: config.shader,
+            message: None,
             start_time_ns: now,
             emulated_cycles: 0,
             debugger: Debugger::new()?,
@@ -225,6 +229,17 @@ impl Emulator {
     /// The colour of the unlit screen: the palette's lightest shade.
     pub fn background(&self) -> (u8, u8, u8) {
         self.palettes[self.palette].colors[0].to_rgb888()
+    }
+
+    /// The message to show over the screen, if there's one, and how opaque it is as it fades out.
+    pub fn message(&self) -> Option<(&str, f32)> {
+        let message = self.message.as_ref()?;
+        let opacity = message.opacity(Instant::now());
+        (opacity > 0.0).then_some((message.text(), opacity))
+    }
+
+    fn show_message(&mut self, text: impl Into<String>) {
+        self.message = Some(Message::new(text));
     }
 
     pub fn update(&mut self) -> bool {
@@ -354,7 +369,9 @@ impl Emulator {
         let palette = &self.palettes[self.palette];
         self.gb.set_dmg_palette(palette.colors);
         info!("Palette: {}", palette.name);
-        self.save_setting("palette", &palette.name);
+        let name = palette.name.clone();
+        self.save_setting("palette", &name);
+        self.show_message(format!("Palette: {name}"));
     }
 
     /// Switch to the next shader, and remember it in the config file for next time.
@@ -362,6 +379,7 @@ impl Emulator {
         self.shader = self.shader.next();
         info!("Shader: {}", self.shader.name());
         self.save_setting("shader", self.shader.name());
+        self.show_message(format!("Shader: {}", self.shader.name()));
     }
 
     fn save_setting(&self, key: &str, value: &str) {
@@ -375,8 +393,14 @@ impl Emulator {
 
     fn save_state(&mut self) {
         match write_creating_dir(&self.state_file, self.gb.save_state()) {
-            Ok(()) => info!("Saved state to {}", self.state_file.display()),
-            Err(e) => warn!("Failed to save state to {}: {e}", self.state_file.display()),
+            Ok(()) => {
+                info!("Saved state to {}", self.state_file.display());
+                self.show_message("State saved");
+            }
+            Err(e) => {
+                warn!("Failed to save state to {}: {e}", self.state_file.display());
+                self.show_message("Failed to save state");
+            }
         }
     }
 
@@ -385,11 +409,24 @@ impl Emulator {
             .context("Failed to read file")
             .and_then(|state| self.gb.load_state(&state));
         match result {
-            Ok(()) => info!("Loaded state from {}", self.state_file.display()),
-            Err(e) => warn!(
-                "Failed to load state from {}: {e:#}",
-                self.state_file.display()
-            ),
+            Ok(()) => {
+                info!("Loaded state from {}", self.state_file.display());
+                self.show_message("State loaded");
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to load state from {}: {e:#}",
+                    self.state_file.display()
+                );
+                let not_found = e
+                    .downcast_ref::<io::Error>()
+                    .is_some_and(|e| e.kind() == io::ErrorKind::NotFound);
+                self.show_message(if not_found {
+                    "No saved state"
+                } else {
+                    "Failed to load state"
+                });
+            }
         }
     }
 
@@ -417,8 +454,12 @@ impl Emulator {
                 return;
             }
             KeyCode::KeyS if key.state.is_pressed() => {
-                if let Err(e) = self.screenshot() {
-                    warn!("Failed to save screenshot: {e}");
+                match self.screenshot() {
+                    Ok(()) => self.show_message("Screenshot saved"),
+                    Err(e) => {
+                        warn!("Failed to save screenshot: {e}");
+                        self.show_message("Failed to save screenshot");
+                    }
                 }
                 return;
             }

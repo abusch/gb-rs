@@ -15,6 +15,7 @@ clap.workspace = true
 cpal.workspace = true
 env_logger.workspace = true
 etcetera.workspace = true
+font8x8.workspace = true
 gbrs.workspace = true
 gilrs.workspace = true
 log.workspace = true

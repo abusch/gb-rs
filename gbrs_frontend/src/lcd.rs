@@ -163,21 +163,25 @@ fn srgb_to_linear(c: u8) -> f32 {
     }
 }
 
+/// Check a shader in tests, rather than when the emulator starts, where an invalid one panics.
 #[cfg(test)]
-mod tests {
+pub fn validate_shader(source: &str) {
     use pixels::wgpu::naga;
 
-    /// Check the shader here, rather than when the emulator starts, where an invalid one panics.
+    let module = naga::front::wgsl::parse_str(source)
+        .unwrap_or_else(|e| panic!("{}", e.emit_to_string(source)));
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::default(),
+    )
+    .validate(&module)
+    .unwrap_or_else(|e| panic!("{}", e.emit_to_string(source)));
+}
+
+#[cfg(test)]
+mod tests {
     #[test]
     fn test_shader_is_valid() {
-        let source = include_str!("lcd.wgsl");
-        let module = naga::front::wgsl::parse_str(source)
-            .unwrap_or_else(|e| panic!("{}", e.emit_to_string(source)));
-        naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::default(),
-        )
-        .validate(&module)
-        .unwrap_or_else(|e| panic!("{}", e.emit_to_string(source)));
+        super::validate_shader(include_str!("lcd.wgsl"));
     }
 }

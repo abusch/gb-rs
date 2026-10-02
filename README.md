@@ -22,6 +22,8 @@ Current keybindings:
 - <kbd>P</kbd>: Switch to the next palette (remembered for next time)
 - <kbd>L</kbd>: Switch between plain pixels and the LCD shader (remembered for next time)
 
+The palette or shader switched to, and whether a screenshot or save state worked, are shown in the bottom-left corner of the screen for a couple of seconds.
+
 Gamepads work too, and can be plugged in while the emulator runs (you can also use the keyboard at the same time):
 - D-pad or left stick: Joypad
 - Right face button (<kbd>B</kbd> on Xbox pads, <kbd>A</kbd> on Nintendo ones): A

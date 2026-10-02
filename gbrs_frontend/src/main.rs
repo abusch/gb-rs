@@ -12,6 +12,7 @@ use emulator::Emulator;
 use gbrs::{BootRom, SCREEN_HEIGHT, SCREEN_WIDTH};
 use lcd::LcdRenderer;
 use log::{error, info};
+use overlay::OverlayRenderer;
 use pixels::{Pixels, SurfaceTexture};
 use ringbuf::{HeapRb, traits::Split};
 use winit::{
@@ -29,6 +30,7 @@ mod debugger;
 mod emulator;
 mod input;
 mod lcd;
+mod overlay;
 
 #[derive(Parser)]
 #[command(about, version, author)]
@@ -143,6 +145,7 @@ fn main() -> Result<()> {
 struct App {
     pixels: Option<Pixels<'static>>,
     lcd: Option<LcdRenderer>,
+    overlay: Option<OverlayRenderer>,
     window: Option<Arc<Window>>,
     emulator: Emulator,
 }
@@ -152,6 +155,7 @@ impl App {
         Self {
             pixels: None,
             lcd: None,
+            overlay: None,
             window: None,
             emulator,
         }
@@ -183,6 +187,7 @@ impl ApplicationHandler for App {
             window.request_redraw();
 
             self.lcd = Some(LcdRenderer::new(&pixels));
+            self.overlay = Some(OverlayRenderer::new(&pixels));
             self.pixels = Some(pixels);
             self.window = Some(window);
         }
@@ -224,9 +229,10 @@ impl ApplicationHandler for App {
                 self.emulator.handle_input(k);
             }
             WindowEvent::RedrawRequested => {
-                if let (Some(pixels), Some(lcd), Some(window)) = (
+                if let (Some(pixels), Some(lcd), Some(overlay), Some(window)) = (
                     self.pixels.as_mut(),
                     self.lcd.as_ref(),
+                    self.overlay.as_ref(),
                     self.window.as_mut(),
                 ) {
                     // Run the emiulator
@@ -236,16 +242,19 @@ impl ApplicationHandler for App {
                     }
                     // Render a frame
                     self.emulator.render(pixels.frame_mut());
-                    let result = match self.emulator.shader() {
-                        Shader::None => pixels.render(),
-                        Shader::Lcd => {
-                            let background = self.emulator.background();
-                            pixels.render_with(|encoder, render_target, context| {
-                                lcd.render(encoder, render_target, context, background);
-                                Ok(())
-                            })
+                    let shader = self.emulator.shader();
+                    let background = self.emulator.background();
+                    let message = self.emulator.message();
+                    let result = pixels.render_with(|encoder, render_target, context| {
+                        match shader {
+                            Shader::None => context.scaling_renderer.render(encoder, render_target),
+                            Shader::Lcd => lcd.render(encoder, render_target, context, background),
                         }
-                    };
+                        if let Some((text, opacity)) = message {
+                            overlay.render(encoder, render_target, context, text, opacity);
+                        }
+                        Ok(())
+                    });
                     if let Err(e) = result {
                         error!("Error while rendering frame: {}", e);
                         event_loop.exit();
